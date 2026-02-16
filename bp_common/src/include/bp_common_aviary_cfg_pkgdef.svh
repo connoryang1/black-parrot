@@ -275,6 +275,25 @@
     // Maximum credits supported by the network. Correlated to the bandwidth delay product
     int dma_noc_max_credits;
 
+    // Number of hardware threads per core
+    // Supports: 1, 2, 4, 8, 16, 32, 64, 128, 224 (if cache line allows)
+    // 1 = single-threaded (default), 224 = maximum for SV39 (one per hart ID)
+    int num_threads;
+
+    // Width of thread context in bytes (derived from bp_thread_ctx_s)
+    // Default: 70 bytes (565 bits) based on Phase 0.3 struct definition
+    int thread_context_bytes;
+
+    // Enable/disable thread scheduler
+    // When disabled: only thread 0 is active (effectively single-threaded)
+    // When enabled: hardware thread scheduling is active
+    int thread_scheduler_enable;
+
+    // Enable/disable monitor/mwait (pause-on-memory) support
+    // When enabled: MWAIT instruction will block thread until memory changed
+    // When disabled: MWAIT behaves as NOP
+    int monitor_enable;
+
   }  bp_proc_param_s;
 
   localparam bp_proc_param_s bp_default_cfg_p =
@@ -388,6 +407,11 @@
       ,dma_noc_cid_width     : 3
       ,dma_noc_len_width     : 4
       ,dma_noc_max_credits   : 32
+
+      ,num_threads           : 4               // Multi-threaded: 4 threads for round-robin scheduling
+      ,thread_context_bytes  : 70              // Default: 565 bits packed into 70 bytes
+      ,thread_scheduler_enable: 1              // Enable automatic round-robin scheduling
+      ,monitor_enable        : 0               // Default: MWAIT support disabled
       };
 
   // BP_CUSTOM_DEFINES_PATH can be set to a file which has the custom defines below set
@@ -498,7 +522,11 @@
       ,`bp_aviary_define_override(dma_noc_flit_width, BP_MEM_NOC_FLIT_WIDTH, `BP_CUSTOM_BASE_CFG)
       ,`bp_aviary_define_override(dma_noc_cid_width, BP_MEM_NOC_CID_WIDTH, `BP_CUSTOM_BASE_CFG)
       ,`bp_aviary_define_override(dma_noc_len_width, BP_MEM_NOC_LEN_WIDTH, `BP_CUSTOM_BASE_CFG)
+
+      ,`bp_aviary_define_override(num_threads, BP_NUM_THREADS, `BP_CUSTOM_BASE_CFG)
+      ,`bp_aviary_define_override(thread_context_bytes, BP_THREAD_CONTEXT_BYTES, `BP_CUSTOM_BASE_CFG)
+      ,`bp_aviary_define_override(thread_scheduler_enable, BP_THREAD_SCHEDULER_ENABLE, `BP_CUSTOM_BASE_CFG)
+      ,`bp_aviary_define_override(monitor_enable, BP_MONITOR_ENABLE, `BP_CUSTOM_BASE_CFG)
       };
 
 `endif
-

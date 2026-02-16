@@ -93,6 +93,13 @@ module bp_be_top
   bp_be_decode_info_s decode_info_lo;
   bp_be_trans_info_s trans_info_lo;
 
+  // Multi-threaded context storage signals
+  logic [vaddr_width_p-1:0] context_npc_lo;
+  logic [1:0] context_priv_mode_lo;
+  logic context_translation_en_lo;
+  logic [asid_width_p-1:0] context_asid_lo;
+  logic [thread_id_width_p-1:0] current_thread_id_lo;
+
   logic [wb_pkt_width_lp-1:0] late_wb_pkt;
   logic late_wb_v_lo, late_wb_force_lo, late_wb_yumi_li;
 
@@ -102,6 +109,52 @@ module bp_be_top
 
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
+
+  // Phase 1.4: CSR-based context switching signals
+  logic csr_ctxt_write_v_lo;
+  logic [thread_id_width_p-1:0] csr_ctxt_write_data_lo;
+
+  // Instantiate round-robin thread scheduler
+  bp_be_thread_scheduler
+   #(.num_threads_p(num_threads_p)
+     ,.thread_id_width_p(thread_id_width_p)
+     )
+   thread_scheduler
+    (.clk_i(clk_i)
+     ,.reset_i(reset_i)
+     ,.thread_id_o(current_thread_id_lo)
+     // Phase 1.4: CSR-controlled context switching
+     ,.csr_write_ctxt_v_i(csr_ctxt_write_v_lo)
+     ,.csr_write_ctxt_data_i(csr_ctxt_write_data_lo)
+     );
+
+  // Instantiate context storage for multi-threaded state
+  bp_be_context_storage
+   #(.num_threads_p(num_threads_p)
+     ,.vaddr_width_p(vaddr_width_p)
+     ,.asid_width_p(asid_width_p)
+     )
+   context_storage
+    (.clk_i(clk_i)
+     ,.reset_i(reset_i)
+     ,.current_thread_id_i(current_thread_id_lo)
+     ,.npc_o(context_npc_lo)
+     ,.priv_mode_o(context_priv_mode_lo)
+     ,.translation_en_o(context_translation_en_lo)
+     ,.asid_o(context_asid_lo)
+     // TODO: Wire commit interface when CTXT CSR detection is implemented
+     ,.commit_v_i(1'b0)
+     ,.commit_thread_id_i('0)
+     ,.npc_i('0)
+     ,.priv_mode_i(2'b11)
+     ,.translation_en_i(1'b0)
+     ,.asid_i('0)
+     );
+
+  // Enable round-robin multi-threading with automatic context switching
+  // The thread_scheduler module outputs the current thread ID each cycle
+  // This allows the hardware to automatically interleave execution across threads
+  // TODO: When CTXT CSR is implemented, replace this with CSR-controlled switching
 
   bp_be_director
    #(.bp_params_p(bp_params_p))
@@ -248,7 +301,10 @@ module bp_be_top
      ,.irq_pending_o(irq_pending_lo)
      ,.irq_waiting_o(irq_waiting_lo)
      ,.cmd_full_n_i(cmd_full_n_lo)
+     // Phase 1.4: Context switching
+     ,.current_thread_id_i(current_thread_id_lo)
+     ,.csr_ctxt_write_v_o(csr_ctxt_write_v_lo)
+     ,.csr_ctxt_write_data_o(csr_ctxt_write_data_lo)
      );
 
 endmodule
-

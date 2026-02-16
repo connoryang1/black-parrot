@@ -56,6 +56,11 @@ module bp_be_pipe_sys
    , output logic [decode_info_width_lp-1:0] decode_info_o
    , output logic [trans_info_width_lp-1:0]  trans_info_o
    , output rv64_frm_e                       frm_dyn_o
+
+   // Phase 1.4: Context switching via CTXT CSR (0x081)
+   , input [thread_id_width_p-1:0]           current_thread_id_i
+   , output logic                            csr_ctxt_write_v_o
+   , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
    );
 
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
@@ -112,6 +117,10 @@ module bp_be_pipe_sys
      ,.decode_info_o(decode_info_cast_o)
      ,.trans_info_o(trans_info_cast_o)
      ,.frm_dyn_o(frm_dyn_o)
+     // Phase 1.4: Pass current thread ID for CSR returns
+     ,.current_thread_id_i(current_thread_id_i)
+     ,.csr_ctxt_write_v_o(csr_ctxt_write_v_o)
+     ,.csr_ctxt_write_data_o(csr_ctxt_write_data_o)
      );
 
   logic [vaddr_width_p-1:0] retire_npc_r;
@@ -192,4 +201,3 @@ module bp_be_pipe_sys
   assign data_o = csr_data_lo;
 
 endmodule
-

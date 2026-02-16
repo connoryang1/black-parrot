@@ -10,7 +10,6 @@ module bp_be_csr
    `declare_bp_be_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p)
 
    , localparam cfg_bus_width_lp = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
-
    )
   (input                                     clk_i
    , input                                   reset_i
@@ -44,6 +43,11 @@ module bp_be_csr
    , output logic [decode_info_width_lp-1:0] decode_info_o
    , output logic [trans_info_width_lp-1:0]  trans_info_o
    , output rv64_frm_e                       frm_dyn_o
+
+   // Context switching control (Phase 1.4)
+   , input [thread_id_width_p-1:0]           current_thread_id_i
+   , output logic                            csr_ctxt_write_v_o
+   , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
    );
 
   // Declare parameterizable structs
@@ -79,6 +83,16 @@ module bp_be_csr
   `declare_csr_addr(dpc, vaddr_width_p, paddr_width_p);
   `declare_csr(dscratch0);
   `declare_csr(dscratch1);
+
+  // Phase 1.4: Register current thread ID to synchronize with pipeline
+  // This ensures CSR reads capture the properly updated thread ID
+  logic [thread_id_width_p-1:0] current_thread_id_r;
+  always @(posedge clk_i) begin
+    if (reset_i)
+      current_thread_id_r <= '0;
+    else
+      current_thread_id_r <= current_thread_id_i;
+  end
 
   // We have no vendorid currently
   wire [dword_width_gp-1:0] mvendorid_lo = 64'h0;
@@ -380,6 +394,8 @@ module bp_be_csr
         {`CSR_ADDR_DPC          }: csr_data_lo = dpc_lo;
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
+        12'h081:  // CTXT CSR - Current thread/context ID (Phase 1.4)
+          csr_data_lo = current_thread_id_r;  // Use registered value for proper synchronization
         default:
           begin
             csr_data_lo = '0;
@@ -698,5 +714,9 @@ module bp_be_csr
 
   assign frm_dyn_o = rv64_frm_e'(fcsr_lo.frm);
 
-endmodule
+  // Context switching on CTXT CSR (0x081) write - Phase 1.4
+  // When software writes to CSR 0x081, request a context switch to the written thread ID
+  assign csr_ctxt_write_v_o = csr_w_v_li & (csr_addr_li == 12'h081);
+  assign csr_ctxt_write_data_o = csr_data_li[0+:thread_id_width_p];
 
+endmodule

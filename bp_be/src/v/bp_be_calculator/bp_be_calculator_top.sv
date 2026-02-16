@@ -87,6 +87,11 @@ module bp_be_calculator_top
    , input [dcache_stat_mem_pkt_width_lp-1:0]        stat_mem_pkt_i
    , output logic                                    stat_mem_pkt_yumi_o
    , output logic [dcache_stat_info_width_lp-1:0]    stat_mem_o
+
+   // Phase 1.4: Context switching via CTXT CSR (0x081)
+   , input [thread_id_width_p-1:0]                   current_thread_id_i
+   , output logic                                    csr_ctxt_write_v_o
+   , output logic [thread_id_width_p-1:0]            csr_ctxt_write_data_o
    );
 
   // Declare parameterizable structs
@@ -220,6 +225,11 @@ module bp_be_calculator_top
      ,.decode_info_o(decode_info_o)
      ,.trans_info_o(trans_info_o)
      ,.frm_dyn_o(frm_dyn_lo)
+
+     // Phase 1.4: Context switching
+     ,.current_thread_id_i(current_thread_id_i)
+     ,.csr_ctxt_write_v_o(csr_ctxt_write_v_o)
+     ,.csr_ctxt_write_data_o(csr_ctxt_write_data_o)
      );
 
   // Integer pipe: 1 cycle latency
@@ -603,4 +613,3 @@ module bp_be_calculator_top
      );
 
 endmodule
-
