@@ -27,7 +27,7 @@ module bp_be_calculator_top
    // Generated parameters
    , localparam cfg_bus_width_lp        = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
    )
-  (input                                             clk_i
+  (input                                            clk_i
    , input                                           reset_i
 
    , input [cfg_bus_width_lp-1:0]                    cfg_bus_i
@@ -92,6 +92,17 @@ module bp_be_calculator_top
    , input [thread_id_width_p-1:0]                   current_thread_id_i
    , output logic                                    csr_ctxt_write_v_o
    , output logic [thread_id_width_p-1:0]            csr_ctxt_write_data_o
+
+   // Bootstrap: write target NPC into context_storage for a given thread (CSR 0x082)
+   , output logic                                    ctx_npc_write_v_o
+   , output logic [thread_id_width_p-1:0]            ctx_npc_write_tid_o
+   , output logic [vaddr_width_p-1:0]                ctx_npc_write_npc_o
+
+   // rpush: write arbitrary register of a disabled thread's register file (CSR 0x083)
+   , output logic                                    ctx_rpush_v_o
+   , output logic [thread_id_width_p-1:0]            ctx_rpush_tid_o
+   , output logic [reg_addr_width_gp-1:0]            ctx_rpush_reg_o
+   , output logic [dpath_width_gp-1:0]               ctx_rpush_data_o
    );
 
   // Declare parameterizable structs
@@ -230,6 +241,13 @@ module bp_be_calculator_top
      ,.current_thread_id_i(current_thread_id_i)
      ,.csr_ctxt_write_v_o(csr_ctxt_write_v_o)
      ,.csr_ctxt_write_data_o(csr_ctxt_write_data_o)
+     ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
+     ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
+     ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
+     ,.ctx_rpush_v_o(ctx_rpush_v_o)
+     ,.ctx_rpush_tid_o(ctx_rpush_tid_o)
+     ,.ctx_rpush_reg_o(ctx_rpush_reg_o)
+     ,.ctx_rpush_data_o(ctx_rpush_data_o)
      );
 
   // Integer pipe: 1 cycle latency
@@ -503,7 +521,8 @@ module bp_be_calculator_top
         begin : comp_stage
           // Normally, shift down in the pipe
           comp_stage_n[i] = (i == 0)
-            ? '{ird_w_v    : dispatch_pkt_cast_i.decode.irf_w_v
+            ? '{thread_id  : dispatch_pkt_cast_i.thread_id[0 +: thread_id_width_p]
+                ,ird_w_v   : dispatch_pkt_cast_i.decode.irf_w_v
                 ,frd_w_v   : dispatch_pkt_cast_i.decode.frf_w_v
                 ,rd_addr   : dispatch_pkt_cast_i.instr.t.rtype.rd_addr
                 ,default: '0

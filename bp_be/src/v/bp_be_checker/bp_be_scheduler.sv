@@ -53,6 +53,15 @@ module bp_be_scheduler
    , input                                    late_wb_v_i
    , input                                    late_wb_force_i
    , output logic                             late_wb_yumi_o
+
+   // Current thread ID for register file reads/writes
+   , input [thread_id_width_p-1:0]            current_thread_id_i
+
+   // rpush: write arbitrary register of a disabled thread (CSR 0x083)
+   , input                                    rpush_w_v_i
+   , input [thread_id_width_p-1:0]            rpush_tid_i
+   , input [reg_addr_width_gp-1:0]            rpush_reg_i
+   , input [dpath_width_gp-1:0]               rpush_data_i
    );
 
   // Declare parameterizable structures
@@ -162,33 +171,47 @@ module bp_be_scheduler
   assign preissue_instr = preissue_pkt.instr;
 
   logic [dpath_width_gp-1:0] irf_rs1, irf_rs2;
-  bp_be_regfile
+  bp_be_regfile_mt
   #(.bp_params_p(bp_params_p), .read_ports_p(2), .zero_x0_p(1), .data_width_p($bits(bp_be_int_reg_s)))
    int_regfile
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
 
      ,.rd_w_v_i(iwb_pkt_cast_i.ird_w_v)
+     ,.rd_thread_id_i(current_thread_id_i)
      ,.rd_addr_i(iwb_pkt_cast_i.rd_addr)
      ,.rd_data_i(iwb_pkt_cast_i.rd_data)
 
+     ,.rpush_w_v_i(rpush_w_v_i)
+     ,.rpush_thread_id_i(rpush_tid_i)
+     ,.rpush_addr_i(rpush_reg_i)
+     ,.rpush_data_i(rpush_data_i)
+
      ,.rs_r_v_i({preissue_pkt.irs2_v, preissue_pkt.irs1_v})
+     ,.rs_thread_id_i({current_thread_id_i, current_thread_id_i})
      ,.rs_addr_i({preissue_instr.rs2_addr, preissue_instr.rs1_addr})
      ,.rs_data_o({irf_rs2, irf_rs1})
      );
 
   logic [dpath_width_gp-1:0] frf_rs1, frf_rs2, frf_rs3;
-  bp_be_regfile
+  bp_be_regfile_mt
   #(.bp_params_p(bp_params_p), .read_ports_p(3), .zero_x0_p(0), .data_width_p($bits(bp_be_fp_reg_s)))
    fp_regfile
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
 
      ,.rd_w_v_i(fwb_pkt_cast_i.frd_w_v)
+     ,.rd_thread_id_i(current_thread_id_i)
      ,.rd_addr_i(fwb_pkt_cast_i.rd_addr)
      ,.rd_data_i(fwb_pkt_cast_i.rd_data)
 
+     ,.rpush_w_v_i(1'b0)
+     ,.rpush_thread_id_i('0)
+     ,.rpush_addr_i('0)
+     ,.rpush_data_i('0)
+
      ,.rs_r_v_i({preissue_pkt.frs3_v, preissue_pkt.frs2_v, preissue_pkt.frs1_v})
+     ,.rs_thread_id_i({current_thread_id_i, current_thread_id_i, current_thread_id_i})
      ,.rs_addr_i({preissue_instr.rs3_addr, preissue_instr.rs2_addr, preissue_instr.rs1_addr})
      ,.rs_data_o({frf_rs3, frf_rs2, frf_rs1})
      );
@@ -227,6 +250,7 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.ispec_v    = fe_instr_not_exc_li & ispec_v_i;
       dispatch_pkt_cast_o.nspec_v    = ptw_v_lo | writeback_v;
       dispatch_pkt_cast_o.pc         = expected_npc_i;
+      dispatch_pkt_cast_o.thread_id  = vaddr_width_p'(current_thread_id_i);
       dispatch_pkt_cast_o.instr      = be_exc_not_instr_li ? be_exc_instr_li   : fe_exc_not_instr_li ? fe_exc_instr_li  : issue_pkt_cast_o.instr;
       dispatch_pkt_cast_o.size       = be_exc_not_instr_li ? be_exc_size_li    : fe_exc_not_instr_li ? fe_exc_size_li   : issue_pkt_cast_o.size;
       dispatch_pkt_cast_o.count      = be_exc_not_instr_li ? be_exc_count_li   : fe_exc_not_instr_li ? fe_exc_count_li  : issue_pkt_cast_o.count;

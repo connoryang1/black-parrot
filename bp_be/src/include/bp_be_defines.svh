@@ -183,6 +183,7 @@
       logic                           fencei;                                                      \
       logic                           sfence;                                                      \
       logic                           csrw;                                                        \
+      logic                           ctxtsw;                                                      \
       logic                           wfi;                                                         \
       logic                           itlb_miss;                                                   \
       logic                           icache_miss;                                                 \
@@ -198,6 +199,7 @@
                                                                                                    \
     typedef struct packed                                                                          \
     {                                                                                              \
+      logic [thread_id_width_p-1:0] thread_id;                                                     \
       logic                         ird_w_v;                                                       \
       logic                         frd_w_v;                                                       \
       logic                         ptw_w_v;                                                       \
@@ -273,10 +275,10 @@
     (paddr_width_mp-page_offset_width_gp+8)
 
   `define bp_be_commit_pkt_width(vaddr_width_mp, paddr_width_mp, fetch_ptr_mp, issue_ptr_mp) \
-    (5+vaddr_width_mp+`bp_be_pte_leaf_width(paddr_width_mp)+3*vaddr_width_mp+instr_width_gp+fetch_ptr_mp+issue_ptr_mp+rv64_priv_width_gp+18)
+    (5+vaddr_width_mp+`bp_be_pte_leaf_width(paddr_width_mp)+3*vaddr_width_mp+instr_width_gp+fetch_ptr_mp+issue_ptr_mp+rv64_priv_width_gp+19)
 
   `define bp_be_wb_pkt_width(vaddr_width_mp) \
-    (3+reg_addr_width_gp+dpath_width_gp+$bits(rv64_fflags_s))
+    (3+reg_addr_width_gp+dpath_width_gp+$bits(rv64_fflags_s)+thread_id_width_p)
 
   `define bp_be_trans_info_width(paddr_width_mp) \
     (rv64_priv_width_gp+paddr_width_mp-page_offset_width_gp+3)

@@ -71,6 +71,8 @@ module bp_be_context_storage
       end
     end else if (commit_v_i && commit_thread_id_i < num_threads_p) begin
       // Update the state for the committing thread
+      // $display("[CTXST @%0t] WRITE: tid=%0d npc=0x%08x (old npc=0x%08x)",
+      //          $time, commit_thread_id_i, npc_i, npc_storage[commit_thread_id_i]);
       npc_storage[commit_thread_id_i] <= npc_i;
       priv_mode_storage[commit_thread_id_i] <= priv_mode_i;
       translation_en_storage[commit_thread_id_i] <= translation_en_i;
@@ -78,9 +80,27 @@ module bp_be_context_storage
     end
   end
 
+  // Debug: trace every time commit_v fires or npc_o changes
+  // always @(posedge clk_i) begin
+  //   if (!reset_i && commit_v_i)
+  //     $display("[CTXST @%0t] commit_v=1 tid=%0d npc_in=0x%08x cur_tid=%0d fwd=%0b npc_out=0x%08x",
+  //              $time, commit_thread_id_i, npc_i, current_thread_id_i, fwd_v, npc_o);
+  // end
+
+  // Write-forwarding: if writing and reading the same slot simultaneously,
+  // return the incoming write value rather than the stale registered value.
+  wire fwd_v = commit_v_i && (commit_thread_id_i == current_thread_id_i)
+                           && (commit_thread_id_i < num_threads_p)
+                           && (current_thread_id_i < num_threads_p);
+
   // Read logic: combinational mux based on current thread ID
   always_comb begin
-    if (current_thread_id_i < num_threads_p) begin
+    if (fwd_v) begin
+      npc_o = npc_i;
+      priv_mode_o = priv_mode_i;
+      translation_en_o = translation_en_i;
+      asid_o = asid_i;
+    end else if (current_thread_id_i < num_threads_p) begin
       npc_o = npc_storage[current_thread_id_i];
       priv_mode_o = priv_mode_storage[current_thread_id_i];
       translation_en_o = translation_en_storage[current_thread_id_i];

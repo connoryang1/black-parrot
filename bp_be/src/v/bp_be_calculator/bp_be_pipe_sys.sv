@@ -23,7 +23,7 @@ module bp_be_pipe_sys
    , localparam exception_width_lp    = $bits(bp_be_exception_s)
    , localparam special_width_lp      = $bits(bp_be_special_s)
    )
-  (input                                     clk_i
+  (input                                    clk_i
    , input                                   reset_i
 
    , input [cfg_bus_width_lp-1:0]            cfg_bus_i
@@ -61,6 +61,17 @@ module bp_be_pipe_sys
    , input [thread_id_width_p-1:0]           current_thread_id_i
    , output logic                            csr_ctxt_write_v_o
    , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
+
+   // Bootstrap: write target NPC into context_storage for a given thread (CSR 0x082)
+   , output logic                            ctx_npc_write_v_o
+   , output logic [thread_id_width_p-1:0]    ctx_npc_write_tid_o
+   , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
+
+   // rpush: write arbitrary register of a disabled thread's register file (CSR 0x083)
+   , output logic                            ctx_rpush_v_o
+   , output logic [thread_id_width_p-1:0]    ctx_rpush_tid_o
+   , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
+   , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
    );
 
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
@@ -121,6 +132,13 @@ module bp_be_pipe_sys
      ,.current_thread_id_i(current_thread_id_i)
      ,.csr_ctxt_write_v_o(csr_ctxt_write_v_o)
      ,.csr_ctxt_write_data_o(csr_ctxt_write_data_o)
+     ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
+     ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
+     ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
+     ,.ctx_rpush_v_o(ctx_rpush_v_o)
+     ,.ctx_rpush_tid_o(ctx_rpush_tid_o)
+     ,.ctx_rpush_reg_o(ctx_rpush_reg_o)
+     ,.ctx_rpush_data_o(ctx_rpush_data_o)
      );
 
   logic [vaddr_width_p-1:0] retire_npc_r;

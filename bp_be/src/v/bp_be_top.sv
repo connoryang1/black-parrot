@@ -114,6 +114,18 @@ module bp_be_top
   logic csr_ctxt_write_v_lo;
   logic [thread_id_width_p-1:0] csr_ctxt_write_data_lo;
 
+  // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
+  logic ctx_npc_write_v_lo;
+  logic [thread_id_width_p-1:0] ctx_npc_write_tid_lo;
+  logic [vaddr_width_p-1:0] ctx_npc_write_npc_lo;
+
+  // rpush: write arbitrary register of a disabled thread's register file (CSR 0x083)
+  logic ctx_rpush_v_lo;
+  logic [thread_id_width_p-1:0] ctx_rpush_tid_lo;
+  logic [reg_addr_width_gp-1:0] ctx_rpush_reg_lo;
+  logic [dpath_width_gp-1:0] ctx_rpush_data_lo;
+
+
   // Instantiate round-robin thread scheduler
   bp_be_thread_scheduler
    #(.num_threads_p(num_threads_p)
@@ -137,24 +149,32 @@ module bp_be_top
    context_storage
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
-     ,.current_thread_id_i(current_thread_id_lo)
+     ,.current_thread_id_i(commit_pkt.ctxtsw ? csr_ctxt_write_data_lo : current_thread_id_lo)
      ,.npc_o(context_npc_lo)
      ,.priv_mode_o(context_priv_mode_lo)
      ,.translation_en_o(context_translation_en_lo)
      ,.asid_o(context_asid_lo)
-     // TODO: Wire commit interface when CTXT CSR detection is implemented
-     ,.commit_v_i(1'b0)
-     ,.commit_thread_id_i('0)
-     ,.npc_i('0)
-     ,.priv_mode_i(2'b11)
-     ,.translation_en_i(1'b0)
+     // Save thread NPC on context switch (commit_pkt.npc = PC after the csrw 0x081),
+     // or when CSR 0x082 seeds a thread's entry NPC directly.
+     ,.commit_v_i(commit_pkt.ctxtsw | ctx_npc_write_v_lo)
+     ,.commit_thread_id_i(ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo)
+     ,.npc_i(ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc)
+     ,.priv_mode_i(commit_pkt.priv_n)
+     ,.translation_en_i(commit_pkt.translation_en_n)
      ,.asid_i('0)
      );
 
-  // Enable round-robin multi-threading with automatic context switching
-  // The thread_scheduler module outputs the current thread ID each cycle
-  // This allows the hardware to automatically interleave execution across threads
-  // TODO: When CTXT CSR is implemented, replace this with CSR-controlled switching
+  // Debug: trace context switching signals
+  // always @(posedge clk_i) begin
+  //   if (!reset_i) begin
+  //     if (ctx_npc_write_v_lo)
+  //       $display("[BETOP @%0t] CSR0x082 SEED: tid=%0d npc=0x%08x",
+  //                $time, ctx_npc_write_tid_lo, ctx_npc_write_npc_lo);
+  //     if (commit_pkt.ctxtsw)
+  //       $display("[BETOP @%0t] CTXTSW: old_tid=%0d -> new_tid=%0d context_npc=0x%08x commit_npc=0x%08x",
+  //                $time, current_thread_id_lo, csr_ctxt_write_data_lo, context_npc_lo, commit_pkt.npc);
+  //   end
+  // end
 
   bp_be_director
    #(.bp_params_p(bp_params_p))
@@ -162,6 +182,7 @@ module bp_be_top
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
      ,.cfg_bus_i(cfg_bus_i)
+     ,.context_npc_i(context_npc_lo)
 
      ,.issue_pkt_i(issue_pkt)
      ,.expected_npc_o(expected_npc_lo)
@@ -239,6 +260,13 @@ module bp_be_top
      ,.late_wb_v_i(late_wb_v_lo)
      ,.late_wb_force_i(late_wb_force_lo)
      ,.late_wb_yumi_o(late_wb_yumi_li)
+
+     ,.current_thread_id_i(current_thread_id_lo)
+
+     ,.rpush_w_v_i(ctx_rpush_v_lo)
+     ,.rpush_tid_i(ctx_rpush_tid_lo)
+     ,.rpush_reg_i(ctx_rpush_reg_lo)
+     ,.rpush_data_i(ctx_rpush_data_lo)
      );
 
   bp_be_calculator_top
@@ -305,6 +333,13 @@ module bp_be_top
      ,.current_thread_id_i(current_thread_id_lo)
      ,.csr_ctxt_write_v_o(csr_ctxt_write_v_lo)
      ,.csr_ctxt_write_data_o(csr_ctxt_write_data_lo)
+     ,.ctx_npc_write_v_o(ctx_npc_write_v_lo)
+     ,.ctx_npc_write_tid_o(ctx_npc_write_tid_lo)
+     ,.ctx_npc_write_npc_o(ctx_npc_write_npc_lo)
+     ,.ctx_rpush_v_o(ctx_rpush_v_lo)
+     ,.ctx_rpush_tid_o(ctx_rpush_tid_lo)
+     ,.ctx_rpush_reg_o(ctx_rpush_reg_lo)
+     ,.ctx_rpush_data_o(ctx_rpush_data_lo)
      );
 
 endmodule

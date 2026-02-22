@@ -226,7 +226,7 @@ $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_director.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_expander.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_instr_decoder.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_issue_queue.sv
-$BP_DIR/bp_be/src/v/bp_be_checker/bp_be_regfile.sv
+$BP_DIR/bp_be/src/v/bp_be_regfile_mt.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_scheduler.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_scoreboard.sv
 # MMU

@@ -49,6 +49,9 @@ module bp_be_director
 
    , input [branch_pkt_width_lp-1:0]    br_pkt_i
    , input [commit_pkt_width_lp-1:0]    commit_pkt_i
+
+   // Context NPC for thread switch redirects
+   , input [vaddr_width_p-1:0]           context_npc_i
    );
 
   // Declare parameterized structures
@@ -78,10 +81,14 @@ module bp_be_director
   // Module instantiations
   // Update the NPC on a valid instruction in ex1 or upon commit
   logic [vaddr_width_p-1:0] npc_n, npc_r;
-  wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v;
+  wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v | commit_pkt_cast_i.ctxtsw;
 
-  assign npc_n = commit_pkt_cast_i.npc_w_v ? commit_pkt_cast_i.npc : br_pkt_cast_i.bspec ? issue_pkt_cast_i.pc : br_pkt_cast_i.npc;
-  bsg_dff_reset_en_bypass
+  assign npc_n = commit_pkt_cast_i.ctxtsw ? context_npc_i
+               : commit_pkt_cast_i.npc_w_v ? commit_pkt_cast_i.npc
+               : br_pkt_cast_i.bspec ? issue_pkt_cast_i.pc
+               : br_pkt_cast_i.npc;
+
+   bsg_dff_reset_en_bypass
    #(.width_p(vaddr_width_p))
    npc_reg
     (.clk_i(clk_i)
@@ -95,7 +102,7 @@ module bp_be_director
 
   wire npc_mismatch_v = issue_pkt_cast_i.v & (expected_npc_o != issue_pkt_cast_i.pc);
   wire npc_match_v    = issue_pkt_cast_i.v & (expected_npc_o == issue_pkt_cast_i.pc);
-  assign poison_isd_o = npc_mismatch_v;
+  assign poison_isd_o = npc_mismatch_v | commit_pkt_cast_i.ctxtsw;
 
   logic btaken_pending, attaboy_pending;
   bsg_dff_reset_set_clear
@@ -124,7 +131,7 @@ module bp_be_director
                               ? e_wait
                               : commit_pkt_cast_i.fencei
                                 ? e_fencei
-                                : fe_cmd_nonattaboy_v
+                                : (fe_cmd_nonattaboy_v | commit_pkt_cast_i.ctxtsw)
                                   ? e_cmd_fence
                                   : state_r;
         e_freeze
@@ -187,6 +194,16 @@ module bp_be_director
         begin
           fe_cmd_li.opcode                            = e_op_pc_redirection;
           fe_cmd_li.npc                               = commit_pkt_cast_i.npc;
+          fe_cmd_pc_redirect_operands.subopcode       = e_subop_translation_switch;
+          fe_cmd_pc_redirect_operands.translation_en  = commit_pkt_cast_i.translation_en_n;
+          fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
+
+          fe_cmd_v_li = 1'b1;
+        end
+      else if (commit_pkt_cast_i.ctxtsw)
+        begin
+          fe_cmd_li.opcode                            = e_op_state_reset;
+          fe_cmd_li.npc                               = context_npc_i;
           fe_cmd_pc_redirect_operands.subopcode       = e_subop_translation_switch;
           fe_cmd_pc_redirect_operands.translation_en  = commit_pkt_cast_i.translation_en_n;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
@@ -280,5 +297,19 @@ module bp_be_director
   assign cmd_full_n_o = cmd_full_n_lo;
   assign cmd_full_r_o = cmd_full_r_lo;
 
-endmodule
+  // Debug: trace NPC updates and FE commands
+  // always @(posedge clk_i) begin
+  //   if (!reset_i) begin
+  //     if (commit_pkt_cast_i.ctxtsw)
+  //       $display("[DIR @%0t] CTXTSW: context_npc_i=0x%08x commit_npc=0x%08x npc_w_v=%0b -> npc_n=0x%08x",
+  //                $time, context_npc_i, commit_pkt_cast_i.npc, commit_pkt_cast_i.npc_w_v, npc_n);
+  //     if (npc_w_v)
+  //       $display("[DIR @%0t] npc_w_v=1 expected_npc_o=0x%08x (bypass: en=%0b data_i=0x%08x)",
+  //                $time, expected_npc_o, npc_w_v, npc_n);
+  //     if (fe_cmd_v_li && !reset_i)
+  //       $display("[DIR @%0t] FE_CMD: opcode=%0d npc=0x%08x",
+  //                $time, fe_cmd_li.opcode, fe_cmd_li.npc);
+  //   end
+  // end
 
+endmodule
