@@ -182,18 +182,6 @@ module bp_fe_controller
       ? (fe_cmd_cast_i.operands.icache_fill_response.count > '0)
       : '0;
 
-  always @(posedge clk_i) begin
-    if (!reset_i && context_switch_v)
-      $display("[FECTRL @%0t] consume ctxtsw npc=0x%08x state=%0d redirect=%0b state_reset=%0b thread_meta=0x%0x",
-               $time
-               ,fe_cmd_cast_i.npc
-               ,state_r
-               ,redirect_v_o
-               ,state_reset_v_o
-               ,fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd
-               );
-  end
-
   logic itlb_miss_tv_r, instr_page_fault_tv_r, instr_access_fault_tv_r;
   bsg_dff_reset_en
    #(.width_p(3))

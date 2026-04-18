@@ -292,12 +292,6 @@ module bp_be_director
         end
     end
 
-  always @(posedge clk_i) begin
-    if (!reset_i && commit_pkt_cast_i.ctxtsw)
-      $display("[DIRECTOR @%0t] emit fe_cmd ctxtsw cur_tid=%0d new_tid=%0d target_npc=0x%08x asid=0x%0x priv=%0d",
-               $time, current_thread_id_i, context_thread_id_i, context_npc_i, context_asid_i, context_priv_i);
-  end
-
   bp_be_cmd_queue
    #(.bp_params_p(bp_params_p))
    fe_cmd_fifo

@@ -165,18 +165,6 @@ module bp_be_top
      ,.asid_i('0)
      );
 
-  // Temporary debug to localize context-switch latency through the BE path.
-  always @(posedge clk_i) begin
-    if (!reset_i) begin
-      if (ctx_npc_write_v_lo)
-        $display("[BETOP @%0t] seed tid=%0d npc=0x%08x",
-                 $time, ctx_npc_write_tid_lo, ctx_npc_write_npc_lo);
-      if (commit_pkt.ctxtsw)
-        $display("[BETOP @%0t] commit ctxtsw old_tid=%0d new_tid=%0d context_npc=0x%08x commit_npc=0x%08x",
-                 $time, current_thread_id_lo, csr_ctxt_write_data_lo, context_npc_lo, commit_pkt.npc);
-    end
-  end
-
   bp_be_director
    #(.bp_params_p(bp_params_p))
    director
