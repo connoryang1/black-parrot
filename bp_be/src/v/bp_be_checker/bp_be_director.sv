@@ -64,6 +64,9 @@ module bp_be_director
 
    // Target thread privilege mode for embedding in ctxtsw fe_cmd
    , input [1:0]                         context_priv_i
+
+   // Target thread translation-enable state for ctxtsw restore
+   , input                               context_translation_en_i
    );
 
   // Declare parameterized structures
@@ -217,7 +220,7 @@ module bp_be_director
           fe_cmd_li.opcode                            = e_op_context_switch;
           fe_cmd_li.npc                               = context_npc_i;
           fe_cmd_pc_redirect_operands.priv            = context_priv_i;
-          fe_cmd_pc_redirect_operands.translation_en  = commit_pkt_cast_i.translation_en_n;
+          fe_cmd_pc_redirect_operands.translation_en  = context_translation_en_i;
           fe_cmd_pc_redirect_operands.asid            = context_asid_i;
           // Embed target thread_id in MSB of branch_metadata_fwd so pc_gen can update thread_id_r
           fe_cmd_pc_redirect_operands.branch_metadata_fwd =

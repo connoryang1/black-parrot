@@ -162,7 +162,7 @@ module bp_be_top
      ,.npc_i(ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc)
      ,.priv_mode_i(commit_pkt.priv_n)
      ,.translation_en_i(commit_pkt.translation_en_n)
-     ,.asid_i('0)
+     ,.asid_i(trans_info_lo.asid)
      );
 
   bp_be_director
@@ -176,6 +176,7 @@ module bp_be_top
      ,.context_thread_id_i(csr_ctxt_write_data_lo)
      ,.context_asid_i(context_asid_lo)
      ,.context_priv_i(context_priv_mode_lo)
+     ,.context_translation_en_i(context_translation_en_lo)
 
      ,.issue_pkt_i(issue_pkt)
      ,.expected_npc_o(expected_npc_lo)
