@@ -99,6 +99,10 @@ module bp_be_top
   logic context_translation_en_lo;
   logic [asid_width_p-1:0] context_asid_lo;
   logic [thread_id_width_p-1:0] current_thread_id_lo;
+  logic [num_threads_p-1:0][vaddr_width_p-1:0] context_npc_r;
+  logic [num_threads_p-1:0][1:0] context_priv_mode_r;
+  logic [num_threads_p-1:0] context_translation_en_r;
+  logic [num_threads_p-1:0][asid_width_p-1:0] context_asid_r;
 
   logic [wb_pkt_width_lp-1:0] late_wb_pkt;
   logic late_wb_v_lo, late_wb_force_lo, late_wb_yumi_li;
@@ -126,44 +130,60 @@ module bp_be_top
   logic [reg_addr_width_gp-1:0] ctx_rpush_reg_lo;
   logic [dpath_width_gp-1:0] ctx_rpush_data_lo;
 
+  // Active hardware thread ID selected by CTXT CSR writes.
+  always_ff @(posedge clk_i) begin
+    if (reset_i)
+      current_thread_id_lo <= '0;
+    else if (csr_ctxt_write_v_lo)
+      current_thread_id_lo <= csr_ctxt_write_data_lo;
+  end
 
-  // Holds the currently active thread ID selected by CTXT CSR writes.
-  bp_be_thread_scheduler
-   #(.num_threads_p(num_threads_p)
-     ,.thread_id_width_p(thread_id_width_p)
-     )
-   thread_scheduler
-    (.clk_i(clk_i)
-     ,.reset_i(reset_i)
-     ,.thread_id_o(current_thread_id_lo)
-     // CSR-controlled context switching
-     ,.csr_write_ctxt_v_i(csr_ctxt_write_v_lo)
-     ,.csr_write_ctxt_data_i(csr_ctxt_write_data_lo)
-     );
+  // Per-thread context storage for resume state.
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      for (int i = 0; i < num_threads_p; i++) begin
+        context_npc_r[i] <= '0;
+        context_priv_mode_r[i] <= 2'b11;
+        context_translation_en_r[i] <= 1'b0;
+        context_asid_r[i] <= '0;
+      end
+    end else if (commit_pkt.ctxtsw | ctx_npc_write_v_lo) begin
+      logic [thread_id_width_p-1:0] commit_thread_id_li;
+      commit_thread_id_li = ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo;
+      if (commit_thread_id_li < num_threads_p) begin
+        context_npc_r[commit_thread_id_li] <= ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc;
+        context_priv_mode_r[commit_thread_id_li] <= commit_pkt.priv_n;
+        context_translation_en_r[commit_thread_id_li] <= commit_pkt.translation_en_n;
+        context_asid_r[commit_thread_id_li] <= trans_info_lo.asid;
+      end
+    end
+  end
 
-  // Instantiate context storage for multi-threaded state
-  bp_be_context_storage
-   #(.num_threads_p(num_threads_p)
-     ,.vaddr_width_p(vaddr_width_p)
-     ,.asid_width_p(asid_width_p)
-     )
-   context_storage
-    (.clk_i(clk_i)
-     ,.reset_i(reset_i)
-     ,.current_thread_id_i(commit_pkt.ctxtsw ? csr_ctxt_write_data_lo : current_thread_id_lo)
-     ,.npc_o(context_npc_lo)
-     ,.priv_mode_o(context_priv_mode_lo)
-     ,.translation_en_o(context_translation_en_lo)
-     ,.asid_o(context_asid_lo)
-     // Save thread NPC on context switch (commit_pkt.npc = PC after the csrw 0x081),
-     // or when CSR 0x082 seeds a thread's entry NPC directly.
-     ,.commit_v_i(commit_pkt.ctxtsw | ctx_npc_write_v_lo)
-     ,.commit_thread_id_i(ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo)
-     ,.npc_i(ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc)
-     ,.priv_mode_i(commit_pkt.priv_n)
-     ,.translation_en_i(commit_pkt.translation_en_n)
-     ,.asid_i(trans_info_lo.asid)
-     );
+  wire [thread_id_width_p-1:0] context_read_thread_id_li =
+    commit_pkt.ctxtsw ? csr_ctxt_write_data_lo : current_thread_id_lo;
+  wire context_fwd_v = (commit_pkt.ctxtsw | ctx_npc_write_v_lo)
+                       && ((ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo) == context_read_thread_id_li)
+                       && ((ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo) < num_threads_p)
+                       && (context_read_thread_id_li < num_threads_p);
+
+  always_comb begin
+    if (context_fwd_v) begin
+      context_npc_lo = ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc;
+      context_priv_mode_lo = commit_pkt.priv_n;
+      context_translation_en_lo = commit_pkt.translation_en_n;
+      context_asid_lo = trans_info_lo.asid;
+    end else if (context_read_thread_id_li < num_threads_p) begin
+      context_npc_lo = context_npc_r[context_read_thread_id_li];
+      context_priv_mode_lo = context_priv_mode_r[context_read_thread_id_li];
+      context_translation_en_lo = context_translation_en_r[context_read_thread_id_li];
+      context_asid_lo = context_asid_r[context_read_thread_id_li];
+    end else begin
+      context_npc_lo = '0;
+      context_priv_mode_lo = 2'b11;
+      context_translation_en_lo = 1'b0;
+      context_asid_lo = '0;
+    end
+  end
 
   bp_be_director
    #(.bp_params_p(bp_params_p))
