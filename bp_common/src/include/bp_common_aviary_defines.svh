@@ -53,7 +53,6 @@
     , localparam num_threads_p = proc_param_lp.num_threads                                         \
     , localparam thread_id_width_p = `BSG_SAFE_CLOG2(num_threads_p)                                \
     , localparam thread_context_bytes_p = proc_param_lp.thread_context_bytes                       \
-    , localparam thread_scheduler_enable_p = proc_param_lp.thread_scheduler_enable                 \
     , localparam monitor_enable_p = proc_param_lp.monitor_enable                                   \
                                                                                                    \
     , localparam branch_metadata_fwd_width_p = proc_param_lp.branch_metadata_fwd_width             \
@@ -327,9 +326,7 @@
                                                                                                    \
           ,`bp_aviary_parameter_override(num_threads, override_cfg_mp, default_cfg_mp)             \
           ,`bp_aviary_parameter_override(thread_context_bytes, override_cfg_mp, default_cfg_mp)    \
-          ,`bp_aviary_parameter_override(thread_scheduler_enable, override_cfg_mp, default_cfg_mp) \
           ,`bp_aviary_parameter_override(monitor_enable, override_cfg_mp, default_cfg_mp)          \
           }
 
 `endif
-

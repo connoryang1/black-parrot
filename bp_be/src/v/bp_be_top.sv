@@ -127,7 +127,7 @@ module bp_be_top
   logic [dpath_width_gp-1:0] ctx_rpush_data_lo;
 
 
-  // Instantiate round-robin thread scheduler
+  // Holds the currently active thread ID selected by CTXT CSR writes.
   bp_be_thread_scheduler
    #(.num_threads_p(num_threads_p)
      ,.thread_id_width_p(thread_id_width_p)
