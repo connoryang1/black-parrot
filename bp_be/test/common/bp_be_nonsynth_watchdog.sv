@@ -24,8 +24,9 @@ module bp_be_nonsynth_watchdog
   // snoop
   wire waiting = bp_be_top.director.is_wait;
   wire [core_id_width_p-1:0] mhartid = bp_be_top.cfg_bus_cast_i.core_id;
-  wire [vaddr_width_p-1:0] apc_r = bp_be_top.calculator.pipe_sys.csr.apc_r;
-  wire [vaddr_width_p-1:0] apc_n = bp_be_top.calculator.pipe_sys.csr.apc_n;
+  // csr is bp_be_csr_wrapper_mt; probe thread 0's instance for watchdog.
+  wire [vaddr_width_p-1:0] apc_r = bp_be_top.calculator.pipe_sys.csr.gen_csr[0].csr_inst.apc_r;
+  wire [vaddr_width_p-1:0] apc_n = bp_be_top.calculator.pipe_sys.csr.gen_csr[0].csr_inst.apc_n;
   wire instret = bp_be_top.commit_pkt.instret;
   wire wfi = bp_be_top.commit_pkt.wfi;
 
@@ -78,4 +79,3 @@ module bp_be_nonsynth_watchdog
       $error("[BSG-ERROR] Core %x PC has become X! is_go: %b apc_r: %x", mhartid, is_go, apc_r);
 
 endmodule
-

@@ -203,6 +203,7 @@ $BP_DIR/bp_be/src/v/bp_be_top.sv
 # Calculator
 $BP_DIR/bp_be/src/v/bp_be_calculator/bp_be_calculator_top.sv
 $BP_DIR/bp_be/src/v/bp_be_calculator/bp_be_csr.sv
+$BP_DIR/bp_be/src/v/bp_be_csr_wrapper_mt.sv
 $BP_DIR/bp_be/src/v/bp_be_calculator/bp_be_fp_box.sv
 $BP_DIR/bp_be/src/v/bp_be_calculator/bp_be_fp_rebox.sv
 $BP_DIR/bp_be/src/v/bp_be_calculator/bp_be_fp_unbox.sv
@@ -224,7 +225,7 @@ $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_director.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_expander.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_instr_decoder.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_issue_queue.sv
-$BP_DIR/bp_be/src/v/bp_be_checker/bp_be_regfile.sv
+$BP_DIR/bp_be/src/v/bp_be_regfile_mt.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_scheduler.sv
 $BP_DIR/bp_be/src/v/bp_be_checker/bp_be_scoreboard.sv
 # MMU
@@ -329,4 +330,3 @@ $BP_DIR/bp_top/src/v/bp_processor.sv
 $BP_DIR/bp_common/src/v/bsg_async_noc_link.sv
 $BP_DIR/bp_common/src/v/bsg_dff_sync_read.sv
 $BP_DIR/bp_common/src/v/bsg_fifo_1r1w_edge.sv
-

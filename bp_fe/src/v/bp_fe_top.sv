@@ -59,7 +59,7 @@ module bp_fe_top
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
   `declare_bp_cfg_bus_s(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p);
-  `declare_bp_fe_branch_metadata_fwd_s(ras_idx_width_p, btb_tag_width_p, btb_idx_width_p, bht_idx_width_p, ghist_width_p, bht_row_els_p);
+  `declare_bp_fe_branch_metadata_fwd_s(ras_idx_width_p, btb_tag_width_p, btb_idx_width_p, bht_idx_width_p, ghist_width_p, bht_row_els_p, thread_id_width_p);
   `bp_cast_i(bp_cfg_bus_s, cfg_bus);
 
   logic [rv64_priv_width_gp-1:0] shadow_priv_n, shadow_priv_r;
@@ -86,6 +86,18 @@ module bp_fe_top
      ,.data_o(shadow_translation_en_r)
      );
 
+  logic [asid_width_p-1:0] shadow_asid_n, shadow_asid_r;
+  logic shadow_asid_w;
+  bsg_dff_reset_en_bypass
+   #(.width_p(asid_width_p))
+   shadow_asid_reg
+    (.clk_i(clk_i)
+     ,.reset_i(reset_i)
+     ,.en_i(shadow_asid_w)
+     ,.data_i(shadow_asid_n)
+     ,.data_o(shadow_asid_r)
+     );
+
   logic attaboy_v_li, attaboy_force_li, attaboy_yumi_lo, attaboy_taken_li, attaboy_ntaken_li;
   logic [vaddr_width_p-1:0] attaboy_pc_li;
   bp_fe_branch_metadata_fwd_s attaboy_br_metadata_fwd_li;
@@ -96,6 +108,7 @@ module bp_fe_top
   bp_fe_branch_metadata_fwd_s redirect_br_metadata_fwd_li;
 
   logic pc_gen_init_done_lo;
+  logic state_reset_v_lo;
   logic [vaddr_width_p-1:0] next_pc_lo;
   logic ovr_lo;
 
@@ -126,6 +139,7 @@ module bp_fe_top
      ,.reset_i(reset_i)
 
      ,.init_done_o(pc_gen_init_done_lo)
+     ,.state_reset_v_i(state_reset_v_lo)
 
      ,.attaboy_v_i(attaboy_v_li)
      ,.attaboy_force_i(attaboy_force_li)
@@ -203,6 +217,7 @@ module bp_fe_top
      ,.flush_i(tv_flush_lo)
      ,.fence_i(itlb_fence_v_li)
      ,.priv_mode_i(shadow_priv_r)
+     ,.asid_i(shadow_asid_r)
      ,.trans_en_i(shadow_translation_en_r)
      // Supervisor use of user memory is always disabled for immu
      ,.sum_i('0)
@@ -433,6 +448,11 @@ module bp_fe_top
 
      ,.shadow_translation_en_o(shadow_translation_en_n)
      ,.shadow_translation_en_w_o(shadow_translation_en_w)
+
+     ,.shadow_asid_o(shadow_asid_n)
+     ,.shadow_asid_w_o(shadow_asid_w)
+
+     ,.state_reset_v_o(state_reset_v_lo)
      );
 
 endmodule

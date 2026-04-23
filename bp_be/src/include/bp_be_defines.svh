@@ -32,6 +32,7 @@
     typedef struct packed                                                                          \
     {                                                                                              \
       logic                                    v;                                                  \
+      logic [vaddr_width_mp-1:0]               thread_id;                                         \
       logic                                    fetch;                                              \
       logic                                    itlb_miss;                                          \
       logic                                    instr_access_fault;                                 \
@@ -63,6 +64,7 @@
     typedef struct packed                                                                          \
     {                                                                                              \
       logic                                    v;                                                  \
+      logic [vaddr_width_mp-1:0]               thread_id;                                         \
       logic                                    queue_v;                                            \
       logic                                    ispec_v;                                            \
       logic                                    nspec_v;                                            \
@@ -162,6 +164,7 @@
     typedef struct packed                                                                          \
     {                                                                                              \
       logic                           npc_w_v;                                                     \
+      logic [vaddr_width_mp-1:0]      thread_id;                                                  \
       logic                           queue_v;                                                     \
       logic                           instret;     /* High if instruction successfully retired */  \
       logic [fetch_ptr_mp-1:0]        count;                                                       \
@@ -180,6 +183,7 @@
       logic                           fencei;                                                      \
       logic                           sfence;                                                      \
       logic                           csrw;                                                        \
+      logic                           ctxtsw;                                                      \
       logic                           wfi;                                                         \
       logic                           itlb_miss;                                                   \
       logic                           icache_miss;                                                 \
@@ -195,6 +199,7 @@
                                                                                                    \
     typedef struct packed                                                                          \
     {                                                                                              \
+      logic [thread_id_width_p-1:0] thread_id;                                                     \
       logic                         ird_w_v;                                                       \
       logic                         frd_w_v;                                                       \
       logic                         ptw_w_v;                                                       \
@@ -210,6 +215,7 @@
       logic                                           translation_en;                              \
       logic                                           mstatus_sum;                                 \
       logic                                           mstatus_mxr;                                 \
+      logic [asid_width_mp-1:0]                       asid;                                        \
     }  bp_be_trans_info_s;                                                                         \
                                                                                                    \
     typedef struct packed                                                                          \
@@ -244,7 +250,7 @@
   , localparam pte_leaf_width_lp = `bp_be_pte_leaf_width(paddr_width_mp) \
   , localparam commit_pkt_width_lp = `bp_be_commit_pkt_width(vaddr_width_mp, paddr_width_mp, fetch_ptr_mp, issue_ptr_mp) \
   , localparam wb_pkt_width_lp = `bp_be_wb_pkt_width(vaddr_width_mp) \
-  , localparam trans_info_width_lp = `bp_be_trans_info_width(paddr_width_mp) \
+  , localparam trans_info_width_lp = `bp_be_trans_info_width(paddr_width_mp, asid_width_mp) \
   , localparam decode_info_width_lp = `bp_be_decode_info_width \
   , localparam dcache_pkt_width_lp = `bp_be_dcache_pkt_width(vaddr_width_mp)
 
@@ -252,10 +258,10 @@
     (5+rv64_instr_width_gp+issue_ptr_mp)
 
   `define bp_be_issue_pkt_width(vaddr_width_mp, branch_metadata_fwd_width_mp, fetch_ptr_mp, issue_ptr_mp) \
-    (6+vaddr_width_mp+instr_width_gp+fetch_ptr_mp+issue_ptr_mp+$bits(bp_be_decode_s)+dpath_width_gp+branch_metadata_fwd_width_mp+13)
+    (7+2*vaddr_width_mp+instr_width_gp+fetch_ptr_mp+issue_ptr_mp+$bits(bp_be_decode_s)+dpath_width_gp+branch_metadata_fwd_width_mp+13)
 
   `define bp_be_dispatch_pkt_width(vaddr_width_mp, fetch_ptr_mp, issue_ptr_mp) \
-    (4+vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+3*dpath_width_gp+$bits(bp_be_decode_s)+$bits(bp_be_exception_s)+$bits(bp_be_special_s))
+    (5+2*vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+3*dpath_width_gp+$bits(bp_be_decode_s)+$bits(bp_be_exception_s)+$bits(bp_be_special_s))
 
   `define bp_be_reservation_width(vaddr_width_mp, fetch_ptr_mp, issue_ptr_mp) \
     (1+vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+$bits(bp_be_decode_s)+3*int_rec_width_gp+3*dp_rec_width_gp)
@@ -270,16 +276,15 @@
     (paddr_width_mp-page_offset_width_gp+8)
 
   `define bp_be_commit_pkt_width(vaddr_width_mp, paddr_width_mp, fetch_ptr_mp, issue_ptr_mp) \
-    (4+`bp_be_pte_leaf_width(paddr_width_mp)+3*vaddr_width_mp+instr_width_gp+fetch_ptr_mp+issue_ptr_mp+rv64_priv_width_gp+18)
+    (5+vaddr_width_mp+`bp_be_pte_leaf_width(paddr_width_mp)+3*vaddr_width_mp+instr_width_gp+fetch_ptr_mp+issue_ptr_mp+rv64_priv_width_gp+19)
 
   `define bp_be_wb_pkt_width(vaddr_width_mp) \
-    (3+reg_addr_width_gp+dpath_width_gp+$bits(rv64_fflags_s))
+    (3+reg_addr_width_gp+dpath_width_gp+$bits(rv64_fflags_s)+thread_id_width_p)
 
-  `define bp_be_trans_info_width(paddr_width_mp) \
-    (rv64_priv_width_gp+paddr_width_mp-page_offset_width_gp+3)
+  `define bp_be_trans_info_width(paddr_width_mp, asid_width_mp) \
+    (rv64_priv_width_gp+paddr_width_mp-page_offset_width_gp+3+asid_width_mp)
 
   `define bp_be_decode_info_width \
     (rv64_priv_width_gp+11)
 
 `endif
-

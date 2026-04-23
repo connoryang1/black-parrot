@@ -8,9 +8,7 @@ module bp_be_csr
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_be_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p)
-
    , localparam cfg_bus_width_lp = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
-
    )
   (input                                     clk_i
    , input                                   reset_i
@@ -44,6 +42,25 @@ module bp_be_csr
    , output logic [decode_info_width_lp-1:0] decode_info_o
    , output logic [trans_info_width_lp-1:0]  trans_info_o
    , output rv64_frm_e                       frm_dyn_o
+
+   // Context switching control
+   , input [thread_id_width_p-1:0]           current_thread_id_i
+   , output logic                            csr_ctxt_write_v_o
+   , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
+
+   // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
+   // Write format: upper bits = thread_id, lower vaddr_width_p bits = target NPC
+   , output logic                            ctx_npc_write_v_o
+   , output logic [thread_id_width_p-1:0]    ctx_npc_write_tid_o
+   , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
+
+   // rpush: write an arbitrary register of a disabled thread's register file (CSR 0x083)
+   // Write format: bits[38:0]=value, bits[40:39]=thread_id, bits[45:41]=reg_addr, bit[46]=fp_sel
+   , output logic                            ctx_rpush_v_o
+   , output logic                            ctx_rpush_fp_v_o
+   , output logic [thread_id_width_p-1:0]    ctx_rpush_tid_o
+   , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
+   , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
    );
 
   // Declare parameterizable structs
@@ -79,6 +96,16 @@ module bp_be_csr
   `declare_csr_addr(dpc, vaddr_width_p, paddr_width_p);
   `declare_csr(dscratch0);
   `declare_csr(dscratch1);
+
+  // Register current thread ID to synchronize with the pipeline.
+  // This ensures CSR reads capture the properly updated thread ID.
+  logic [thread_id_width_p-1:0] current_thread_id_r;
+  always @(posedge clk_i) begin
+    if (reset_i)
+      current_thread_id_r <= '0;
+    else
+      current_thread_id_r <= current_thread_id_i;
+  end
 
   // We have no vendorid currently
   wire [dword_width_gp-1:0] mvendorid_lo = 64'h0;
@@ -429,6 +456,12 @@ module bp_be_csr
         {`CSR_ADDR_DPC          }: csr_data_lo = dpc_lo;
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
+        12'h081:  // CTXT CSR - Current thread/context ID
+          csr_data_lo = current_thread_id_i;
+        12'h082:  // Thread NPC seed - write-only, reads as 0
+          csr_data_lo = '0;
+        12'h083:  // Thread register seed (rpush) - write-only, reads as 0
+          csr_data_lo = '0;
         default:
           begin
             csr_data_lo = '0;
@@ -715,7 +748,8 @@ module bp_be_csr
   assign commit_pkt_cast_o.sfence            = retire_pkt_cast_i.special.sfence_vma;
   assign commit_pkt_cast_o.wfi               = retire_pkt_cast_i.special.wfi;
   assign commit_pkt_cast_o.eret              = ret_v;
-  assign commit_pkt_cast_o.csrw              = retire_pkt_cast_i.special.csrw;
+  assign commit_pkt_cast_o.csrw              = retire_pkt_cast_i.special.csrw & ~(csr_addr_li == 12'h081) & ~(csr_addr_li == 12'h082) & ~(csr_addr_li == 12'h083);
+  assign commit_pkt_cast_o.ctxtsw            = retire_pkt_cast_i.special.csrw & (csr_addr_li == 12'h081);
   assign commit_pkt_cast_o.resume            = retire_pkt_cast_i.exception.resume;
   assign commit_pkt_cast_o.itlb_miss         = retire_pkt_cast_i.exception.itlb_miss;
   assign commit_pkt_cast_o.icache_miss       = retire_pkt_cast_i.exception.icache_miss;
@@ -734,6 +768,7 @@ module bp_be_csr
     | ((~is_debug_mode | dcsr_lo.mprven) & mstatus_lo.mprv & (mstatus_lo.mpp < `PRIV_MODE_M) & (satp_lo.mode == 4'd8));
   assign trans_info_cast_o.mstatus_sum = mstatus_lo.sum;
   assign trans_info_cast_o.mstatus_mxr = mstatus_lo.mxr;
+  assign trans_info_cast_o.asid        = satp_lo.asid;
 
   assign decode_info_cast_o.m_mode     = is_m_mode;
   assign decode_info_cast_o.s_mode     = is_s_mode;
@@ -751,5 +786,39 @@ module bp_be_csr
 
   assign frm_dyn_o = rv64_frm_e'(fcsr_lo.frm);
 
-endmodule
+  // CSR 0x081 write: context switch to the specified thread ID
+  assign csr_ctxt_write_v_o    = csr_w_v_li & (csr_addr_li == 12'h081);
+  assign csr_ctxt_write_data_o = csr_data_li[0+:thread_id_width_p];
 
+  // CSR 0x082 write: set the NPC for the thread whose ID is in the upper bits
+  // Write format: csr_data_li[vaddr_width_p +: thread_id_width_p] = thread_id
+  //               csr_data_li[vaddr_width_p-1:0]                  = target NPC
+  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h082);
+  assign ctx_npc_write_tid_o = csr_data_li[vaddr_width_p +: thread_id_width_p];
+  assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
+
+  // CSR 0x083 write: rpush — write an arbitrary register of a disabled thread (proto-rpush from HotOS '21)
+  // Write format: bits[38:0]                                    = value (39-bit vaddr width)
+  //               bits[38+thread_id_width_p : 39]               = thread_id
+  //               bits[38+thread_id_width_p+reg_addr_width_gp : 39+thread_id_width_p] = reg_addr
+  //               bit[46]                                        = fp_sel (1=FP regfile, 0=INT regfile)
+  localparam fp_sel_bit_lp = vaddr_width_p + thread_id_width_p + reg_addr_width_gp;
+  wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h083);
+  assign ctx_rpush_v_o    = rpush_v & ~csr_data_li[fp_sel_bit_lp];
+  assign ctx_rpush_fp_v_o = rpush_v &  csr_data_li[fp_sel_bit_lp];
+  assign ctx_rpush_tid_o  = csr_data_li[vaddr_width_p +: thread_id_width_p];
+  assign ctx_rpush_reg_o  = csr_data_li[vaddr_width_p + thread_id_width_p +: reg_addr_width_gp];
+  assign ctx_rpush_data_o = {{(dpath_width_gp - vaddr_width_p){1'b0}}, csr_data_li[0 +: vaddr_width_p]};
+
+  // Debug: trace every CSR write
+  // always @(posedge clk_i) begin
+  //   if (!reset_i && csr_w_v_li) begin
+  //     $display("[CSR @%0t] csrw: addr=0x%03x data=0x%016x csr_ctxt_write_v=%0b ctx_npc_write_v=%0b",
+  //              $time, csr_addr_li, csr_data_li, csr_ctxt_write_v_o, ctx_npc_write_v_o);
+  //     if (csr_addr_li == 12'h082)
+  //       $display("[CSR @%0t] CSR0x082 write: raw_data=0x%016x -> tid=%0d npc=0x%08x",
+  //                $time, csr_data_li, ctx_npc_write_tid_o, ctx_npc_write_npc_o);
+  //   end
+  // end
+
+endmodule

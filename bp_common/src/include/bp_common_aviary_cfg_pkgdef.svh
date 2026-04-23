@@ -275,6 +275,9 @@
     // Maximum credits supported by the network. Correlated to the bandwidth delay product
     int dma_noc_max_credits;
 
+    // Number of hardware thread contexts per core.
+    int num_threads;
+
   }  bp_proc_param_s;
 
   localparam bp_proc_param_s bp_default_cfg_p =
@@ -296,7 +299,7 @@
       ,caddr_width: 32
       ,asid_width : 1
 
-      ,branch_metadata_fwd_width: 49
+      ,branch_metadata_fwd_width: 51
       ,ras_idx_width            : 4
       ,btb_tag_width            : 9
       ,btb_idx_width            : 6
@@ -388,6 +391,8 @@
       ,dma_noc_cid_width     : 3
       ,dma_noc_len_width     : 4
       ,dma_noc_max_credits   : 32
+
+      ,num_threads           : 4               // Default multi-context configuration
       };
 
   // BP_CUSTOM_DEFINES_PATH can be set to a file which has the custom defines below set
@@ -498,7 +503,8 @@
       ,`bp_aviary_define_override(dma_noc_flit_width, BP_MEM_NOC_FLIT_WIDTH, `BP_CUSTOM_BASE_CFG)
       ,`bp_aviary_define_override(dma_noc_cid_width, BP_MEM_NOC_CID_WIDTH, `BP_CUSTOM_BASE_CFG)
       ,`bp_aviary_define_override(dma_noc_len_width, BP_MEM_NOC_LEN_WIDTH, `BP_CUSTOM_BASE_CFG)
+
+      ,`bp_aviary_define_override(num_threads, BP_NUM_THREADS, `BP_CUSTOM_BASE_CFG)
       };
 
 `endif
-

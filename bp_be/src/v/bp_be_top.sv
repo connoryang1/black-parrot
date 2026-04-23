@@ -93,6 +93,17 @@ module bp_be_top
   bp_be_decode_info_s decode_info_lo;
   bp_be_trans_info_s trans_info_lo;
 
+  // Multi-threaded context storage signals
+  logic [vaddr_width_p-1:0] context_npc_lo;
+  logic [1:0] context_priv_mode_lo;
+  logic context_translation_en_lo;
+  logic [asid_width_p-1:0] context_asid_lo;
+  logic [thread_id_width_p-1:0] current_thread_id_lo;
+  logic [num_threads_p-1:0][vaddr_width_p-1:0] context_npc_r;
+  logic [num_threads_p-1:0][1:0] context_priv_mode_r;
+  logic [num_threads_p-1:0] context_translation_en_r;
+  logic [num_threads_p-1:0][asid_width_p-1:0] context_asid_r;
+
   logic [wb_pkt_width_lp-1:0] late_wb_pkt;
   logic late_wb_v_lo, late_wb_force_lo, late_wb_yumi_li;
 
@@ -103,12 +114,89 @@ module bp_be_top
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
 
+  // CSR-based context switching signals
+  logic csr_ctxt_write_v_lo;
+  logic [thread_id_width_p-1:0] csr_ctxt_write_data_lo;
+
+  // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
+  logic ctx_npc_write_v_lo;
+  logic [thread_id_width_p-1:0] ctx_npc_write_tid_lo;
+  logic [vaddr_width_p-1:0] ctx_npc_write_npc_lo;
+
+  // rpush: write arbitrary register of a disabled thread's register file (CSR 0x083)
+  logic ctx_rpush_v_lo;
+  logic ctx_rpush_fp_v_lo;
+  logic [thread_id_width_p-1:0] ctx_rpush_tid_lo;
+  logic [reg_addr_width_gp-1:0] ctx_rpush_reg_lo;
+  logic [dpath_width_gp-1:0] ctx_rpush_data_lo;
+
+  // Active hardware thread ID selected by CTXT CSR writes.
+  always_ff @(posedge clk_i) begin
+    if (reset_i)
+      current_thread_id_lo <= '0;
+    else if (csr_ctxt_write_v_lo)
+      current_thread_id_lo <= csr_ctxt_write_data_lo;
+  end
+
+  // Per-thread context storage for resume state.
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      for (int i = 0; i < num_threads_p; i++) begin
+        context_npc_r[i] <= '0;
+        context_priv_mode_r[i] <= 2'b11;
+        context_translation_en_r[i] <= 1'b0;
+        context_asid_r[i] <= '0;
+      end
+    end else if (commit_pkt.ctxtsw | ctx_npc_write_v_lo) begin
+      logic [thread_id_width_p-1:0] commit_thread_id_li;
+      commit_thread_id_li = ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo;
+      if (commit_thread_id_li < num_threads_p) begin
+        context_npc_r[commit_thread_id_li] <= ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc;
+        context_priv_mode_r[commit_thread_id_li] <= commit_pkt.priv_n;
+        context_translation_en_r[commit_thread_id_li] <= commit_pkt.translation_en_n;
+        context_asid_r[commit_thread_id_li] <= trans_info_lo.asid;
+      end
+    end
+  end
+
+  wire [thread_id_width_p-1:0] context_read_thread_id_li =
+    commit_pkt.ctxtsw ? csr_ctxt_write_data_lo : current_thread_id_lo;
+  wire context_fwd_v = (commit_pkt.ctxtsw | ctx_npc_write_v_lo)
+                       && ((ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo) == context_read_thread_id_li)
+                       && ((ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo) < num_threads_p)
+                       && (context_read_thread_id_li < num_threads_p);
+
+  always_comb begin
+    if (context_fwd_v) begin
+      context_npc_lo = ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc;
+      context_priv_mode_lo = commit_pkt.priv_n;
+      context_translation_en_lo = commit_pkt.translation_en_n;
+      context_asid_lo = trans_info_lo.asid;
+    end else if (context_read_thread_id_li < num_threads_p) begin
+      context_npc_lo = context_npc_r[context_read_thread_id_li];
+      context_priv_mode_lo = context_priv_mode_r[context_read_thread_id_li];
+      context_translation_en_lo = context_translation_en_r[context_read_thread_id_li];
+      context_asid_lo = context_asid_r[context_read_thread_id_li];
+    end else begin
+      context_npc_lo = '0;
+      context_priv_mode_lo = 2'b11;
+      context_translation_en_lo = 1'b0;
+      context_asid_lo = '0;
+    end
+  end
+
   bp_be_director
    #(.bp_params_p(bp_params_p))
    director
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
      ,.cfg_bus_i(cfg_bus_i)
+     ,.context_npc_i(context_npc_lo)
+     ,.current_thread_id_i(current_thread_id_lo)
+     ,.context_thread_id_i(csr_ctxt_write_data_lo)
+     ,.context_asid_i(context_asid_lo)
+     ,.context_priv_i(context_priv_mode_lo)
+     ,.context_translation_en_i(context_translation_en_lo)
 
      ,.issue_pkt_i(issue_pkt)
      ,.expected_npc_o(expected_npc_lo)
@@ -186,6 +274,14 @@ module bp_be_top
      ,.late_wb_v_i(late_wb_v_lo)
      ,.late_wb_force_i(late_wb_force_lo)
      ,.late_wb_yumi_o(late_wb_yumi_li)
+
+     ,.current_thread_id_i(current_thread_id_lo)
+
+     ,.rpush_w_v_i(ctx_rpush_v_lo)
+     ,.rpush_fp_w_v_i(ctx_rpush_fp_v_lo)
+     ,.rpush_tid_i(ctx_rpush_tid_lo)
+     ,.rpush_reg_i(ctx_rpush_reg_lo)
+     ,.rpush_data_i(ctx_rpush_data_lo)
      );
 
   bp_be_calculator_top
@@ -248,7 +344,18 @@ module bp_be_top
      ,.irq_pending_o(irq_pending_lo)
      ,.irq_waiting_o(irq_waiting_lo)
      ,.cmd_full_n_i(cmd_full_n_lo)
+     // Context switching
+     ,.current_thread_id_i(current_thread_id_lo)
+     ,.csr_ctxt_write_v_o(csr_ctxt_write_v_lo)
+     ,.csr_ctxt_write_data_o(csr_ctxt_write_data_lo)
+     ,.ctx_npc_write_v_o(ctx_npc_write_v_lo)
+     ,.ctx_npc_write_tid_o(ctx_npc_write_tid_lo)
+     ,.ctx_npc_write_npc_o(ctx_npc_write_npc_lo)
+     ,.ctx_rpush_v_o(ctx_rpush_v_lo)
+     ,.ctx_rpush_fp_v_o(ctx_rpush_fp_v_lo)
+     ,.ctx_rpush_tid_o(ctx_rpush_tid_lo)
+     ,.ctx_rpush_reg_o(ctx_rpush_reg_lo)
+     ,.ctx_rpush_data_o(ctx_rpush_data_lo)
      );
 
 endmodule
-

@@ -84,6 +84,11 @@ module bp_fe_controller
 
    , output logic                                     shadow_translation_en_w_o
    , output logic                                     shadow_translation_en_o
+
+   , output logic                                     shadow_asid_w_o
+   , output logic [asid_width_p-1:0]                  shadow_asid_o
+
+   , output logic                                     state_reset_v_o
    );
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
@@ -101,7 +106,8 @@ module bp_fe_controller
   wire is_wait     = (state_r == e_wait);
   wire is_resume   = (state_r == e_resume);
 
-  wire pc_redirect_v          = fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_pc_redirection);
+  wire context_switch_v       = fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_context_switch);
+  wire pc_redirect_v          = (fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_pc_redirection)) | context_switch_v;
   wire icache_fill_response_v = fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_icache_fill_response);
   wire icache_fence_v         = fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_icache_fence);
 
@@ -146,11 +152,16 @@ module bp_fe_controller
   assign attaboy_ntaken_o          = attaboy_v & ~fe_cmd_cast_i.operands.attaboy.taken;
   assign attaboy_br_metadata_fwd_o = fe_cmd_cast_i.operands.attaboy.branch_metadata_fwd;
 
-  assign shadow_priv_w_o = state_reset_v | trap_v | interrupt_v | eret_v;
+  assign state_reset_v_o = state_reset_v;
+
+  assign shadow_priv_w_o = state_reset_v | trap_v | interrupt_v | eret_v | context_switch_v;
   assign shadow_priv_o = fe_cmd_cast_i.operands.pc_redirect_operands.priv;
 
-  assign shadow_translation_en_w_o = state_reset_v | trap_v | interrupt_v | eret_v | translation_v;
+  assign shadow_translation_en_w_o = state_reset_v | trap_v | interrupt_v | eret_v | translation_v | context_switch_v;
   assign shadow_translation_en_o = fe_cmd_cast_i.operands.pc_redirect_operands.translation_en;
+
+  assign shadow_asid_w_o = state_reset_v | trap_v | interrupt_v | eret_v | translation_v | context_switch_v;
+  assign shadow_asid_o   = fe_cmd_cast_i.operands.pc_redirect_operands.asid;
 
   assign itlb_w_vtag_o = fe_cmd_cast_i.npc[vaddr_width_p-1-:vtag_width_p];
   assign itlb_w_entry_o = fe_cmd_cast_i.operands.itlb_fill_response.pte_leaf;
@@ -298,4 +309,3 @@ module bp_fe_controller
         state_r <= state_n;
 
 endmodule
-
