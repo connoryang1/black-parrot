@@ -278,15 +278,6 @@
     // Number of hardware thread contexts per core.
     int num_threads;
 
-    // Width of thread context in bytes (derived from bp_thread_ctx_s)
-    // Default: 70 bytes (565 bits) based on Phase 0.3 struct definition
-    int thread_context_bytes;
-
-    // Enable/disable monitor/mwait (pause-on-memory) support
-    // When enabled: MWAIT instruction will block thread until memory changed
-    // When disabled: MWAIT behaves as NOP
-    int monitor_enable;
-
   }  bp_proc_param_s;
 
   localparam bp_proc_param_s bp_default_cfg_p =
@@ -402,8 +393,6 @@
       ,dma_noc_max_credits   : 32
 
       ,num_threads           : 4               // Default multi-context configuration
-      ,thread_context_bytes  : 70              // Default: 565 bits packed into 70 bytes
-      ,monitor_enable        : 0               // Default: MWAIT support disabled
       };
 
   // BP_CUSTOM_DEFINES_PATH can be set to a file which has the custom defines below set
@@ -516,8 +505,6 @@
       ,`bp_aviary_define_override(dma_noc_len_width, BP_MEM_NOC_LEN_WIDTH, `BP_CUSTOM_BASE_CFG)
 
       ,`bp_aviary_define_override(num_threads, BP_NUM_THREADS, `BP_CUSTOM_BASE_CFG)
-      ,`bp_aviary_define_override(thread_context_bytes, BP_THREAD_CONTEXT_BYTES, `BP_CUSTOM_BASE_CFG)
-      ,`bp_aviary_define_override(monitor_enable, BP_MONITOR_ENABLE, `BP_CUSTOM_BASE_CFG)
       };
 
 `endif

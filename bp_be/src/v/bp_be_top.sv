@@ -110,7 +110,7 @@ module bp_be_top
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
 
-  // Phase 1.4: CSR-based context switching signals
+  // CSR-based context switching signals
   logic csr_ctxt_write_v_lo;
   logic [thread_id_width_p-1:0] csr_ctxt_write_data_lo;
 
@@ -136,7 +136,7 @@ module bp_be_top
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
      ,.thread_id_o(current_thread_id_lo)
-     // Phase 1.4: CSR-controlled context switching
+     // CSR-controlled context switching
      ,.csr_write_ctxt_v_i(csr_ctxt_write_v_lo)
      ,.csr_write_ctxt_data_i(csr_ctxt_write_data_lo)
      );
@@ -324,7 +324,7 @@ module bp_be_top
      ,.irq_pending_o(irq_pending_lo)
      ,.irq_waiting_o(irq_waiting_lo)
      ,.cmd_full_n_i(cmd_full_n_lo)
-     // Phase 1.4: Context switching
+     // Context switching
      ,.current_thread_id_i(current_thread_id_lo)
      ,.csr_ctxt_write_v_o(csr_ctxt_write_v_lo)
      ,.csr_ctxt_write_data_o(csr_ctxt_write_data_lo)

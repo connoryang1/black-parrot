@@ -1,7 +1,7 @@
 /**
  * bp_be_csr_wrapper_mt.sv
  *
- * Multi-thread CSR Wrapper — Phase 2A
+ * Multi-thread CSR Wrapper
  *
  * Instantiates one bp_be_csr per thread (num_threads_p copies).
  * Presents the same external interface as a single bp_be_csr so it can be
@@ -58,7 +58,7 @@ module bp_be_csr_wrapper_mt
    , output logic [trans_info_width_lp-1:0]  trans_info_o
    , output rv64_frm_e                       frm_dyn_o
 
-   // Context switching control (Phase 1.4)
+   // Context switching control
    , input [thread_id_width_p-1:0]           current_thread_id_i
    , output logic                            csr_ctxt_write_v_o
    , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o

@@ -44,7 +44,7 @@ module bp_be_nonsynth_cosim
   localparam lg_queue_size_lp = 10;
 
   // snoop
-  // After Phase 2A, csr is bp_be_csr_wrapper_mt; thread 0's instance is at gen_csr[0].csr_inst.
+  // csr is bp_be_csr_wrapper_mt; thread 0's instance is at gen_csr[0].csr_inst.
   // Cosim only does single-thread verification so probing thread 0 is correct.
   wire [core_id_width_p-1:0] mhartid = calculator.pipe_sys.csr.gen_csr[0].csr_inst.mhartid_lo;
   wire bp_be_commit_pkt_s commit_pkt = calculator.commit_pkt_o;
@@ -213,4 +213,3 @@ module bp_be_nonsynth_cosim
       end
 
 endmodule
-
