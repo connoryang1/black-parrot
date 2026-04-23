@@ -316,19 +316,4 @@ module bp_be_director
   assign cmd_full_n_o = cmd_full_n_lo;
   assign cmd_full_r_o = cmd_full_r_lo;
 
-  // Debug: trace NPC updates and FE commands
-  // always @(posedge clk_i) begin
-  //   if (!reset_i) begin
-  //     if (commit_pkt_cast_i.ctxtsw)
-  //       $display("[DIR @%0t] CTXTSW: context_npc_i=0x%08x commit_npc=0x%08x npc_w_v=%0b -> npc_n=0x%08x",
-  //                $time, context_npc_i, commit_pkt_cast_i.npc, commit_pkt_cast_i.npc_w_v, npc_n);
-  //     if (npc_w_v)
-  //       $display("[DIR @%0t] npc_w_v=1 expected_npc_o=0x%08x (bypass: en=%0b data_i=0x%08x)",
-  //                $time, expected_npc_o, npc_w_v, npc_n);
-  //     if (fe_cmd_v_li && !reset_i)
-  //       $display("[DIR @%0t] FE_CMD: opcode=%0d npc=0x%08x",
-  //                $time, fe_cmd_li.opcode, fe_cmd_li.npc);
-  //   end
-  // end
-
 endmodule

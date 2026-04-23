@@ -156,33 +156,6 @@ module bp_be_csr_wrapper_mt
        );
   end
 
-  // ── Debug: trace mscratch (0x340) reads and writes per-instance ──
-  `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
-  bp_be_retire_pkt_s dbg_retire;
-  assign dbg_retire = retire_pkt_i;
-
-  // Print which instances see a mscratch write and whether they are gated
-  always_ff @(posedge clk_i) begin
-    if (!reset_i && dbg_retire.special.csrw && (dbg_retire.instr.t.itype.imm12 == 12'h340)) begin
-      $display("[CSR_DBG @%0t] MSCRATCH WRITE: tid=%0d data=0x%0x",
-               $time, current_thread_id_i, dbg_retire.data);
-      for (int k = 0; k < num_threads_p; k++) begin
-        $display("  inst[%0d]: active=%0b  csr_r_data_co=0x%0x",
-                 k, (current_thread_id_i == thread_id_width_p'(k)),
-                 csr_r_data_co[k]);
-      end
-    end
-  end
-
-  // Print mscratch reads: which instance is selected and what value is returned
-  always_ff @(posedge clk_i) begin
-    if (!reset_i && csr_r_v_i && (csr_r_addr_i == 12'h340)) begin
-      $display("[CSR_DBG @%0t] MSCRATCH READ:  tid=%0d  ret=0x%0x  (per-inst: %0p)",
-               $time, current_thread_id_i, csr_r_data_o, csr_r_data_co);
-    end
-  end
-  // ── End debug ──
-
   // Mux all outputs from the active thread
   assign csr_r_data_o          = csr_r_data_co[current_thread_id_i];
   assign csr_r_illegal_o       = csr_r_illegal_co[current_thread_id_i];

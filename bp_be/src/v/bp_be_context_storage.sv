@@ -70,22 +70,13 @@ module bp_be_context_storage
         asid_storage[i] <= '0;
       end
     end else if (commit_v_i && commit_thread_id_i < num_threads_p) begin
-      // Update the state for the committing thread
-      // $display("[CTXST @%0t] WRITE: tid=%0d npc=0x%08x (old npc=0x%08x)",
-      //          $time, commit_thread_id_i, npc_i, npc_storage[commit_thread_id_i]);
+      // Update the state for the committing thread.
       npc_storage[commit_thread_id_i] <= npc_i;
       priv_mode_storage[commit_thread_id_i] <= priv_mode_i;
       translation_en_storage[commit_thread_id_i] <= translation_en_i;
       asid_storage[commit_thread_id_i] <= asid_i;
     end
   end
-
-  // Debug: trace every time commit_v fires or npc_o changes
-  // always @(posedge clk_i) begin
-  //   if (!reset_i && commit_v_i)
-  //     $display("[CTXST @%0t] commit_v=1 tid=%0d npc_in=0x%08x cur_tid=%0d fwd=%0b npc_out=0x%08x",
-  //              $time, commit_thread_id_i, npc_i, current_thread_id_i, fwd_v, npc_o);
-  // end
 
   // Write-forwarding: if writing and reading the same slot simultaneously,
   // return the incoming write value rather than the stale registered value.
