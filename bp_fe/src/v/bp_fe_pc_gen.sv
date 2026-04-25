@@ -37,6 +37,7 @@ module bp_fe_pc_gen
    , input [vaddr_width_p-1:0]                       redirect_pc_i
    , input [vaddr_width_p-1:0]                       redirect_npc_i
    , input                                           redirect_br_v_i
+   , input [thread_id_width_p-1:0]                   redirect_thread_id_i
    , input [branch_metadata_fwd_width_p-1:0]         redirect_br_metadata_fwd_i
    , input                                           redirect_br_taken_i
    , input                                           redirect_br_ntaken_i
@@ -87,7 +88,7 @@ module bp_fe_pc_gen
     if (reset_i)
       thread_id_r <= '0;
     else if (redirect_v_i | state_reset_v_i)
-      thread_id_r <= redirect_br_metadata_fwd_cast_i.thread_id;
+      thread_id_r <= redirect_thread_id_i;
   end
 
   logic [vaddr_width_p-1:0] next_pc;

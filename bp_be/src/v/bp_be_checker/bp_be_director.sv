@@ -222,9 +222,7 @@ module bp_be_director
           fe_cmd_pc_redirect_operands.priv            = context_priv_i;
           fe_cmd_pc_redirect_operands.translation_en  = context_translation_en_i;
           fe_cmd_pc_redirect_operands.asid            = context_asid_i;
-          // Embed target thread_id in MSB of branch_metadata_fwd so pc_gen can update thread_id_r
-          fe_cmd_pc_redirect_operands.branch_metadata_fwd =
-            {context_thread_id_i, {(branch_metadata_fwd_width_p - thread_id_width_p){1'b0}}};
+          fe_cmd_pc_redirect_operands.context_switch_thread_id = context_thread_id_i;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
           fe_cmd_v_li = 1'b1;
