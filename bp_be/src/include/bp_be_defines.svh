@@ -68,6 +68,8 @@
       logic                                    queue_v;                                            \
       logic                                    ispec_v;                                            \
       logic                                    nspec_v;                                            \
+      logic                                    ctxtsw_v;                                           \
+      logic [thread_id_width_p-1:0]            ctxtsw_target_tid;                                  \
       logic [vaddr_width_mp-1:0]               pc;                                                 \
       rv64_instr_s                             instr;                                              \
       logic [fetch_ptr_mp-1:0]                 count;                                              \
@@ -84,6 +86,8 @@
     typedef struct packed                                                                          \
     {                                                                                              \
       logic                                    v;                                                  \
+      logic                                    ctxtsw_v;                                           \
+      logic [thread_id_width_p-1:0]            ctxtsw_target_tid;                                  \
       logic [vaddr_width_mp-1:0]               pc;                                                 \
       rv64_instr_s                             instr;                                              \
       bp_be_decode_s                           decode;                                             \
@@ -261,10 +265,10 @@
     (7+2*vaddr_width_mp+instr_width_gp+fetch_ptr_mp+issue_ptr_mp+$bits(bp_be_decode_s)+dpath_width_gp+branch_metadata_fwd_width_mp+13)
 
   `define bp_be_dispatch_pkt_width(vaddr_width_mp, fetch_ptr_mp, issue_ptr_mp) \
-    (5+2*vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+3*dpath_width_gp+$bits(bp_be_decode_s)+$bits(bp_be_exception_s)+$bits(bp_be_special_s))
+    (6+2*vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+3*dpath_width_gp+$bits(bp_be_decode_s)+$bits(bp_be_exception_s)+$bits(bp_be_special_s)+thread_id_width_p)
 
   `define bp_be_reservation_width(vaddr_width_mp, fetch_ptr_mp, issue_ptr_mp) \
-    (1+vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+$bits(bp_be_decode_s)+3*int_rec_width_gp+3*dp_rec_width_gp)
+    (2+vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+$bits(bp_be_decode_s)+3*int_rec_width_gp+3*dp_rec_width_gp+thread_id_width_p)
 
   `define bp_be_branch_pkt_width(vaddr_width_mp) \
     (4+vaddr_width_mp)

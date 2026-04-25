@@ -102,6 +102,8 @@ module bp_be_reservation
     begin
       reservation = '0;
       reservation.v      = dispatch_pkt_r.v;
+      reservation.ctxtsw_v = dispatch_pkt_r.ctxtsw_v;
+      reservation.ctxtsw_target_tid = dispatch_pkt_r.ctxtsw_target_tid;
       reservation.pc     = dispatch_pkt_r.pc;
       reservation.instr  = dispatch_pkt_r.instr;
       reservation.decode = dispatch_pkt_r.decode;
@@ -119,4 +121,3 @@ module bp_be_reservation
   assign reservation_cast_o = reservation;
 
 endmodule
-
