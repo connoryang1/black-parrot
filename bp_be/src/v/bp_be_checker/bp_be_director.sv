@@ -37,6 +37,7 @@ module bp_be_director
    , output logic                       clear_iss_o
    , output logic                       suppress_iss_o
    , output logic                       resume_o
+   , output logic                       ctxtsw_launch_o
    , input                              irq_waiting_i
    , input                              mem_busy_i
    , output logic                       cmd_full_n_o
@@ -70,6 +71,7 @@ module bp_be_director
 
    // Early-classified target context bundle for future first-class ctxtsw restart
    , input                               pending_ctxtsw_v_i
+   , input                               pending_ctxtsw_sent_i
    , input [vaddr_width_p-1:0]           ctxtsw_target_npc_i
    , input [thread_id_width_p-1:0]       ctxtsw_target_thread_id_i
    , input [asid_width_p-1:0]            ctxtsw_target_asid_i
@@ -104,9 +106,11 @@ module bp_be_director
   // Module instantiations
   // Update the NPC on a valid instruction in ex1 or upon commit
   logic [vaddr_width_p-1:0] npc_n, npc_r;
-  wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v | commit_pkt_cast_i.ctxtsw;
+  wire early_ctxtsw_launch_v = pending_ctxtsw_v_i & ~pending_ctxtsw_sent_i & ~cmd_full_r_lo;
+  wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v | commit_pkt_cast_i.ctxtsw | early_ctxtsw_launch_v;
 
-  assign npc_n = commit_pkt_cast_i.ctxtsw ? context_npc_i
+  assign npc_n = early_ctxtsw_launch_v ? ctxtsw_target_npc_i
+               : commit_pkt_cast_i.ctxtsw ? context_npc_i
                : commit_pkt_cast_i.npc_w_v ? commit_pkt_cast_i.npc
                : br_pkt_cast_i.bspec ? issue_pkt_cast_i.pc
                : br_pkt_cast_i.npc;
@@ -125,7 +129,8 @@ module bp_be_director
 
   wire npc_mismatch_v = issue_pkt_cast_i.v & (expected_npc_o != issue_pkt_cast_i.pc);
   wire npc_match_v    = issue_pkt_cast_i.v & (expected_npc_o == issue_pkt_cast_i.pc);
-  assign poison_isd_o = npc_mismatch_v | commit_pkt_cast_i.ctxtsw;
+  assign poison_isd_o = npc_mismatch_v | commit_pkt_cast_i.ctxtsw | early_ctxtsw_launch_v;
+  assign ctxtsw_launch_o = early_ctxtsw_launch_v;
 
   logic btaken_pending, attaboy_pending;
   bsg_dff_reset_set_clear
@@ -154,7 +159,7 @@ module bp_be_director
                               ? e_wait
                               : commit_pkt_cast_i.fencei
                                 ? e_fencei
-                                : (fe_cmd_nonattaboy_v | commit_pkt_cast_i.ctxtsw)
+                                : (fe_cmd_nonattaboy_v | commit_pkt_cast_i.ctxtsw | early_ctxtsw_launch_v)
                                   ? e_cmd_fence
                                   : state_r;
         e_freeze
@@ -172,7 +177,7 @@ module bp_be_director
     else
       state_r <= state_n;
 
-  assign suppress_iss_o = !is_run || cmd_full_r_lo || commit_pkt_cast_i.npc_w_v;
+  assign suppress_iss_o = !is_run || cmd_full_r_lo || commit_pkt_cast_i.npc_w_v || early_ctxtsw_launch_v;
   assign clear_iss_o    = is_cmd_fence & cmd_empty_r_lo;
   assign resume_o       = (is_freeze & ~freeze_li)
                           || (is_wait & irq_waiting_i)
@@ -223,7 +228,7 @@ module bp_be_director
 
           fe_cmd_v_li = 1'b1;
         end
-      else if (commit_pkt_cast_i.ctxtsw)
+      else if (early_ctxtsw_launch_v)
         begin
           fe_cmd_li.opcode                            = e_op_context_switch;
           fe_cmd_li.npc                               = ctxtsw_target_npc_i;
@@ -234,6 +239,18 @@ module bp_be_director
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
           fe_cmd_v_li = 1'b1;
+        end
+      else if (commit_pkt_cast_i.ctxtsw)
+        begin
+          fe_cmd_li.opcode                            = e_op_context_switch;
+          fe_cmd_li.npc                               = ctxtsw_target_npc_i;
+          fe_cmd_pc_redirect_operands.priv            = ctxtsw_target_priv_i;
+          fe_cmd_pc_redirect_operands.translation_en  = ctxtsw_target_translation_en_i;
+          fe_cmd_pc_redirect_operands.asid            = ctxtsw_target_asid_i;
+          fe_cmd_pc_redirect_operands.context_switch_thread_id = ctxtsw_target_thread_id_i;
+          fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
+
+          fe_cmd_v_li = ~pending_ctxtsw_sent_i;
         end
       else if (commit_pkt_cast_i.wfi)
         begin

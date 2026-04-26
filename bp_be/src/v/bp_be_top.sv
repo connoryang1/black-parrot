@@ -103,11 +103,13 @@ module bp_be_top
   logic ctxtsw_target_translation_en_lo;
   logic [asid_width_p-1:0] ctxtsw_target_asid_lo;
   logic pending_ctxtsw_v_r;
+  logic pending_ctxtsw_sent_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
   logic [1:0] pending_ctxtsw_priv_mode_r;
   logic pending_ctxtsw_translation_en_r;
   logic [asid_width_p-1:0] pending_ctxtsw_asid_r;
+  logic ctxtsw_launch_lo;
   logic [thread_id_width_p-1:0] current_thread_id_lo;
   logic [num_threads_p-1:0][vaddr_width_p-1:0] context_npc_r;
   logic [num_threads_p-1:0][1:0] context_priv_mode_r;
@@ -154,17 +156,23 @@ module bp_be_top
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
       pending_ctxtsw_v_r <= 1'b0;
+      pending_ctxtsw_sent_r <= 1'b0;
       pending_ctxtsw_thread_id_r <= '0;
       pending_ctxtsw_npc_r <= '0;
       pending_ctxtsw_priv_mode_r <= 2'b11;
       pending_ctxtsw_translation_en_r <= 1'b0;
       pending_ctxtsw_asid_r <= '0;
     end else begin
-      if (commit_pkt.ctxtsw | commit_pkt.npc_w_v)
+      if (commit_pkt.ctxtsw | commit_pkt.npc_w_v) begin
         pending_ctxtsw_v_r <= 1'b0;
+        pending_ctxtsw_sent_r <= 1'b0;
+      end else if (ctxtsw_launch_lo) begin
+        pending_ctxtsw_sent_r <= 1'b1;
+      end
 
       if (dispatch_pkt.ctxtsw_v) begin
         pending_ctxtsw_v_r <= 1'b1;
+        pending_ctxtsw_sent_r <= 1'b0;
         pending_ctxtsw_thread_id_r <= ctxtsw_target_thread_id_li;
         pending_ctxtsw_npc_r <= ctxtsw_target_npc_lo;
         pending_ctxtsw_priv_mode_r <= ctxtsw_target_priv_mode_lo;
@@ -259,11 +267,13 @@ module bp_be_top
      ,.context_priv_i(context_priv_mode_lo)
      ,.context_translation_en_i(context_translation_en_lo)
      ,.pending_ctxtsw_v_i(pending_ctxtsw_v_r)
-     ,.ctxtsw_target_npc_i(ctxtsw_target_npc_lo)
-     ,.ctxtsw_target_thread_id_i(ctxtsw_target_thread_id_li)
-     ,.ctxtsw_target_asid_i(ctxtsw_target_asid_lo)
-     ,.ctxtsw_target_priv_i(ctxtsw_target_priv_mode_lo)
-     ,.ctxtsw_target_translation_en_i(ctxtsw_target_translation_en_lo)
+     ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r)
+     ,.ctxtsw_target_npc_i(pending_ctxtsw_npc_r)
+     ,.ctxtsw_target_thread_id_i(pending_ctxtsw_thread_id_r)
+     ,.ctxtsw_target_asid_i(pending_ctxtsw_asid_r)
+     ,.ctxtsw_target_priv_i(pending_ctxtsw_priv_mode_r)
+     ,.ctxtsw_target_translation_en_i(pending_ctxtsw_translation_en_r)
+     ,.ctxtsw_launch_o(ctxtsw_launch_lo)
 
      ,.issue_pkt_i(issue_pkt)
      ,.expected_npc_o(expected_npc_lo)
