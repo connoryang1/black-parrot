@@ -70,6 +70,12 @@ module bp_be_director
    , input                               context_translation_en_i
 
    // Early-classified target context bundle for future first-class ctxtsw restart
+   , input                               dispatch_ctxtsw_v_i
+   , input [vaddr_width_p-1:0]           dispatch_ctxtsw_target_npc_i
+   , input [thread_id_width_p-1:0]       dispatch_ctxtsw_target_thread_id_i
+   , input [asid_width_p-1:0]            dispatch_ctxtsw_target_asid_i
+   , input [1:0]                         dispatch_ctxtsw_target_priv_i
+   , input                               dispatch_ctxtsw_target_translation_en_i
    , input                               pending_ctxtsw_v_i
    , input                               pending_ctxtsw_sent_i
    , input [vaddr_width_p-1:0]           ctxtsw_target_npc_i
@@ -106,10 +112,27 @@ module bp_be_director
   // Module instantiations
   // Update the NPC on a valid instruction in ex1 or upon commit
   logic [vaddr_width_p-1:0] npc_n, npc_r;
-  wire early_ctxtsw_launch_v = pending_ctxtsw_v_i & ~pending_ctxtsw_sent_i & ~cmd_full_r_lo;
+  wire dispatch_ctxtsw_launch_v = dispatch_ctxtsw_v_i & ~cmd_full_r_lo;
+  wire pending_ctxtsw_launch_v = pending_ctxtsw_v_i & ~pending_ctxtsw_sent_i & ~cmd_full_r_lo;
+  wire early_ctxtsw_launch_v = dispatch_ctxtsw_launch_v | pending_ctxtsw_launch_v;
+  wire [vaddr_width_p-1:0] early_ctxtsw_npc = dispatch_ctxtsw_launch_v
+                                              ? dispatch_ctxtsw_target_npc_i
+                                              : ctxtsw_target_npc_i;
+  wire [thread_id_width_p-1:0] early_ctxtsw_thread_id = dispatch_ctxtsw_launch_v
+                                                        ? dispatch_ctxtsw_target_thread_id_i
+                                                        : ctxtsw_target_thread_id_i;
+  wire [asid_width_p-1:0] early_ctxtsw_asid = dispatch_ctxtsw_launch_v
+                                              ? dispatch_ctxtsw_target_asid_i
+                                              : ctxtsw_target_asid_i;
+  wire [1:0] early_ctxtsw_priv = dispatch_ctxtsw_launch_v
+                                 ? dispatch_ctxtsw_target_priv_i
+                                 : ctxtsw_target_priv_i;
+  wire early_ctxtsw_translation_en = dispatch_ctxtsw_launch_v
+                                     ? dispatch_ctxtsw_target_translation_en_i
+                                     : ctxtsw_target_translation_en_i;
   wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v | commit_pkt_cast_i.ctxtsw | early_ctxtsw_launch_v;
 
-  assign npc_n = early_ctxtsw_launch_v ? ctxtsw_target_npc_i
+  assign npc_n = early_ctxtsw_launch_v ? early_ctxtsw_npc
                : commit_pkt_cast_i.ctxtsw ? context_npc_i
                : commit_pkt_cast_i.npc_w_v ? commit_pkt_cast_i.npc
                : br_pkt_cast_i.bspec ? issue_pkt_cast_i.pc
@@ -231,11 +254,11 @@ module bp_be_director
       else if (early_ctxtsw_launch_v)
         begin
           fe_cmd_li.opcode                            = e_op_context_switch;
-          fe_cmd_li.npc                               = ctxtsw_target_npc_i;
-          fe_cmd_pc_redirect_operands.priv            = ctxtsw_target_priv_i;
-          fe_cmd_pc_redirect_operands.translation_en  = ctxtsw_target_translation_en_i;
-          fe_cmd_pc_redirect_operands.asid            = ctxtsw_target_asid_i;
-          fe_cmd_pc_redirect_operands.context_switch_thread_id = ctxtsw_target_thread_id_i;
+          fe_cmd_li.npc                               = early_ctxtsw_npc;
+          fe_cmd_pc_redirect_operands.priv            = early_ctxtsw_priv;
+          fe_cmd_pc_redirect_operands.translation_en  = early_ctxtsw_translation_en;
+          fe_cmd_pc_redirect_operands.asid            = early_ctxtsw_asid;
+          fe_cmd_pc_redirect_operands.context_switch_thread_id = early_ctxtsw_thread_id;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
           fe_cmd_v_li = 1'b1;
