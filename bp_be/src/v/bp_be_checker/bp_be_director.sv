@@ -225,11 +225,11 @@ module bp_be_director
       else if (commit_pkt_cast_i.ctxtsw)
         begin
           fe_cmd_li.opcode                            = e_op_context_switch;
-          fe_cmd_li.npc                               = context_npc_i;
-          fe_cmd_pc_redirect_operands.priv            = context_priv_i;
-          fe_cmd_pc_redirect_operands.translation_en  = context_translation_en_i;
-          fe_cmd_pc_redirect_operands.asid            = context_asid_i;
-          fe_cmd_pc_redirect_operands.context_switch_thread_id = context_thread_id_i;
+          fe_cmd_li.npc                               = ctxtsw_target_npc_i;
+          fe_cmd_pc_redirect_operands.priv            = ctxtsw_target_priv_i;
+          fe_cmd_pc_redirect_operands.translation_en  = ctxtsw_target_translation_en_i;
+          fe_cmd_pc_redirect_operands.asid            = ctxtsw_target_asid_i;
+          fe_cmd_pc_redirect_operands.context_switch_thread_id = ctxtsw_target_thread_id_i;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
           fe_cmd_v_li = 1'b1;
