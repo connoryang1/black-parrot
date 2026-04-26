@@ -104,6 +104,7 @@ module bp_be_top
   logic [asid_width_p-1:0] ctxtsw_target_asid_lo;
   logic pending_ctxtsw_v_r;
   logic pending_ctxtsw_sent_r;
+  logic [thread_id_width_p-1:0] pending_ctxtsw_prev_thread_id_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
   logic [1:0] pending_ctxtsw_priv_mode_r;
@@ -146,6 +147,10 @@ module bp_be_top
   always_ff @(posedge clk_i) begin
     if (reset_i)
       current_thread_id_lo <= '0;
+    else if (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw & pending_ctxtsw_v_r)
+      current_thread_id_lo <= pending_ctxtsw_prev_thread_id_r;
+    else if (ctxtsw_launch_lo)
+      current_thread_id_lo <= pending_ctxtsw_thread_id_r;
     else if (csr_ctxt_write_v_lo)
       current_thread_id_lo <= csr_ctxt_write_data_lo;
   end
@@ -157,6 +162,7 @@ module bp_be_top
     if (reset_i) begin
       pending_ctxtsw_v_r <= 1'b0;
       pending_ctxtsw_sent_r <= 1'b0;
+      pending_ctxtsw_prev_thread_id_r <= '0;
       pending_ctxtsw_thread_id_r <= '0;
       pending_ctxtsw_npc_r <= '0;
       pending_ctxtsw_priv_mode_r <= 2'b11;
@@ -173,6 +179,7 @@ module bp_be_top
       if (dispatch_pkt.ctxtsw_v) begin
         pending_ctxtsw_v_r <= 1'b1;
         pending_ctxtsw_sent_r <= 1'b0;
+        pending_ctxtsw_prev_thread_id_r <= current_thread_id_lo;
         pending_ctxtsw_thread_id_r <= ctxtsw_target_thread_id_li;
         pending_ctxtsw_npc_r <= ctxtsw_target_npc_lo;
         pending_ctxtsw_priv_mode_r <= ctxtsw_target_priv_mode_lo;
@@ -193,7 +200,11 @@ module bp_be_top
       end
     end else if (commit_pkt.ctxtsw | ctx_npc_write_v_lo) begin
       logic [thread_id_width_p-1:0] commit_thread_id_li;
-      commit_thread_id_li = ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo;
+      commit_thread_id_li = ctx_npc_write_v_lo
+                            ? ctx_npc_write_tid_lo
+                            : commit_pkt.ctxtsw
+                              ? pending_ctxtsw_prev_thread_id_r
+                              : current_thread_id_lo;
       if (commit_thread_id_li < num_threads_p) begin
         context_npc_r[commit_thread_id_li] <= ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc;
         context_priv_mode_r[commit_thread_id_li] <= commit_pkt.priv_n;
@@ -205,9 +216,13 @@ module bp_be_top
 
   wire [thread_id_width_p-1:0] context_read_thread_id_li =
     commit_pkt.ctxtsw ? csr_ctxt_write_data_lo : current_thread_id_lo;
+  wire [thread_id_width_p-1:0] context_write_thread_id_li =
+    ctx_npc_write_v_lo ? ctx_npc_write_tid_lo
+    : commit_pkt.ctxtsw ? pending_ctxtsw_prev_thread_id_r
+    : current_thread_id_lo;
   wire context_fwd_v = (commit_pkt.ctxtsw | ctx_npc_write_v_lo)
-                       && ((ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo) == context_read_thread_id_li)
-                       && ((ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo) < num_threads_p)
+                       && (context_write_thread_id_li == context_read_thread_id_li)
+                       && (context_write_thread_id_li < num_threads_p)
                        && (context_read_thread_id_li < num_threads_p);
   wire [thread_id_width_p-1:0] ctxtsw_target_thread_id_li = dispatch_pkt.ctxtsw_target_tid;
   wire ctxtsw_target_fwd_v =
