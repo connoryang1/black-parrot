@@ -226,6 +226,11 @@ module bp_be_top
      ,.context_asid_i(context_asid_lo)
      ,.context_priv_i(context_priv_mode_lo)
      ,.context_translation_en_i(context_translation_en_lo)
+     ,.ctxtsw_target_npc_i(ctxtsw_target_npc_lo)
+     ,.ctxtsw_target_thread_id_i(ctxtsw_target_thread_id_li)
+     ,.ctxtsw_target_asid_i(ctxtsw_target_asid_lo)
+     ,.ctxtsw_target_priv_i(ctxtsw_target_priv_mode_lo)
+     ,.ctxtsw_target_translation_en_i(ctxtsw_target_translation_en_lo)
 
      ,.issue_pkt_i(issue_pkt)
      ,.expected_npc_o(expected_npc_lo)

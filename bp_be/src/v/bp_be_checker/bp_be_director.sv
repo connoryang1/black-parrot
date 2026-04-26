@@ -67,6 +67,13 @@ module bp_be_director
 
    // Target thread translation-enable state for ctxtsw restore
    , input                               context_translation_en_i
+
+   // Early-classified target context bundle for future first-class ctxtsw restart
+   , input [vaddr_width_p-1:0]           ctxtsw_target_npc_i
+   , input [thread_id_width_p-1:0]       ctxtsw_target_thread_id_i
+   , input [asid_width_p-1:0]            ctxtsw_target_asid_i
+   , input [1:0]                         ctxtsw_target_priv_i
+   , input                               ctxtsw_target_translation_en_i
    );
 
   // Declare parameterized structures
