@@ -69,6 +69,7 @@ module bp_be_director
    , input                               context_translation_en_i
 
    // Early-classified target context bundle for future first-class ctxtsw restart
+   , input                               pending_ctxtsw_v_i
    , input [vaddr_width_p-1:0]           ctxtsw_target_npc_i
    , input [thread_id_width_p-1:0]       ctxtsw_target_thread_id_i
    , input [asid_width_p-1:0]            ctxtsw_target_asid_i
