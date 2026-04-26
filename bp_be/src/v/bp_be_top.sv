@@ -102,6 +102,12 @@ module bp_be_top
   logic [1:0] ctxtsw_target_priv_mode_lo;
   logic ctxtsw_target_translation_en_lo;
   logic [asid_width_p-1:0] ctxtsw_target_asid_lo;
+  logic pending_ctxtsw_v_r;
+  logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
+  logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
+  logic [1:0] pending_ctxtsw_priv_mode_r;
+  logic pending_ctxtsw_translation_en_r;
+  logic [asid_width_p-1:0] pending_ctxtsw_asid_r;
   logic [thread_id_width_p-1:0] current_thread_id_lo;
   logic [num_threads_p-1:0][vaddr_width_p-1:0] context_npc_r;
   logic [num_threads_p-1:0][1:0] context_priv_mode_r;
@@ -140,6 +146,32 @@ module bp_be_top
       current_thread_id_lo <= '0;
     else if (csr_ctxt_write_v_lo)
       current_thread_id_lo <= csr_ctxt_write_data_lo;
+  end
+
+  // Stage a prepared ctxtsw target bundle when ctxtsw is first classified in the BE.
+  // This is not yet consumed by the FE restart path, but it gives the first-class
+  // ctxtsw flow an explicit latched handoff state to build on.
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      pending_ctxtsw_v_r <= 1'b0;
+      pending_ctxtsw_thread_id_r <= '0;
+      pending_ctxtsw_npc_r <= '0;
+      pending_ctxtsw_priv_mode_r <= 2'b11;
+      pending_ctxtsw_translation_en_r <= 1'b0;
+      pending_ctxtsw_asid_r <= '0;
+    end else begin
+      if (commit_pkt.ctxtsw | commit_pkt.npc_w_v)
+        pending_ctxtsw_v_r <= 1'b0;
+
+      if (dispatch_pkt.ctxtsw_v) begin
+        pending_ctxtsw_v_r <= 1'b1;
+        pending_ctxtsw_thread_id_r <= ctxtsw_target_thread_id_li;
+        pending_ctxtsw_npc_r <= ctxtsw_target_npc_lo;
+        pending_ctxtsw_priv_mode_r <= ctxtsw_target_priv_mode_lo;
+        pending_ctxtsw_translation_en_r <= ctxtsw_target_translation_en_lo;
+        pending_ctxtsw_asid_r <= ctxtsw_target_asid_lo;
+      end
+    end
   end
 
   // Per-thread context storage for resume state.
