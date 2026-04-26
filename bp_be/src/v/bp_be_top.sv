@@ -98,6 +98,10 @@ module bp_be_top
   logic [1:0] context_priv_mode_lo;
   logic context_translation_en_lo;
   logic [asid_width_p-1:0] context_asid_lo;
+  logic [vaddr_width_p-1:0] ctxtsw_target_npc_lo;
+  logic [1:0] ctxtsw_target_priv_mode_lo;
+  logic ctxtsw_target_translation_en_lo;
+  logic [asid_width_p-1:0] ctxtsw_target_asid_lo;
   logic [thread_id_width_p-1:0] current_thread_id_lo;
   logic [num_threads_p-1:0][vaddr_width_p-1:0] context_npc_r;
   logic [num_threads_p-1:0][1:0] context_priv_mode_r;
@@ -123,7 +127,7 @@ module bp_be_top
   logic [thread_id_width_p-1:0] ctx_npc_write_tid_lo;
   logic [vaddr_width_p-1:0] ctx_npc_write_npc_lo;
 
-  // rpush: write arbitrary register of a disabled thread's register file (CSR 0x083)
+  // CSR 0x083 remote register write into another hardware thread context
   logic ctx_rpush_v_lo;
   logic ctx_rpush_fp_v_lo;
   logic [thread_id_width_p-1:0] ctx_rpush_tid_lo;
@@ -165,6 +169,12 @@ module bp_be_top
                        && ((ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo) == context_read_thread_id_li)
                        && ((ctx_npc_write_v_lo ? ctx_npc_write_tid_lo : current_thread_id_lo) < num_threads_p)
                        && (context_read_thread_id_li < num_threads_p);
+  wire [thread_id_width_p-1:0] ctxtsw_target_thread_id_li = dispatch_pkt.ctxtsw_target_tid;
+  wire ctxtsw_target_fwd_v =
+    ctx_npc_write_v_lo
+    && (ctx_npc_write_tid_lo == ctxtsw_target_thread_id_li)
+    && (ctx_npc_write_tid_lo < num_threads_p)
+    && (ctxtsw_target_thread_id_li < num_threads_p);
 
   always_comb begin
     if (context_fwd_v) begin
@@ -182,6 +192,25 @@ module bp_be_top
       context_priv_mode_lo = 2'b11;
       context_translation_en_lo = 1'b0;
       context_asid_lo = '0;
+    end
+  end
+
+  always_comb begin
+    if (ctxtsw_target_fwd_v) begin
+      ctxtsw_target_npc_lo = ctx_npc_write_npc_lo;
+      ctxtsw_target_priv_mode_lo = commit_pkt.priv_n;
+      ctxtsw_target_translation_en_lo = commit_pkt.translation_en_n;
+      ctxtsw_target_asid_lo = trans_info_lo.asid;
+    end else if (ctxtsw_target_thread_id_li < num_threads_p) begin
+      ctxtsw_target_npc_lo = context_npc_r[ctxtsw_target_thread_id_li];
+      ctxtsw_target_priv_mode_lo = context_priv_mode_r[ctxtsw_target_thread_id_li];
+      ctxtsw_target_translation_en_lo = context_translation_en_r[ctxtsw_target_thread_id_li];
+      ctxtsw_target_asid_lo = context_asid_r[ctxtsw_target_thread_id_li];
+    end else begin
+      ctxtsw_target_npc_lo = '0;
+      ctxtsw_target_priv_mode_lo = 2'b11;
+      ctxtsw_target_translation_en_lo = 1'b0;
+      ctxtsw_target_asid_lo = '0;
     end
   end
 
