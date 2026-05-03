@@ -38,6 +38,7 @@ module bp_be_csr_wrapper_mt
 
    // Misc interface
    , input [retire_pkt_width_lp-1:0]         retire_pkt_i
+   , input                                   retire_ctxtsw_v_i
    , input rv64_fflags_s                     fflags_acc_i
    , input                                   frf_w_v_i
 
@@ -120,6 +121,7 @@ module bp_be_csr_wrapper_mt
        ,.csr_r_illegal_o(csr_r_illegal_co[i])
 
        ,.retire_pkt_i(retire_pkt_gated[i])
+       ,.retire_ctxtsw_v_i(retire_ctxtsw_v_i & active)
        ,.fflags_acc_i(fflags_acc_gated[i])
        ,.frf_w_v_i(frf_w_v_gated[i])
 

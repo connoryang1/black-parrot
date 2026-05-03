@@ -92,7 +92,7 @@ module bp_be_pipe_sys
   wire [dword_width_gp-1:0] rs2 = reservation.isrc2;
   wire [dword_width_gp-1:0] imm = reservation.isrc3;
 
-  wire csr_v_li = reservation.decode.csr_r_v | reservation.decode.csr_w_v;
+  wire csr_v_li = (reservation.decode.csr_r_v | reservation.decode.csr_w_v) & ~reservation.ctxtsw_v;
   wire [rv64_csr_addr_width_gp-1:0] csr_addr_li = instr.t.itype.imm12;
 
   bp_be_retire_pkt_s retire_pkt;
@@ -123,6 +123,7 @@ module bp_be_pipe_sys
      ,.irq_waiting_o(irq_waiting_o)
 
      ,.retire_pkt_i(retire_pkt)
+     ,.retire_ctxtsw_v_i(retire_ctxtsw_r)
      ,.commit_pkt_o(commit_pkt_cast_o)
      ,.decode_info_o(decode_info_cast_o)
      ,.trans_info_o(trans_info_cast_o)
@@ -148,6 +149,7 @@ module bp_be_pipe_sys
   logic retire_niscore_r, retire_iscore_r;
   logic retire_nfscore_r, retire_fscore_r;
   logic retire_nspec_w_r, retire_spec_w_r;
+  logic retire_nctxtsw_r, retire_ctxtsw_r;
   always_ff @(posedge clk_i)
     begin
       retire_npc_r <= reservation.pc;
@@ -175,6 +177,9 @@ module bp_be_pipe_sys
 
       retire_nspec_w_r <= reservation.decode.score_v & reservation.decode.spec_w_v;
       retire_spec_w_r  <= retire_nspec_w_r;
+
+      retire_nctxtsw_r <= reservation.ctxtsw_v;
+      retire_ctxtsw_r  <= retire_nctxtsw_r;
     end
 
   // Compute input CSR data

@@ -23,6 +23,7 @@ module bp_be_csr
 
    // Misc interface
    , input [retire_pkt_width_lp-1:0]         retire_pkt_i
+   , input                                   retire_ctxtsw_v_i
    , input rv64_fflags_s                     fflags_acc_i
    , input                                   frf_w_v_i
 
@@ -247,7 +248,7 @@ module bp_be_csr
      ,.v_o(s_interrupt_icode_v_li)
      );
 
-  wire                               csr_w_v_li = retire_pkt_cast_i.special.csrw;
+  wire                               csr_w_v_li = retire_pkt_cast_i.special.csrw & ~retire_ctxtsw_v_i;
   wire [rv64_reg_data_width_gp-1:0] csr_data_li = retire_pkt_cast_i.data;
   wire [rv64_csr_addr_width_gp-1:0] csr_addr_li = retire_pkt_cast_i.instr.t.itype.imm12;
   wire [rv64_funct3_width_gp-1:0]   csr_func_li = retire_pkt_cast_i.instr.t.itype.funct3;
@@ -693,8 +694,8 @@ module bp_be_csr
   assign commit_pkt_cast_o.sfence            = retire_pkt_cast_i.special.sfence_vma;
   assign commit_pkt_cast_o.wfi               = retire_pkt_cast_i.special.wfi;
   assign commit_pkt_cast_o.eret              = ret_v;
-  assign commit_pkt_cast_o.csrw              = retire_pkt_cast_i.special.csrw & ~(csr_addr_li == 12'h081) & ~(csr_addr_li == 12'h082) & ~(csr_addr_li == 12'h083);
-  assign commit_pkt_cast_o.ctxtsw            = retire_pkt_cast_i.special.csrw & (csr_addr_li == 12'h081);
+  assign commit_pkt_cast_o.csrw              = csr_w_v_li & ~(csr_addr_li == 12'h082) & ~(csr_addr_li == 12'h083);
+  assign commit_pkt_cast_o.ctxtsw            = retire_ctxtsw_v_i;
   assign commit_pkt_cast_o.resume            = retire_pkt_cast_i.exception.resume;
   assign commit_pkt_cast_o.itlb_miss         = retire_pkt_cast_i.exception.itlb_miss;
   assign commit_pkt_cast_o.icache_miss       = retire_pkt_cast_i.exception.icache_miss;
