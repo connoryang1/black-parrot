@@ -695,7 +695,7 @@ module bp_be_csr
   assign commit_pkt_cast_o.wfi               = retire_pkt_cast_i.special.wfi;
   assign commit_pkt_cast_o.eret              = ret_v;
   assign commit_pkt_cast_o.csrw              = csr_w_v_li & ~(csr_addr_li == 12'h082) & ~(csr_addr_li == 12'h083);
-  assign commit_pkt_cast_o.ctxtsw            = retire_ctxtsw_v_i;
+  assign commit_pkt_cast_o.ctxtsw            = retire_pkt_cast_i.instret & retire_ctxtsw_v_i;
   assign commit_pkt_cast_o.resume            = retire_pkt_cast_i.exception.resume;
   assign commit_pkt_cast_o.itlb_miss         = retire_pkt_cast_i.exception.itlb_miss;
   assign commit_pkt_cast_o.icache_miss       = retire_pkt_cast_i.exception.icache_miss;

@@ -92,6 +92,7 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][thread_id_width_p-1:0]    ctx_rpush_tid_co;
   logic [num_threads_p-1:0][reg_addr_width_gp-1:0]    ctx_rpush_reg_co;
   logic [num_threads_p-1:0][dpath_width_gp-1:0]       ctx_rpush_data_co;
+  logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
   // Per-thread gated inputs
   logic [num_threads_p-1:0]                          csr_r_v_gated;
@@ -104,6 +105,7 @@ module bp_be_csr_wrapper_mt
     assign csr_r_v_gated[i]     = csr_r_v_i & active;
     assign frf_w_v_gated[i]     = frf_w_v_i & active;
     assign retire_pkt_gated[i]  = active ? retire_pkt_i : '0;
+    assign retire_ctxtsw_v_gated[i] = retire_ctxtsw_v_i & active;
     assign fflags_acc_gated[i]  = active ? fflags_acc_i : rv64_fflags_s'('0);
   end
 
@@ -121,7 +123,7 @@ module bp_be_csr_wrapper_mt
        ,.csr_r_illegal_o(csr_r_illegal_co[i])
 
        ,.retire_pkt_i(retire_pkt_gated[i])
-       ,.retire_ctxtsw_v_i(retire_ctxtsw_v_i & active)
+       ,.retire_ctxtsw_v_i(retire_ctxtsw_v_gated[i])
        ,.fflags_acc_i(fflags_acc_gated[i])
        ,.frf_w_v_i(frf_w_v_gated[i])
 

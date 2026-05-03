@@ -248,7 +248,7 @@ module bp_be_scheduler
 
   wire [thread_id_width_p-1:0] issue_ctxtsw_target_tid =
     issue_ctxtsw_imm_v
-      ? thread_id_width_p'(issue_pkt_cast_o.instr.t.itype.rs1_addr)
+      ? thread_id_width_p'(issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
       : thread_id_width_p'(irf_rs1[0 +: thread_id_width_p]);
 
   assign wb_instr_li = '{rd_addr: late_wb_pkt_cast_i.rd_addr, default: '0};

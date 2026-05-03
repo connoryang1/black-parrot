@@ -178,7 +178,14 @@ module bp_be_pipe_sys
       retire_nspec_w_r <= reservation.decode.score_v & reservation.decode.spec_w_v;
       retire_spec_w_r  <= retire_nspec_w_r;
 
-      retire_nctxtsw_r <= reservation.ctxtsw_v;
+    end
+
+  always_ff @(posedge clk_i)
+    if (reset_i) begin
+      retire_nctxtsw_r <= 1'b0;
+      retire_ctxtsw_r  <= 1'b0;
+    end else begin
+      retire_nctxtsw_r <= reservation.v & reservation.ctxtsw_v & ~flush_i;
       retire_ctxtsw_r  <= retire_nctxtsw_r;
     end
 
