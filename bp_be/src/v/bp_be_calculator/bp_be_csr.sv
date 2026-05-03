@@ -45,8 +45,6 @@ module bp_be_csr
 
    // Context switching control
    , input [thread_id_width_p-1:0]           current_thread_id_i
-   , output logic                            csr_ctxt_write_v_o
-   , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
 
    // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
    // Write format: upper bits = thread_id, lower vaddr_width_p bits = target NPC
@@ -54,7 +52,7 @@ module bp_be_csr
    , output logic [thread_id_width_p-1:0]    ctx_npc_write_tid_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // rpush: write an arbitrary register of a disabled thread's register file (CSR 0x083)
+   // CSR 0x083 remote register write into another hardware thread context
    // Write format: bits[38:0]=value, bits[40:39]=thread_id, bits[45:41]=reg_addr, bit[46]=fp_sel
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
@@ -411,7 +409,7 @@ module bp_be_csr
           csr_data_lo = current_thread_id_i;
         12'h082:  // Thread NPC seed - write-only, reads as 0
           csr_data_lo = '0;
-        12'h083:  // Thread register seed (rpush) - write-only, reads as 0
+        12'h083:  // Thread register seed / remote register write - write-only, reads as 0
           csr_data_lo = '0;
         default:
           begin
@@ -733,10 +731,6 @@ module bp_be_csr
 
   assign frm_dyn_o = rv64_frm_e'(fcsr_lo.frm);
 
-  // CSR 0x081 write: context switch to the specified thread ID
-  assign csr_ctxt_write_v_o    = csr_w_v_li & (csr_addr_li == 12'h081);
-  assign csr_ctxt_write_data_o = csr_data_li[0+:thread_id_width_p];
-
   // CSR 0x082 write: set the NPC for the thread whose ID is in the upper bits
   // Write format: csr_data_li[vaddr_width_p +: thread_id_width_p] = thread_id
   //               csr_data_li[vaddr_width_p-1:0]                  = target NPC
@@ -744,7 +738,7 @@ module bp_be_csr
   assign ctx_npc_write_tid_o = csr_data_li[vaddr_width_p +: thread_id_width_p];
   assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
 
-  // CSR 0x083 write: rpush — write an arbitrary register of a disabled thread (proto-rpush from HotOS '21)
+  // CSR 0x083 write: remote register write into a target hardware thread context
   // Write format: bits[38:0]                                    = value (39-bit vaddr width)
   //               bits[38+thread_id_width_p : 39]               = thread_id
   //               bits[38+thread_id_width_p+reg_addr_width_gp : 39+thread_id_width_p] = reg_addr

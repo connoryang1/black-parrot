@@ -88,17 +88,15 @@ module bp_be_calculator_top
    , output logic                                    stat_mem_pkt_yumi_o
    , output logic [dcache_stat_info_width_lp-1:0]    stat_mem_o
 
-   // Context switching via CTXT CSR (0x081)
+   // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]                   current_thread_id_i
-   , output logic                                    csr_ctxt_write_v_o
-   , output logic [thread_id_width_p-1:0]            csr_ctxt_write_data_o
 
    // Bootstrap: write target NPC into context_storage for a given thread (CSR 0x082)
    , output logic                                    ctx_npc_write_v_o
    , output logic [thread_id_width_p-1:0]            ctx_npc_write_tid_o
    , output logic [vaddr_width_p-1:0]                ctx_npc_write_npc_o
 
-   // rpush: write arbitrary register of a disabled thread's register file (CSR 0x083)
+   // CSR 0x083 remote register write into another hardware thread context
    , output logic                                    ctx_rpush_v_o
    , output logic                                    ctx_rpush_fp_v_o
    , output logic [thread_id_width_p-1:0]            ctx_rpush_tid_o
@@ -240,8 +238,6 @@ module bp_be_calculator_top
 
      // Context switching
      ,.current_thread_id_i(current_thread_id_i)
-     ,.csr_ctxt_write_v_o(csr_ctxt_write_v_o)
-     ,.csr_ctxt_write_data_o(csr_ctxt_write_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)

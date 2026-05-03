@@ -57,10 +57,8 @@ module bp_be_pipe_sys
    , output logic [trans_info_width_lp-1:0]  trans_info_o
    , output rv64_frm_e                       frm_dyn_o
 
-   // Context switching via CTXT CSR (0x081)
+   // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]           current_thread_id_i
-   , output logic                            csr_ctxt_write_v_o
-   , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
 
    // Bootstrap: write target NPC into context_storage for a given thread (CSR 0x082)
    , output logic                            ctx_npc_write_v_o
@@ -131,8 +129,6 @@ module bp_be_pipe_sys
      ,.frm_dyn_o(frm_dyn_o)
      // Pass current thread ID for CSR returns
      ,.current_thread_id_i(current_thread_id_i)
-     ,.csr_ctxt_write_v_o(csr_ctxt_write_v_o)
-     ,.csr_ctxt_write_data_o(csr_ctxt_write_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
