@@ -215,7 +215,7 @@ module bp_be_top
   end
 
   wire [thread_id_width_p-1:0] context_read_thread_id_li =
-    commit_pkt.ctxtsw ? csr_ctxt_write_data_lo : current_thread_id_lo;
+    commit_pkt.ctxtsw ? pending_ctxtsw_thread_id_r : current_thread_id_lo;
   wire [thread_id_width_p-1:0] context_write_thread_id_li =
     ctx_npc_write_v_lo ? ctx_npc_write_tid_lo
     : commit_pkt.ctxtsw ? pending_ctxtsw_prev_thread_id_r
@@ -277,7 +277,6 @@ module bp_be_top
      ,.cfg_bus_i(cfg_bus_i)
      ,.context_npc_i(context_npc_lo)
      ,.current_thread_id_i(current_thread_id_lo)
-     ,.context_thread_id_i(csr_ctxt_write_data_lo)
      ,.context_asid_i(context_asid_lo)
      ,.context_priv_i(context_priv_mode_lo)
      ,.context_translation_en_i(context_translation_en_lo)

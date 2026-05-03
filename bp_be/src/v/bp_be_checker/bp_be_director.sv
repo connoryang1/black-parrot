@@ -57,9 +57,6 @@ module bp_be_director
    // Current thread ID for normal FE metadata generation
    , input [thread_id_width_p-1:0]       current_thread_id_i
 
-   // Target thread ID for ctxtsw FE metadata generation
-   , input [thread_id_width_p-1:0]       context_thread_id_i
-
    // Current thread ASID for embedding in ctxtsw fe_cmd (for FE shadow_asid)
    , input [asid_width_p-1:0]            context_asid_i
 
