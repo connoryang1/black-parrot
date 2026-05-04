@@ -109,28 +109,9 @@ module bp_be_director
   // Module instantiations
   // Update the NPC on a valid instruction in ex1 or upon commit
   logic [vaddr_width_p-1:0] npc_n, npc_r;
-  wire dispatch_ctxtsw_launch_v = dispatch_ctxtsw_v_i & ~cmd_full_r_lo;
-  wire pending_ctxtsw_launch_v = pending_ctxtsw_v_i & ~pending_ctxtsw_sent_i & ~cmd_full_r_lo;
-  wire early_ctxtsw_launch_v = dispatch_ctxtsw_launch_v | pending_ctxtsw_launch_v;
-  wire [vaddr_width_p-1:0] early_ctxtsw_npc = dispatch_ctxtsw_launch_v
-                                              ? dispatch_ctxtsw_target_npc_i
-                                              : ctxtsw_target_npc_i;
-  wire [thread_id_width_p-1:0] early_ctxtsw_thread_id = dispatch_ctxtsw_launch_v
-                                                        ? dispatch_ctxtsw_target_thread_id_i
-                                                        : ctxtsw_target_thread_id_i;
-  wire [asid_width_p-1:0] early_ctxtsw_asid = dispatch_ctxtsw_launch_v
-                                              ? dispatch_ctxtsw_target_asid_i
-                                              : ctxtsw_target_asid_i;
-  wire [1:0] early_ctxtsw_priv = dispatch_ctxtsw_launch_v
-                                 ? dispatch_ctxtsw_target_priv_i
-                                 : ctxtsw_target_priv_i;
-  wire early_ctxtsw_translation_en = dispatch_ctxtsw_launch_v
-                                     ? dispatch_ctxtsw_target_translation_en_i
-                                     : ctxtsw_target_translation_en_i;
-  wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v | commit_pkt_cast_i.ctxtsw | early_ctxtsw_launch_v;
+  wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v | commit_pkt_cast_i.ctxtsw;
 
-  assign npc_n = early_ctxtsw_launch_v ? early_ctxtsw_npc
-               : commit_pkt_cast_i.ctxtsw ? context_npc_i
+  assign npc_n = commit_pkt_cast_i.ctxtsw ? context_npc_i
                : commit_pkt_cast_i.npc_w_v ? commit_pkt_cast_i.npc
                : br_pkt_cast_i.bspec ? issue_pkt_cast_i.pc
                : br_pkt_cast_i.npc;
@@ -149,8 +130,8 @@ module bp_be_director
 
   wire npc_mismatch_v = issue_pkt_cast_i.v & (expected_npc_o != issue_pkt_cast_i.pc);
   wire npc_match_v    = issue_pkt_cast_i.v & (expected_npc_o == issue_pkt_cast_i.pc);
-  assign poison_isd_o = npc_mismatch_v | commit_pkt_cast_i.ctxtsw | early_ctxtsw_launch_v;
-  assign ctxtsw_launch_o = early_ctxtsw_launch_v;
+  assign poison_isd_o = npc_mismatch_v | commit_pkt_cast_i.ctxtsw;
+  assign ctxtsw_launch_o = 1'b0;
 
   logic btaken_pending, attaboy_pending;
   bsg_dff_reset_set_clear
@@ -179,7 +160,7 @@ module bp_be_director
                               ? e_wait
                               : commit_pkt_cast_i.fencei
                                 ? e_fencei
-                                : (fe_cmd_nonattaboy_v | commit_pkt_cast_i.ctxtsw | early_ctxtsw_launch_v)
+                                : (fe_cmd_nonattaboy_v | commit_pkt_cast_i.ctxtsw)
                                   ? e_cmd_fence
                                   : state_r;
         e_freeze
@@ -197,7 +178,7 @@ module bp_be_director
     else
       state_r <= state_n;
 
-  assign suppress_iss_o = !is_run || cmd_full_r_lo || commit_pkt_cast_i.npc_w_v || early_ctxtsw_launch_v;
+  assign suppress_iss_o = !is_run || cmd_full_r_lo || commit_pkt_cast_i.npc_w_v;
   assign clear_iss_o    = is_cmd_fence & cmd_empty_r_lo;
   assign resume_o       = (is_freeze & ~freeze_li)
                           || (is_wait & irq_waiting_i)
@@ -244,18 +225,6 @@ module bp_be_director
           fe_cmd_li.npc                               = commit_pkt_cast_i.npc;
           fe_cmd_pc_redirect_operands.subopcode       = e_subop_translation_switch;
           fe_cmd_pc_redirect_operands.translation_en  = commit_pkt_cast_i.translation_en_n;
-          fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
-
-          fe_cmd_v_li = 1'b1;
-        end
-      else if (early_ctxtsw_launch_v)
-        begin
-          fe_cmd_li.opcode                            = e_op_context_switch;
-          fe_cmd_li.npc                               = early_ctxtsw_npc;
-          fe_cmd_pc_redirect_operands.priv            = early_ctxtsw_priv;
-          fe_cmd_pc_redirect_operands.translation_en  = early_ctxtsw_translation_en;
-          fe_cmd_pc_redirect_operands.asid            = early_ctxtsw_asid;
-          fe_cmd_pc_redirect_operands.context_switch_thread_id = early_ctxtsw_thread_id;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
           fe_cmd_v_li = 1'b1;

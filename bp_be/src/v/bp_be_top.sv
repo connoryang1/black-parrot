@@ -145,7 +145,7 @@ module bp_be_top
       current_thread_id_lo <= '0;
     else if (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw & pending_ctxtsw_v_r)
       current_thread_id_lo <= pending_ctxtsw_prev_thread_id_r;
-    else if (ctxtsw_launch_lo)
+    else if (commit_pkt.ctxtsw)
       current_thread_id_lo <= pending_ctxtsw_thread_id_r;
   end
 
@@ -166,8 +166,6 @@ module bp_be_top
       if (commit_pkt.ctxtsw | commit_pkt.npc_w_v) begin
         pending_ctxtsw_v_r <= 1'b0;
         pending_ctxtsw_sent_r <= 1'b0;
-      end else if (ctxtsw_launch_lo) begin
-        pending_ctxtsw_sent_r <= 1'b1;
       end
 
       if (dispatch_pkt.ctxtsw_v) begin
