@@ -129,7 +129,8 @@ module bp_be_top
 
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
-  wire ctxtsw_spec_cancel_li = cfg_bus_cast_i.freeze | commit_pkt.resume | commit_pkt.npc_w_v | commit_pkt.ctxtsw;
+  wire ctxtsw_control_boundary_li = cfg_bus_cast_i.freeze | commit_pkt.resume | commit_pkt.npc_w_v | commit_pkt.ctxtsw;
+  wire ctxtsw_capture_v_li = dispatch_pkt.ctxtsw_v & ~cfg_bus_cast_i.freeze & ~commit_pkt.resume;
 
   // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
   logic ctx_npc_write_v_lo;
@@ -169,16 +170,14 @@ module bp_be_top
       pending_ctxtsw_translation_en_r <= 1'b0;
       pending_ctxtsw_asid_r <= '0;
     end else begin
-      if (commit_pkt.ctxtsw | commit_pkt.npc_w_v) begin
+      if (ctxtsw_control_boundary_li) begin
         pending_ctxtsw_v_r <= 1'b0;
         pending_ctxtsw_sent_r <= 1'b0;
         ctxtsw_launch_pending_r <= 1'b0;
+        spec_ctxtsw_state_r <= e_ctxtsw_idle;
       end
 
-      if (ctxtsw_spec_cancel_li)
-        spec_ctxtsw_state_r <= e_ctxtsw_idle;
-
-      if (dispatch_pkt.ctxtsw_v) begin
+      if (ctxtsw_capture_v_li) begin
         pending_ctxtsw_v_r <= 1'b1;
         pending_ctxtsw_sent_r <= 1'b0;
         ctxtsw_launch_pending_r <= 1'b1;
