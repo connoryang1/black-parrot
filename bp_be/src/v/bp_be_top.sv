@@ -129,6 +129,7 @@ module bp_be_top
 
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
+  wire ctxtsw_spec_cancel_li = cfg_bus_cast_i.freeze | commit_pkt.resume | commit_pkt.npc_w_v | commit_pkt.ctxtsw;
 
   // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
   logic ctx_npc_write_v_lo;
@@ -172,8 +173,10 @@ module bp_be_top
         pending_ctxtsw_v_r <= 1'b0;
         pending_ctxtsw_sent_r <= 1'b0;
         ctxtsw_launch_pending_r <= 1'b0;
-        spec_ctxtsw_state_r <= e_ctxtsw_idle;
       end
+
+      if (ctxtsw_spec_cancel_li)
+        spec_ctxtsw_state_r <= e_ctxtsw_idle;
 
       if (dispatch_pkt.ctxtsw_v) begin
         pending_ctxtsw_v_r <= 1'b1;
