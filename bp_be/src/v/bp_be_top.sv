@@ -106,6 +106,7 @@ module bp_be_top
   logic pending_ctxtsw_v_r;
   logic pending_ctxtsw_sent_r;
   logic ctxtsw_launch_pending_r;
+  enum logic [1:0] {e_ctxtsw_idle, e_ctxtsw_prepared, e_ctxtsw_launched} spec_ctxtsw_state_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_prev_thread_id_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
@@ -159,6 +160,7 @@ module bp_be_top
       pending_ctxtsw_v_r <= 1'b0;
       pending_ctxtsw_sent_r <= 1'b0;
       ctxtsw_launch_pending_r <= 1'b0;
+      spec_ctxtsw_state_r <= e_ctxtsw_idle;
       pending_ctxtsw_prev_thread_id_r <= '0;
       pending_ctxtsw_thread_id_r <= '0;
       pending_ctxtsw_npc_r <= '0;
@@ -170,12 +172,14 @@ module bp_be_top
         pending_ctxtsw_v_r <= 1'b0;
         pending_ctxtsw_sent_r <= 1'b0;
         ctxtsw_launch_pending_r <= 1'b0;
+        spec_ctxtsw_state_r <= e_ctxtsw_idle;
       end
 
       if (dispatch_pkt.ctxtsw_v) begin
         pending_ctxtsw_v_r <= 1'b1;
         pending_ctxtsw_sent_r <= 1'b0;
         ctxtsw_launch_pending_r <= 1'b1;
+        spec_ctxtsw_state_r <= e_ctxtsw_prepared;
         pending_ctxtsw_prev_thread_id_r <= current_thread_id_lo;
         pending_ctxtsw_thread_id_r <= ctxtsw_target_thread_id_li;
         pending_ctxtsw_npc_r <= ctxtsw_target_npc_lo;
@@ -183,6 +187,9 @@ module bp_be_top
         pending_ctxtsw_translation_en_r <= ctxtsw_target_translation_en_lo;
         pending_ctxtsw_asid_r <= ctxtsw_target_asid_lo;
       end
+
+      if (ctxtsw_launch_lo)
+        spec_ctxtsw_state_r <= e_ctxtsw_launched;
     end
   end
 

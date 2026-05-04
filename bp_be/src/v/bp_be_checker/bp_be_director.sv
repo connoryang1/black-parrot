@@ -132,12 +132,24 @@ module bp_be_director
 
   wire npc_mismatch_v = issue_pkt_cast_i.v & (expected_npc_o != issue_pkt_cast_i.pc);
   wire npc_match_v    = issue_pkt_cast_i.v & (expected_npc_o == issue_pkt_cast_i.pc);
+  wire ctxtsw_detected_v      = dispatch_ctxtsw_v_i;
+  wire ctxtsw_prepared_v      = pending_ctxtsw_v_i;
+  wire ctxtsw_launch_token_v  = ctxtsw_launch_pending_i;
+  wire ctxtsw_fe_ready_v      = fe_ctxtsw_ready_i;
   wire switch_commit_v = commit_pkt_cast_i.ctxtsw;
+  wire ctxtsw_finalize_v      = switch_commit_v;
+  wire ctxtsw_cancel_v        = commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw;
   wire wait_v          = commit_pkt_cast_i.wfi;
   wire fencei_v        = commit_pkt_cast_i.fencei;
   wire npc_redirect_v  = commit_pkt_cast_i.npc_w_v;
   wire issue_fence_v   = !is_run || cmd_full_r_lo || npc_redirect_v;
   wire issue_clear_v   = is_cmd_fence & cmd_empty_r_lo;
+  wire ctxtsw_launch_allowed_v = ctxtsw_prepared_v
+                                 & ctxtsw_launch_token_v
+                                 & ctxtsw_fe_ready_v
+                                 & ~pending_ctxtsw_sent_i
+                                 & ~cmd_full_r_lo
+                                 & is_run;
 
   assign poison_isd_o = npc_mismatch_v | switch_commit_v;
   assign ctxtsw_launch_o = 1'b0;
