@@ -145,18 +145,21 @@ module bp_fe_controller
   wire cmd_nonattaboy_v = fe_cmd_v_i & (fe_cmd_cast_i.opcode != e_op_attaboy);
   wire cmd_immediate_v  = fe_cmd_v_i & (pc_redirect_v | icache_fill_response_v | wait_v);
   wire cmd_complex_v    = fe_cmd_v_i & (state_reset_v | itlb_fill_response_v | icache_fence_v | itlb_fence_v);
+  wire ctxtsw_accept_v  = ctxtsw_v_i & is_run & icache_yumi_i;
 
-  assign redirect_v_o               = !is_wait & cmd_nonattaboy_v;
-  assign redirect_pc_o              = fe_cmd_cast_i.npc - (redirect_resume_o << 1'b1);
-  assign redirect_npc_o             = fe_cmd_cast_i.npc;
-  assign redirect_br_v_o            = !is_wait & br_miss_v;
-  assign redirect_br_taken_o        = br_miss_taken;
-  assign redirect_br_ntaken_o       = br_miss_ntaken;
-  assign redirect_br_nonbr_o        = br_miss_nonbr;
-  assign redirect_thread_id_o       = context_switch_v
+  assign redirect_v_o               = ctxtsw_accept_v | (!ctxtsw_v_i & !is_wait & cmd_nonattaboy_v);
+  assign redirect_pc_o              = ctxtsw_accept_v ? ctxtsw_npc_i : fe_cmd_cast_i.npc - (redirect_resume_o << 1'b1);
+  assign redirect_npc_o             = ctxtsw_accept_v ? ctxtsw_npc_i : fe_cmd_cast_i.npc;
+  assign redirect_br_v_o            = !ctxtsw_accept_v & !is_wait & br_miss_v;
+  assign redirect_br_taken_o        = !ctxtsw_accept_v & br_miss_taken;
+  assign redirect_br_ntaken_o       = !ctxtsw_accept_v & br_miss_ntaken;
+  assign redirect_br_nonbr_o        = !ctxtsw_accept_v & br_miss_nonbr;
+  assign redirect_thread_id_o       = ctxtsw_accept_v
+                                      ? ctxtsw_thread_id_i
+                                      : context_switch_v
                                       ? fe_cmd_cast_i.operands.pc_redirect_operands.context_switch_thread_id
                                       : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd[branch_metadata_fwd_width_p-1 -: thread_id_width_p];
-  assign redirect_br_metadata_fwd_o = fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd;
+  assign redirect_br_metadata_fwd_o = ctxtsw_accept_v ? '0 : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd;
 
   assign attaboy_v_o               = attaboy_v;
   assign attaboy_force_o           = ~fe_queue_ready_and_i;
@@ -167,16 +170,16 @@ module bp_fe_controller
 
   assign state_reset_v_o = state_reset_v;
   assign ctxtsw_ready_o  = is_run;
-  assign ctxtsw_yumi_o   = ctxtsw_v_i & ctxtsw_ready_o;
+  assign ctxtsw_yumi_o   = ctxtsw_accept_v;
 
-  assign shadow_priv_w_o = state_reset_v | trap_v | interrupt_v | eret_v | context_switch_v;
-  assign shadow_priv_o = fe_cmd_cast_i.operands.pc_redirect_operands.priv;
+  assign shadow_priv_w_o = state_reset_v | trap_v | interrupt_v | eret_v | context_switch_v | ctxtsw_accept_v;
+  assign shadow_priv_o = ctxtsw_accept_v ? ctxtsw_priv_i : fe_cmd_cast_i.operands.pc_redirect_operands.priv;
 
-  assign shadow_translation_en_w_o = state_reset_v | trap_v | interrupt_v | eret_v | translation_v | context_switch_v;
-  assign shadow_translation_en_o = fe_cmd_cast_i.operands.pc_redirect_operands.translation_en;
+  assign shadow_translation_en_w_o = state_reset_v | trap_v | interrupt_v | eret_v | translation_v | context_switch_v | ctxtsw_accept_v;
+  assign shadow_translation_en_o = ctxtsw_accept_v ? ctxtsw_translation_en_i : fe_cmd_cast_i.operands.pc_redirect_operands.translation_en;
 
-  assign shadow_asid_w_o = state_reset_v | trap_v | interrupt_v | eret_v | translation_v | context_switch_v;
-  assign shadow_asid_o   = fe_cmd_cast_i.operands.pc_redirect_operands.asid;
+  assign shadow_asid_w_o = state_reset_v | trap_v | interrupt_v | eret_v | translation_v | context_switch_v | ctxtsw_accept_v;
+  assign shadow_asid_o   = ctxtsw_accept_v ? ctxtsw_asid_i : fe_cmd_cast_i.operands.pc_redirect_operands.asid;
 
   assign itlb_w_vtag_o = fe_cmd_cast_i.npc[vaddr_width_p-1-:vtag_width_p];
   assign itlb_w_entry_o = fe_cmd_cast_i.operands.itlb_fill_response.pte_leaf;
@@ -277,7 +280,15 @@ module bp_fe_controller
           end
         e_run:
           begin
-            if (cmd_immediate_v)
+            if (ctxtsw_v_i)
+              begin
+                icache_v_o = 1'b1;
+                icache_force_o = 1'b1;
+                itlb_r_v_o = icache_yumi_i;
+
+                tv_flush_o = ctxtsw_accept_v;
+              end
+            else if (cmd_immediate_v)
               begin
                 icache_v_o = 1'b1;
                 icache_force_o = 1'b1;
