@@ -36,6 +36,13 @@ module bp_be_top
    , output logic                                    fe_cmd_v_o
    , input                                           fe_cmd_yumi_i
    , input                                           fe_ctxtsw_ready_i
+   , output logic                                    fe_ctxtsw_v_o
+   , input                                           fe_ctxtsw_yumi_i
+   , output logic [vaddr_width_p-1:0]                fe_ctxtsw_npc_o
+   , output logic [thread_id_width_p-1:0]            fe_ctxtsw_thread_id_o
+   , output logic [rv64_priv_width_gp-1:0]           fe_ctxtsw_priv_o
+   , output logic                                    fe_ctxtsw_translation_en_o
+   , output logic [asid_width_p-1:0]                 fe_ctxtsw_asid_o
 
    // D$-LCE Interface
    // signals to LCE
@@ -131,6 +138,13 @@ module bp_be_top
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
   wire ctxtsw_control_boundary_li = cfg_bus_cast_i.freeze | commit_pkt.resume | commit_pkt.npc_w_v | commit_pkt.ctxtsw;
   wire ctxtsw_capture_v_li = dispatch_pkt.ctxtsw_v & ~cfg_bus_cast_i.freeze & ~commit_pkt.resume;
+
+  assign fe_ctxtsw_v_o = 1'b0;
+  assign fe_ctxtsw_npc_o = pending_ctxtsw_npc_r;
+  assign fe_ctxtsw_thread_id_o = pending_ctxtsw_thread_id_r;
+  assign fe_ctxtsw_priv_o = pending_ctxtsw_priv_mode_r;
+  assign fe_ctxtsw_translation_en_o = pending_ctxtsw_translation_en_r;
+  assign fe_ctxtsw_asid_o = pending_ctxtsw_asid_r;
 
   // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
   logic ctx_npc_write_v_lo;

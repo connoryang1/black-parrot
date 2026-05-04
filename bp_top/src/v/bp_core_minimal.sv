@@ -95,6 +95,12 @@ module bp_core_minimal
   logic fe_queue_v_li, fe_queue_ready_and_lo;
   bp_fe_cmd_s fe_cmd_lo;
   logic fe_cmd_v_lo, fe_cmd_yumi_li, fe_ctxtsw_ready_lo;
+  logic fe_ctxtsw_v_lo, fe_ctxtsw_yumi_li;
+  logic [vaddr_width_p-1:0] fe_ctxtsw_npc_lo;
+  logic [thread_id_width_p-1:0] fe_ctxtsw_thread_id_lo;
+  logic [rv64_priv_width_gp-1:0] fe_ctxtsw_priv_lo;
+  logic fe_ctxtsw_translation_en_lo;
+  logic [asid_width_p-1:0] fe_ctxtsw_asid_lo;
 
   bp_fe_top
    #(.bp_params_p(bp_params_p))
@@ -112,6 +118,13 @@ module bp_core_minimal
      ,.fe_cmd_v_i(fe_cmd_v_lo)
      ,.fe_cmd_yumi_o(fe_cmd_yumi_li)
      ,.ctxtsw_ready_o(fe_ctxtsw_ready_lo)
+     ,.ctxtsw_v_i(fe_ctxtsw_v_lo)
+     ,.ctxtsw_yumi_o(fe_ctxtsw_yumi_li)
+     ,.ctxtsw_npc_i(fe_ctxtsw_npc_lo)
+     ,.ctxtsw_thread_id_i(fe_ctxtsw_thread_id_lo)
+     ,.ctxtsw_priv_i(fe_ctxtsw_priv_lo)
+     ,.ctxtsw_translation_en_i(fe_ctxtsw_translation_en_lo)
+     ,.ctxtsw_asid_i(fe_ctxtsw_asid_lo)
 
      ,.cache_req_o(icache_req_o)
      ,.cache_req_v_o(icache_req_v_o)
@@ -157,6 +170,13 @@ module bp_core_minimal
      ,.fe_cmd_v_o(fe_cmd_v_lo)
      ,.fe_cmd_yumi_i(fe_cmd_yumi_li)
      ,.fe_ctxtsw_ready_i(fe_ctxtsw_ready_lo)
+     ,.fe_ctxtsw_v_o(fe_ctxtsw_v_lo)
+     ,.fe_ctxtsw_yumi_i(fe_ctxtsw_yumi_li)
+     ,.fe_ctxtsw_npc_o(fe_ctxtsw_npc_lo)
+     ,.fe_ctxtsw_thread_id_o(fe_ctxtsw_thread_id_lo)
+     ,.fe_ctxtsw_priv_o(fe_ctxtsw_priv_lo)
+     ,.fe_ctxtsw_translation_en_o(fe_ctxtsw_translation_en_lo)
+     ,.fe_ctxtsw_asid_o(fe_ctxtsw_asid_lo)
 
      ,.cache_req_o(dcache_req_o)
      ,.cache_req_v_o(dcache_req_v_o)

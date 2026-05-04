@@ -25,6 +25,14 @@ module bp_fe_controller
    , input                                            fe_cmd_v_i
    , output logic                                     fe_cmd_yumi_o
 
+   , input                                            ctxtsw_v_i
+   , output logic                                     ctxtsw_yumi_o
+   , input [vaddr_width_p-1:0]                        ctxtsw_npc_i
+   , input [thread_id_width_p-1:0]                    ctxtsw_thread_id_i
+   , input [rv64_priv_width_gp-1:0]                   ctxtsw_priv_i
+   , input                                            ctxtsw_translation_en_i
+   , input [asid_width_p-1:0]                         ctxtsw_asid_i
+
    , output logic [fe_queue_width_lp-1:0]             fe_queue_o
    , output logic                                     fe_queue_v_o
    , input                                            fe_queue_ready_and_i
@@ -159,6 +167,7 @@ module bp_fe_controller
 
   assign state_reset_v_o = state_reset_v;
   assign ctxtsw_ready_o  = is_run;
+  assign ctxtsw_yumi_o   = ctxtsw_v_i & ctxtsw_ready_o;
 
   assign shadow_priv_w_o = state_reset_v | trap_v | interrupt_v | eret_v | context_switch_v;
   assign shadow_priv_o = fe_cmd_cast_i.operands.pc_redirect_operands.priv;
