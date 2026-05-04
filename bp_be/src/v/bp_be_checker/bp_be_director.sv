@@ -130,7 +130,14 @@ module bp_be_director
 
   wire npc_mismatch_v = issue_pkt_cast_i.v & (expected_npc_o != issue_pkt_cast_i.pc);
   wire npc_match_v    = issue_pkt_cast_i.v & (expected_npc_o == issue_pkt_cast_i.pc);
-  assign poison_isd_o = npc_mismatch_v | commit_pkt_cast_i.ctxtsw;
+  wire switch_commit_v = commit_pkt_cast_i.ctxtsw;
+  wire wait_v          = commit_pkt_cast_i.wfi;
+  wire fencei_v        = commit_pkt_cast_i.fencei;
+  wire npc_redirect_v  = commit_pkt_cast_i.npc_w_v;
+  wire issue_fence_v   = !is_run || cmd_full_r_lo || npc_redirect_v;
+  wire issue_clear_v   = is_cmd_fence & cmd_empty_r_lo;
+
+  assign poison_isd_o = npc_mismatch_v | switch_commit_v;
   assign ctxtsw_launch_o = 1'b0;
 
   logic btaken_pending, attaboy_pending;
@@ -156,11 +163,11 @@ module bp_be_director
       unique casez (state_r)
         e_run   : state_n = freeze_li
                             ? e_freeze
-                            : commit_pkt_cast_i.wfi
+                            : wait_v
                               ? e_wait
-                              : commit_pkt_cast_i.fencei
+                              : fencei_v
                                 ? e_fencei
-                                : (fe_cmd_nonattaboy_v | commit_pkt_cast_i.ctxtsw)
+                                : (fe_cmd_nonattaboy_v | switch_commit_v)
                                   ? e_cmd_fence
                                   : state_r;
         e_freeze
@@ -178,8 +185,8 @@ module bp_be_director
     else
       state_r <= state_n;
 
-  assign suppress_iss_o = !is_run || cmd_full_r_lo || commit_pkt_cast_i.npc_w_v;
-  assign clear_iss_o    = is_cmd_fence & cmd_empty_r_lo;
+  assign suppress_iss_o = issue_fence_v;
+  assign clear_iss_o    = issue_clear_v;
   assign resume_o       = (is_freeze & ~freeze_li)
                           || (is_wait & irq_waiting_i)
                           || (is_fencei & ~mem_busy_i);
@@ -229,7 +236,7 @@ module bp_be_director
 
           fe_cmd_v_li = 1'b1;
         end
-      else if (commit_pkt_cast_i.ctxtsw)
+      else if (switch_commit_v)
         begin
           fe_cmd_li.opcode                            = e_op_context_switch;
           fe_cmd_li.npc                               = ctxtsw_target_npc_i;
@@ -241,7 +248,7 @@ module bp_be_director
 
           fe_cmd_v_li = ~pending_ctxtsw_sent_i;
         end
-      else if (commit_pkt_cast_i.wfi)
+      else if (wait_v)
         begin
           fe_cmd_li.opcode = e_op_wait;
           fe_cmd_li.npc = commit_pkt_cast_i.npc;
