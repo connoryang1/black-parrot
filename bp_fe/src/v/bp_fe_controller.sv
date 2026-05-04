@@ -90,6 +90,7 @@ module bp_fe_controller
    , output logic [asid_width_p-1:0]                  shadow_asid_o
 
    , output logic                                     state_reset_v_o
+   , output logic                                     ctxtsw_ready_o
    );
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
@@ -157,6 +158,7 @@ module bp_fe_controller
   assign attaboy_br_metadata_fwd_o = fe_cmd_cast_i.operands.attaboy.branch_metadata_fwd;
 
   assign state_reset_v_o = state_reset_v;
+  assign ctxtsw_ready_o  = is_run;
 
   assign shadow_priv_w_o = state_reset_v | trap_v | interrupt_v | eret_v | context_switch_v;
   assign shadow_priv_o = fe_cmd_cast_i.operands.pc_redirect_operands.priv;

@@ -35,6 +35,7 @@ module bp_be_top
    , output logic [fe_cmd_width_lp-1:0]              fe_cmd_o
    , output logic                                    fe_cmd_v_o
    , input                                           fe_cmd_yumi_i
+   , input                                           fe_ctxtsw_ready_i
 
    // D$-LCE Interface
    // signals to LCE
@@ -104,6 +105,7 @@ module bp_be_top
   logic [asid_width_p-1:0] ctxtsw_target_asid_lo;
   logic pending_ctxtsw_v_r;
   logic pending_ctxtsw_sent_r;
+  logic ctxtsw_launch_pending_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_prev_thread_id_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
@@ -156,6 +158,7 @@ module bp_be_top
     if (reset_i) begin
       pending_ctxtsw_v_r <= 1'b0;
       pending_ctxtsw_sent_r <= 1'b0;
+      ctxtsw_launch_pending_r <= 1'b0;
       pending_ctxtsw_prev_thread_id_r <= '0;
       pending_ctxtsw_thread_id_r <= '0;
       pending_ctxtsw_npc_r <= '0;
@@ -166,11 +169,13 @@ module bp_be_top
       if (commit_pkt.ctxtsw | commit_pkt.npc_w_v) begin
         pending_ctxtsw_v_r <= 1'b0;
         pending_ctxtsw_sent_r <= 1'b0;
+        ctxtsw_launch_pending_r <= 1'b0;
       end
 
       if (dispatch_pkt.ctxtsw_v) begin
         pending_ctxtsw_v_r <= 1'b1;
         pending_ctxtsw_sent_r <= 1'b0;
+        ctxtsw_launch_pending_r <= 1'b1;
         pending_ctxtsw_prev_thread_id_r <= current_thread_id_lo;
         pending_ctxtsw_thread_id_r <= ctxtsw_target_thread_id_li;
         pending_ctxtsw_npc_r <= ctxtsw_target_npc_lo;
@@ -280,11 +285,13 @@ module bp_be_top
      ,.dispatch_ctxtsw_target_translation_en_i(ctxtsw_target_translation_en_lo)
      ,.pending_ctxtsw_v_i(pending_ctxtsw_v_r)
      ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r)
+     ,.ctxtsw_launch_pending_i(ctxtsw_launch_pending_r)
      ,.ctxtsw_target_npc_i(pending_ctxtsw_npc_r)
      ,.ctxtsw_target_thread_id_i(pending_ctxtsw_thread_id_r)
      ,.ctxtsw_target_asid_i(pending_ctxtsw_asid_r)
      ,.ctxtsw_target_priv_i(pending_ctxtsw_priv_mode_r)
      ,.ctxtsw_target_translation_en_i(pending_ctxtsw_translation_en_r)
+     ,.fe_ctxtsw_ready_i(fe_ctxtsw_ready_i)
      ,.ctxtsw_launch_o(ctxtsw_launch_lo)
 
      ,.issue_pkt_i(issue_pkt)

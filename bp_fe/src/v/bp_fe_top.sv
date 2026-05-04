@@ -24,6 +24,7 @@ module bp_fe_top
    , input [fe_cmd_width_lp-1:0]                      fe_cmd_i
    , input                                            fe_cmd_v_i
    , output logic                                     fe_cmd_yumi_o
+   , output logic                                     ctxtsw_ready_o
 
    , output logic [fe_queue_width_lp-1:0]             fe_queue_o
    , output logic                                     fe_queue_v_o
@@ -456,6 +457,7 @@ module bp_fe_top
      ,.shadow_asid_w_o(shadow_asid_w)
 
      ,.state_reset_v_o(state_reset_v_lo)
+     ,.ctxtsw_ready_o(ctxtsw_ready_o)
      );
 
 endmodule

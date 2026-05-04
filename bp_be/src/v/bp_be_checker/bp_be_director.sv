@@ -75,11 +75,13 @@ module bp_be_director
    , input                               dispatch_ctxtsw_target_translation_en_i
    , input                               pending_ctxtsw_v_i
    , input                               pending_ctxtsw_sent_i
+   , input                               ctxtsw_launch_pending_i
    , input [vaddr_width_p-1:0]           ctxtsw_target_npc_i
    , input [thread_id_width_p-1:0]       ctxtsw_target_thread_id_i
    , input [asid_width_p-1:0]            ctxtsw_target_asid_i
    , input [1:0]                         ctxtsw_target_priv_i
    , input                               ctxtsw_target_translation_en_i
+   , input                               fe_ctxtsw_ready_i
    );
 
   // Declare parameterized structures
