@@ -102,6 +102,7 @@ module bp_be_reservation
     begin
       reservation = '0;
       reservation.v      = dispatch_pkt_r.v;
+      reservation.thread_id = dispatch_pkt_r.thread_id;
       reservation.ctxtsw_v = dispatch_pkt_r.ctxtsw_v;
       reservation.ctxtsw_target_tid = dispatch_pkt_r.ctxtsw_target_tid;
       reservation.pc     = dispatch_pkt_r.pc;
