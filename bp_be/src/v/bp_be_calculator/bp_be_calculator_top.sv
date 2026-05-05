@@ -102,6 +102,13 @@ module bp_be_calculator_top
    , output logic [thread_id_width_p-1:0]            ctx_rpush_tid_o
    , output logic [reg_addr_width_gp-1:0]            ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]               ctx_rpush_data_o
+
+   // Early classified ctxtsw event. Observable only until BE context state
+   // consumes it as an architectural mini-commit.
+   , output logic                                    fast_ctxtsw_v_o
+   , output logic [thread_id_width_p-1:0]            fast_ctxtsw_old_thread_id_o
+   , output logic [thread_id_width_p-1:0]            fast_ctxtsw_thread_id_o
+   , output logic [vaddr_width_p-1:0]                fast_ctxtsw_resume_npc_o
    );
 
   // Declare parameterizable structs
@@ -276,6 +283,13 @@ module bp_be_calculator_top
   assign br_pkt_cast_o.btaken = br_pkt_cast_o.v & pipe_int_early_btaken_lo;
   assign br_pkt_cast_o.bspec  = br_pkt_cast_o.v & exc_stage_r[0].ispec_v;
   assign br_pkt_cast_o.npc    = pipe_int_early_npc_lo;
+
+  assign fast_ctxtsw_v_o = reservation_r.v
+                            & reservation_r.ctxtsw_v
+                            & ~commit_pkt_cast_o.npc_w_v;
+  assign fast_ctxtsw_old_thread_id_o = reservation_r.thread_id[0 +: thread_id_width_p];
+  assign fast_ctxtsw_thread_id_o = reservation_r.ctxtsw_target_tid;
+  assign fast_ctxtsw_resume_npc_o = pipe_int_early_npc_lo;
 
   logic [dword_width_gp-1:0] rs2_val_r;
   if (integer_support_p[e_catchup])

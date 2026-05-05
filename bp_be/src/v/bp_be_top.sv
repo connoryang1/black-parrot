@@ -122,6 +122,14 @@ module bp_be_top
   logic [asid_width_p-1:0] pending_ctxtsw_asid_r;
   logic ctxtsw_launch_lo;
   logic [thread_id_width_p-1:0] current_thread_id_lo;
+  logic fast_ctxtsw_v_lo;
+  logic [thread_id_width_p-1:0] fast_ctxtsw_old_thread_id_lo;
+  logic [thread_id_width_p-1:0] fast_ctxtsw_thread_id_lo;
+  logic [vaddr_width_p-1:0] fast_ctxtsw_resume_npc_lo;
+  logic [vaddr_width_p-1:0] fast_ctxtsw_target_npc_lo;
+  logic [1:0] fast_ctxtsw_target_priv_mode_lo;
+  logic fast_ctxtsw_target_translation_en_lo;
+  logic [asid_width_p-1:0] fast_ctxtsw_target_asid_lo;
   logic [num_threads_p-1:0][vaddr_width_p-1:0] context_npc_r;
   logic [num_threads_p-1:0][1:0] context_priv_mode_r;
   logic [num_threads_p-1:0] context_translation_en_r;
@@ -245,6 +253,7 @@ module bp_be_top
                        && (context_write_thread_id_li < num_threads_p)
                        && (context_read_thread_id_li < num_threads_p);
   wire [thread_id_width_p-1:0] ctxtsw_target_thread_id_li = dispatch_pkt.ctxtsw_target_tid;
+  wire [thread_id_width_p-1:0] fast_ctxtsw_target_thread_id_li = fast_ctxtsw_thread_id_lo;
   wire ctxtsw_target_fwd_v =
     ctx_npc_write_v_lo
     && (ctx_npc_write_tid_lo == ctxtsw_target_thread_id_li)
@@ -286,6 +295,20 @@ module bp_be_top
       ctxtsw_target_priv_mode_lo = 2'b11;
       ctxtsw_target_translation_en_lo = 1'b0;
       ctxtsw_target_asid_lo = '0;
+    end
+  end
+
+  always_comb begin
+    if (fast_ctxtsw_target_thread_id_li < num_threads_p) begin
+      fast_ctxtsw_target_npc_lo = context_npc_r[fast_ctxtsw_target_thread_id_li];
+      fast_ctxtsw_target_priv_mode_lo = context_priv_mode_r[fast_ctxtsw_target_thread_id_li];
+      fast_ctxtsw_target_translation_en_lo = context_translation_en_r[fast_ctxtsw_target_thread_id_li];
+      fast_ctxtsw_target_asid_lo = context_asid_r[fast_ctxtsw_target_thread_id_li];
+    end else begin
+      fast_ctxtsw_target_npc_lo = '0;
+      fast_ctxtsw_target_priv_mode_lo = 2'b11;
+      fast_ctxtsw_target_translation_en_lo = 1'b0;
+      fast_ctxtsw_target_asid_lo = '0;
     end
   end
 
@@ -473,6 +496,10 @@ module bp_be_top
      ,.ctx_rpush_tid_o(ctx_rpush_tid_lo)
      ,.ctx_rpush_reg_o(ctx_rpush_reg_lo)
      ,.ctx_rpush_data_o(ctx_rpush_data_lo)
+     ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
+     ,.fast_ctxtsw_old_thread_id_o(fast_ctxtsw_old_thread_id_lo)
+     ,.fast_ctxtsw_thread_id_o(fast_ctxtsw_thread_id_lo)
+     ,.fast_ctxtsw_resume_npc_o(fast_ctxtsw_resume_npc_lo)
      );
 
 endmodule
