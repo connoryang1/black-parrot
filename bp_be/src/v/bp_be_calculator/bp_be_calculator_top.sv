@@ -289,7 +289,7 @@ module bp_be_calculator_top
                             & ~commit_pkt_cast_o.npc_w_v;
   assign fast_ctxtsw_old_thread_id_o = reservation_r.thread_id[0 +: thread_id_width_p];
   assign fast_ctxtsw_thread_id_o = reservation_r.ctxtsw_target_tid;
-  assign fast_ctxtsw_resume_npc_o = pipe_int_early_npc_lo;
+  assign fast_ctxtsw_resume_npc_o = reservation_r.pc + (reservation_r.size << 1'b1);
 
   logic [dword_width_gp-1:0] rs2_val_r;
   if (integer_support_p[e_catchup])
