@@ -113,7 +113,13 @@ module bp_be_top
   logic pending_ctxtsw_v_r;
   logic pending_ctxtsw_sent_r;
   logic ctxtsw_launch_pending_r;
-  enum logic [1:0] {e_ctxtsw_idle, e_ctxtsw_prepared, e_ctxtsw_launched} spec_ctxtsw_state_r;
+  enum logic [2:0] {
+    e_ctxtsw_idle
+    ,e_ctxtsw_prepared
+    ,e_ctxtsw_launched
+    ,e_ctxtsw_finalized
+    ,e_ctxtsw_canceled
+  } spec_ctxtsw_state_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_prev_thread_id_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
@@ -144,8 +150,11 @@ module bp_be_top
 
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
-  wire ctxtsw_control_boundary_li = cfg_bus_cast_i.freeze | commit_pkt.resume | commit_pkt.npc_w_v | commit_pkt.ctxtsw;
-  wire ctxtsw_capture_v_li = dispatch_pkt.ctxtsw_v & ~cfg_bus_cast_i.freeze & ~commit_pkt.resume;
+  wire ctxtsw_token_create_v_li = dispatch_pkt.ctxtsw_v & ~cfg_bus_cast_i.freeze & ~commit_pkt.resume;
+  wire ctxtsw_token_finalize_v_li = commit_pkt.ctxtsw;
+  wire ctxtsw_token_cancel_v_li = cfg_bus_cast_i.freeze | commit_pkt.resume | (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw);
+  wire ctxtsw_token_clear_v_li = ctxtsw_token_cancel_v_li | ctxtsw_token_finalize_v_li;
+  wire ctxtsw_capture_v_li = ctxtsw_token_create_v_li;
 
   assign fe_ctxtsw_v_o = 1'b0;
   assign fe_ctxtsw_npc_o = pending_ctxtsw_npc_r;
@@ -192,11 +201,11 @@ module bp_be_top
       pending_ctxtsw_translation_en_r <= 1'b0;
       pending_ctxtsw_asid_r <= '0;
     end else begin
-      if (ctxtsw_control_boundary_li) begin
+      if (ctxtsw_token_clear_v_li) begin
         pending_ctxtsw_v_r <= 1'b0;
         pending_ctxtsw_sent_r <= 1'b0;
         ctxtsw_launch_pending_r <= 1'b0;
-        spec_ctxtsw_state_r <= e_ctxtsw_idle;
+        spec_ctxtsw_state_r <= ctxtsw_token_finalize_v_li ? e_ctxtsw_finalized : e_ctxtsw_canceled;
       end
 
       if (ctxtsw_capture_v_li) begin
