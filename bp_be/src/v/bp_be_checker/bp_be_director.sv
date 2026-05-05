@@ -149,10 +149,12 @@ module bp_be_director
                                  & ctxtsw_fe_ready_v
                                  & ~pending_ctxtsw_sent_i
                                  & ~cmd_full_r_lo
-                                 & is_run;
+                                 & is_run
+                                 & ~ctxtsw_finalize_v
+                                 & ~ctxtsw_cancel_v;
 
   assign poison_isd_o = npc_mismatch_v | switch_commit_v;
-  assign ctxtsw_launch_o = 1'b0;
+  assign ctxtsw_launch_o = ctxtsw_launch_allowed_v;
 
   logic btaken_pending, attaboy_pending;
   bsg_dff_reset_set_clear
