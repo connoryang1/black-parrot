@@ -128,6 +128,10 @@ module bp_be_issue_queue
      );
 
   wire [entry_ptr_width_lp-1:0] preissue_entry_sel = bypass_preissue ? wptr_r.entry : rptr_n.entry;
+  wire [branch_metadata_fwd_width_p-1:0] preissue_branch_metadata_fwd =
+    bypass_preissue ? fe_queue_cast_i.branch_metadata_fwd : fe_queue_lo.branch_metadata_fwd;
+  wire [thread_id_width_p-1:0] preissue_thread_id =
+    preissue_branch_metadata_fwd[branch_metadata_fwd_width_p-1 -: thread_id_width_p];
   logic [fetch_cinstr_p:0][cinstr_width_gp-1:0] queue_instr_raw;
   assign queue_instr_raw[0+:fetch_cinstr_p] = bypass_preissue ? queue_instr : queue_instr_n;
   assign queue_instr_raw[fetch_cinstr_p] = '0;
@@ -153,6 +157,7 @@ module bp_be_issue_queue
       preissue_pkt_cast_o = '0;
       preissue_pkt_cast_o.size = preissue_size[preissue_entry_sel];
       preissue_pkt_cast_o.instr = preissue_instr[preissue_entry_sel];
+      preissue_pkt_cast_o.thread_id = preissue_thread_id;
 
       // Decide whether to read from regfile
       casez (preissue_instr[preissue_entry_sel].t.fmatype.opcode)
@@ -286,6 +291,7 @@ module bp_be_issue_queue
       issue_pkt_cast_o = '0;
 
       issue_pkt_cast_o.v                    = en_i & ~empty;
+      issue_pkt_cast_o.thread_id            = vaddr_width_p'(preissue_pkt_r.thread_id);
       issue_pkt_cast_o.fetch                = (fe_queue_lo.msg_type == e_instr_fetch) & !illegal_instr_lo;
       issue_pkt_cast_o.itlb_miss            = (fe_queue_lo.msg_type == e_itlb_miss);
       issue_pkt_cast_o.instr_access_fault   = (fe_queue_lo.msg_type == e_instr_access_fault);
@@ -315,4 +321,3 @@ module bp_be_issue_queue
     end
 
 endmodule
-
