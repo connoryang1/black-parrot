@@ -59,6 +59,8 @@ module bp_be_pipe_sys
 
    // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]           current_thread_id_i
+   // Retire thread owns the instruction currently committing in the backend.
+   , input [thread_id_width_p-1:0]           retire_thread_id_i
 
    // Bootstrap: write target NPC into context_storage for a given thread (CSR 0x082)
    , output logic                            ctx_npc_write_v_o
@@ -130,6 +132,7 @@ module bp_be_pipe_sys
      ,.frm_dyn_o(frm_dyn_o)
      // Pass current thread ID for CSR returns
      ,.current_thread_id_i(current_thread_id_i)
+     ,.retire_thread_id_i(retire_thread_id_i)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)

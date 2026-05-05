@@ -90,6 +90,8 @@ module bp_be_calculator_top
 
    // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]                   current_thread_id_i
+   // Retire thread owns the instruction currently committing in the backend.
+   , input [thread_id_width_p-1:0]                   retire_thread_id_i
 
    // Bootstrap: write target NPC into context_storage for a given thread (CSR 0x082)
    , output logic                                    ctx_npc_write_v_o
@@ -249,6 +251,7 @@ module bp_be_calculator_top
 
      // Context switching
      ,.current_thread_id_i(current_thread_id_i)
+     ,.retire_thread_id_i(retire_thread_id_i)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)

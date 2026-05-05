@@ -61,6 +61,8 @@ module bp_be_csr_wrapper_mt
 
    // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]           current_thread_id_i
+   // Retire thread owns the instruction currently committing in the backend.
+   , input [thread_id_width_p-1:0]           retire_thread_id_i
 
    // Bootstrap: write target NPC for a thread (CSR 0x082)
    , output logic                            ctx_npc_write_v_o
@@ -102,11 +104,12 @@ module bp_be_csr_wrapper_mt
 
   for (genvar i = 0; i < num_threads_p; i++) begin : gen_gate
     wire active = (current_thread_id_i == thread_id_width_p'(i));
+    wire retire_active = (retire_thread_id_i == thread_id_width_p'(i));
     assign csr_r_v_gated[i]     = csr_r_v_i & active;
-    assign frf_w_v_gated[i]     = frf_w_v_i & active;
-    assign retire_pkt_gated[i]  = active ? retire_pkt_i : '0;
-    assign retire_ctxtsw_v_gated[i] = retire_ctxtsw_v_i & active;
-    assign fflags_acc_gated[i]  = active ? fflags_acc_i : rv64_fflags_s'('0);
+    assign frf_w_v_gated[i]     = frf_w_v_i & retire_active;
+    assign retire_pkt_gated[i]  = retire_active ? retire_pkt_i : '0;
+    assign retire_ctxtsw_v_gated[i] = retire_ctxtsw_v_i & retire_active;
+    assign fflags_acc_gated[i]  = retire_active ? fflags_acc_i : rv64_fflags_s'('0);
   end
 
   for (genvar i = 0; i < num_threads_p; i++) begin : gen_csr
