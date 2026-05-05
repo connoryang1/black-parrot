@@ -179,7 +179,7 @@ module bp_be_scheduler
      ,.reset_i(reset_i)
 
      ,.rd_w_v_i(iwb_pkt_cast_i.ird_w_v)
-     ,.rd_thread_id_i(current_thread_id_i)
+     ,.rd_thread_id_i(iwb_pkt_cast_i.thread_id)
      ,.rd_addr_i(iwb_pkt_cast_i.rd_addr)
      ,.rd_data_i(iwb_pkt_cast_i.rd_data)
 
@@ -202,7 +202,7 @@ module bp_be_scheduler
      ,.reset_i(reset_i)
 
      ,.rd_w_v_i(fwb_pkt_cast_i.frd_w_v)
-     ,.rd_thread_id_i(current_thread_id_i)
+     ,.rd_thread_id_i(fwb_pkt_cast_i.thread_id)
      ,.rd_addr_i(fwb_pkt_cast_i.rd_addr)
      ,.rd_data_i(fwb_pkt_cast_i.rd_data)
 
@@ -266,7 +266,9 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.ctxtsw_v   = issue_ctxtsw_v;
       dispatch_pkt_cast_o.ctxtsw_target_tid = issue_ctxtsw_target_tid;
       dispatch_pkt_cast_o.pc         = expected_npc_i;
-      dispatch_pkt_cast_o.thread_id  = vaddr_width_p'(current_thread_id_i);
+      dispatch_pkt_cast_o.thread_id  = writeback_v
+                                       ? vaddr_width_p'(late_wb_pkt_cast_i.thread_id)
+                                       : vaddr_width_p'(current_thread_id_i);
       dispatch_pkt_cast_o.instr      = be_exc_not_instr_li ? be_exc_instr_li   : fe_exc_not_instr_li ? fe_exc_instr_li  : issue_pkt_cast_o.instr;
       dispatch_pkt_cast_o.size       = be_exc_not_instr_li ? be_exc_size_li    : fe_exc_not_instr_li ? fe_exc_size_li   : issue_pkt_cast_o.size;
       dispatch_pkt_cast_o.count      = be_exc_not_instr_li ? be_exc_count_li   : fe_exc_not_instr_li ? fe_exc_count_li  : issue_pkt_cast_o.count;
