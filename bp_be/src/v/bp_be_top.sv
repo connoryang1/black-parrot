@@ -226,6 +226,12 @@ module bp_be_top
 
       if (ctxtsw_launch_lo)
         spec_ctxtsw_state_r <= e_ctxtsw_launched;
+
+      if (fe_ctxtsw_yumi_i) begin
+        pending_ctxtsw_sent_r <= 1'b1;
+        ctxtsw_launch_pending_r <= 1'b0;
+        spec_ctxtsw_state_r <= e_ctxtsw_launched;
+      end
     end
   end
 
