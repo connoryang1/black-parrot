@@ -122,6 +122,7 @@ module bp_be_top
   } spec_ctxtsw_state_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_prev_thread_id_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
+  logic [vaddr_width_p-1:0] pending_ctxtsw_resume_npc_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
   logic [1:0] pending_ctxtsw_priv_mode_r;
   logic pending_ctxtsw_translation_en_r;
@@ -196,6 +197,7 @@ module bp_be_top
       spec_ctxtsw_state_r <= e_ctxtsw_idle;
       pending_ctxtsw_prev_thread_id_r <= '0;
       pending_ctxtsw_thread_id_r <= '0;
+      pending_ctxtsw_resume_npc_r <= '0;
       pending_ctxtsw_npc_r <= '0;
       pending_ctxtsw_priv_mode_r <= 2'b11;
       pending_ctxtsw_translation_en_r <= 1'b0;
@@ -215,6 +217,7 @@ module bp_be_top
         spec_ctxtsw_state_r <= e_ctxtsw_prepared;
         pending_ctxtsw_prev_thread_id_r <= fast_ctxtsw_old_thread_id_lo;
         pending_ctxtsw_thread_id_r <= fast_ctxtsw_thread_id_lo;
+        pending_ctxtsw_resume_npc_r <= fast_ctxtsw_resume_npc_lo;
         pending_ctxtsw_npc_r <= fast_ctxtsw_target_npc_lo;
         pending_ctxtsw_priv_mode_r <= fast_ctxtsw_target_priv_mode_lo;
         pending_ctxtsw_translation_en_r <= fast_ctxtsw_target_translation_en_lo;
@@ -243,7 +246,11 @@ module bp_be_top
                               ? pending_ctxtsw_prev_thread_id_r
                               : current_thread_id_lo;
       if (commit_thread_id_li < num_threads_p) begin
-        context_npc_r[commit_thread_id_li] <= ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc;
+        context_npc_r[commit_thread_id_li] <= ctx_npc_write_v_lo
+                                              ? ctx_npc_write_npc_lo
+                                              : commit_pkt.ctxtsw
+                                                ? pending_ctxtsw_resume_npc_r
+                                                : commit_pkt.npc;
         context_priv_mode_r[commit_thread_id_li] <= commit_pkt.priv_n;
         context_translation_en_r[commit_thread_id_li] <= commit_pkt.translation_en_n;
         context_asid_r[commit_thread_id_li] <= trans_info_lo.asid;
