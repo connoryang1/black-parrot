@@ -150,7 +150,7 @@ module bp_be_top
 
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
-  wire ctxtsw_token_create_v_li = dispatch_pkt.ctxtsw_v & ~cfg_bus_cast_i.freeze & ~commit_pkt.resume;
+  wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo & ~cfg_bus_cast_i.freeze & ~commit_pkt.resume;
   wire ctxtsw_token_finalize_v_li = commit_pkt.ctxtsw;
   wire ctxtsw_token_cancel_v_li = cfg_bus_cast_i.freeze | commit_pkt.resume | (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw);
   wire ctxtsw_token_clear_v_li = ctxtsw_token_cancel_v_li | ctxtsw_token_finalize_v_li;
@@ -213,12 +213,12 @@ module bp_be_top
         pending_ctxtsw_sent_r <= 1'b0;
         ctxtsw_launch_pending_r <= 1'b1;
         spec_ctxtsw_state_r <= e_ctxtsw_prepared;
-        pending_ctxtsw_prev_thread_id_r <= current_thread_id_lo;
-        pending_ctxtsw_thread_id_r <= ctxtsw_target_thread_id_li;
-        pending_ctxtsw_npc_r <= ctxtsw_target_npc_lo;
-        pending_ctxtsw_priv_mode_r <= ctxtsw_target_priv_mode_lo;
-        pending_ctxtsw_translation_en_r <= ctxtsw_target_translation_en_lo;
-        pending_ctxtsw_asid_r <= ctxtsw_target_asid_lo;
+        pending_ctxtsw_prev_thread_id_r <= fast_ctxtsw_old_thread_id_lo;
+        pending_ctxtsw_thread_id_r <= fast_ctxtsw_thread_id_lo;
+        pending_ctxtsw_npc_r <= fast_ctxtsw_target_npc_lo;
+        pending_ctxtsw_priv_mode_r <= fast_ctxtsw_target_priv_mode_lo;
+        pending_ctxtsw_translation_en_r <= fast_ctxtsw_target_translation_en_lo;
+        pending_ctxtsw_asid_r <= fast_ctxtsw_target_asid_lo;
       end
 
       if (ctxtsw_launch_lo)
