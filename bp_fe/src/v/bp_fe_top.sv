@@ -24,6 +24,14 @@ module bp_fe_top
    , input [fe_cmd_width_lp-1:0]                      fe_cmd_i
    , input                                            fe_cmd_v_i
    , output logic                                     fe_cmd_yumi_o
+   , output logic                                     ctxtsw_ready_o
+   , input                                            ctxtsw_v_i
+   , output logic                                     ctxtsw_yumi_o
+   , input [vaddr_width_p-1:0]                        ctxtsw_npc_i
+   , input [thread_id_width_p-1:0]                    ctxtsw_thread_id_i
+   , input [rv64_priv_width_gp-1:0]                   ctxtsw_priv_i
+   , input                                            ctxtsw_translation_en_i
+   , input [asid_width_p-1:0]                         ctxtsw_asid_i
 
    , output logic [fe_queue_width_lp-1:0]             fe_queue_o
    , output logic                                     fe_queue_v_o
@@ -123,6 +131,7 @@ module bp_fe_top
   logic icache_v_li, icache_force_li, icache_yumi_lo, tl_flush_lo;
   logic icache_tv_we;
   logic icache_hit_v_lo, icache_miss_v_lo, icache_fence_v_lo, icache_hit_yumi_li, icache_yumi_li;
+  logic [thread_id_width_p-1:0] redirect_thread_id_li;
 
   logic fetch_v_lo, fetch_yumi_li;
   logic [vaddr_width_p-1:0] fetch_pc_lo;
@@ -153,6 +162,7 @@ module bp_fe_top
      ,.redirect_pc_i(redirect_pc_li)
      ,.redirect_npc_i(redirect_npc_li)
      ,.redirect_br_v_i(redirect_br_v_li)
+     ,.redirect_thread_id_i(redirect_thread_id_li)
      ,.redirect_br_metadata_fwd_i(redirect_br_metadata_fwd_li)
      ,.redirect_br_taken_i(redirect_br_taken_li)
      ,.redirect_br_ntaken_i(redirect_br_ntaken_li)
@@ -389,6 +399,14 @@ module bp_fe_top
      ,.fe_cmd_v_i(fe_cmd_v_i)
      ,.fe_cmd_yumi_o(fe_cmd_yumi_o)
 
+     ,.ctxtsw_v_i(ctxtsw_v_i)
+     ,.ctxtsw_yumi_o(ctxtsw_yumi_o)
+     ,.ctxtsw_npc_i(ctxtsw_npc_i)
+     ,.ctxtsw_thread_id_i(ctxtsw_thread_id_i)
+     ,.ctxtsw_priv_i(ctxtsw_priv_i)
+     ,.ctxtsw_translation_en_i(ctxtsw_translation_en_i)
+     ,.ctxtsw_asid_i(ctxtsw_asid_i)
+
      ,.fe_queue_o(fe_queue_o)
      ,.fe_queue_v_o(fe_queue_v_o)
      ,.fe_queue_ready_and_i(fe_queue_ready_and_i)
@@ -402,6 +420,7 @@ module bp_fe_top
      ,.redirect_br_taken_o(redirect_br_taken_li)
      ,.redirect_br_ntaken_o(redirect_br_ntaken_li)
      ,.redirect_br_nonbr_o(redirect_br_nonbr_li)
+     ,.redirect_thread_id_o(redirect_thread_id_li)
      ,.redirect_br_metadata_fwd_o(redirect_br_metadata_fwd_li)
 
      ,.attaboy_v_o(attaboy_v_li)
@@ -453,7 +472,7 @@ module bp_fe_top
      ,.shadow_asid_w_o(shadow_asid_w)
 
      ,.state_reset_v_o(state_reset_v_lo)
+     ,.ctxtsw_ready_o(ctxtsw_ready_o)
      );
 
 endmodule
-

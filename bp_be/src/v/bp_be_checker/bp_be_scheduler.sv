@@ -57,7 +57,7 @@ module bp_be_scheduler
    // Current thread ID for register file reads/writes
    , input [thread_id_width_p-1:0]            current_thread_id_i
 
-   // rpush: write arbitrary register of a disabled thread (CSR 0x083)
+   // CSR 0x083 remote register write into another hardware thread context
    , input                                    rpush_w_v_i
    , input                                    rpush_fp_w_v_i
    , input [thread_id_width_p-1:0]            rpush_tid_i
@@ -179,7 +179,7 @@ module bp_be_scheduler
      ,.reset_i(reset_i)
 
      ,.rd_w_v_i(iwb_pkt_cast_i.ird_w_v)
-     ,.rd_thread_id_i(current_thread_id_i)
+     ,.rd_thread_id_i(iwb_pkt_cast_i.thread_id)
      ,.rd_addr_i(iwb_pkt_cast_i.rd_addr)
      ,.rd_data_i(iwb_pkt_cast_i.rd_data)
 
@@ -202,7 +202,7 @@ module bp_be_scheduler
      ,.reset_i(reset_i)
 
      ,.rd_w_v_i(fwb_pkt_cast_i.frd_w_v)
-     ,.rd_thread_id_i(current_thread_id_i)
+     ,.rd_thread_id_i(fwb_pkt_cast_i.thread_id)
      ,.rd_addr_i(fwb_pkt_cast_i.rd_addr)
      ,.rd_data_i(fwb_pkt_cast_i.rd_data)
 
@@ -238,6 +238,19 @@ module bp_be_scheduler
   wire [fetch_ptr_p-1:0] be_exc_size_li = '0;
   wire [fetch_ptr_p-1:0] be_exc_count_li = ptw_v_lo ? ptw_count_lo : writeback_v ? '0 : '0;
 
+  wire issue_ctxtsw_v =
+    fe_instr_not_exc_li
+    & issue_pkt_cast_o.csrw
+    & (issue_pkt_cast_o.instr.t.itype.imm12 == 12'h081);
+
+  wire issue_ctxtsw_imm_v =
+    issue_pkt_cast_o.instr inside {`RV64_CSRRWI, `RV64_CSRRSI, `RV64_CSRRCI};
+
+  wire [thread_id_width_p-1:0] issue_ctxtsw_target_tid =
+    issue_ctxtsw_imm_v
+      ? thread_id_width_p'(issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
+      : thread_id_width_p'(irf_rs1[0 +: thread_id_width_p]);
+
   assign wb_instr_li = '{rd_addr: late_wb_pkt_cast_i.rd_addr, default: '0};
   assign wb_decode_li = '{irf_w_v: late_wb_pkt_cast_i.ird_w_v, frf_w_v: late_wb_pkt_cast_i.frd_w_v, default: '0};
   assign walk_decode_li = '{pipe_mem_final_v: ptw_walk_lo, dcache_mmu_v: ptw_walk_lo, fu_op: e_dcache_op_ptw, default: '0};
@@ -250,8 +263,12 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.queue_v    = (fe_queue_read_li & ~poison_isd_i);
       dispatch_pkt_cast_o.ispec_v    = fe_instr_not_exc_li & ispec_v_i;
       dispatch_pkt_cast_o.nspec_v    = ptw_v_lo | writeback_v;
+      dispatch_pkt_cast_o.ctxtsw_v   = issue_ctxtsw_v;
+      dispatch_pkt_cast_o.ctxtsw_target_tid = issue_ctxtsw_target_tid;
       dispatch_pkt_cast_o.pc         = expected_npc_i;
-      dispatch_pkt_cast_o.thread_id  = vaddr_width_p'(current_thread_id_i);
+      dispatch_pkt_cast_o.thread_id  = writeback_v
+                                       ? vaddr_width_p'(late_wb_pkt_cast_i.thread_id)
+                                       : vaddr_width_p'(current_thread_id_i);
       dispatch_pkt_cast_o.instr      = be_exc_not_instr_li ? be_exc_instr_li   : fe_exc_not_instr_li ? fe_exc_instr_li  : issue_pkt_cast_o.instr;
       dispatch_pkt_cast_o.size       = be_exc_not_instr_li ? be_exc_size_li    : fe_exc_not_instr_li ? fe_exc_size_li   : issue_pkt_cast_o.size;
       dispatch_pkt_cast_o.count      = be_exc_not_instr_li ? be_exc_count_li   : fe_exc_not_instr_li ? fe_exc_count_li  : issue_pkt_cast_o.count;
@@ -289,4 +306,3 @@ module bp_be_scheduler
     end
 
 endmodule
-

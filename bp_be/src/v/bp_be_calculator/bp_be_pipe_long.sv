@@ -45,6 +45,7 @@ module bp_be_pipe_long
   wire [dword_width_gp-1:0]  irs1 = reservation.isrc1;
   wire [dword_width_gp-1:0]  irs2 = reservation.isrc2;
   wire [dword_width_gp-1:0]  irs3 = reservation.isrc3;
+  wire [thread_id_width_p-1:0] reservation_thread_id = reservation.thread_id[0 +: thread_id_width_p];
 
   wire int_v_li = reservation.v & reservation.decode.pipe_long_v & reservation.decode.irf_w_v;
   wire fp_v_li = reservation.v & reservation.decode.pipe_long_v & reservation.decode.frf_w_v;
@@ -112,16 +113,17 @@ module bp_be_pipe_long
      );
 
   logic [reg_addr_width_gp-1:0] ird_addr_r;
+  logic [thread_id_width_p-1:0] ird_thread_id_r;
   bp_be_fu_op_s fu_op_r;
   logic [$bits(bp_be_int_tag_e)-1:0] ird_tag_r;
   bsg_dff_en
-   #(.width_p(reg_addr_width_gp+$bits(bp_be_fu_op_s)+$bits(ird_tag_r)))
+   #(.width_p(thread_id_width_p+reg_addr_width_gp+$bits(bp_be_fu_op_s)+$bits(ird_tag_r)))
    iwb_reg
     (.clk_i(clk_i)
      ,.en_i(imulh_v_li | idiv_v_li | irem_v_li)
 
-     ,.data_i({instr.t.fmatype.rd_addr, decode.fu_op, decode.ird_tag})
-     ,.data_o({ird_addr_r, fu_op_r, ird_tag_r})
+     ,.data_i({reservation_thread_id, instr.t.fmatype.rd_addr, decode.fu_op, decode.ird_tag})
+     ,.data_o({ird_thread_id_r, ird_addr_r, fu_op_r, ird_tag_r})
      );
 
   logic [dword_width_gp-1:0] iresult;
@@ -146,6 +148,7 @@ module bp_be_pipe_long
   assign ibusy_o = int_v_li | ~imulh_ready_lo | ~idiv_ready_and_lo | imask_r;
   assign iwb_v_o = ~imask_r & (imulh_v_lo | idiv_v_lo);
   assign iwb_pkt_cast_o = '{ird_w_v : iwb_v_o
+                            ,thread_id: ird_thread_id_r
                             ,rd_addr: ird_addr_r
                             ,rd_data: ird_data_lo
                             ,default: '0
@@ -214,15 +217,16 @@ module bp_be_pipe_long
 
   bp_be_fp_tag_e frd_tag_r;
   logic [reg_addr_width_gp-1:0] frd_addr_r;
+  logic [thread_id_width_p-1:0] frd_thread_id_r;
   rv64_frm_e frm_r;
   bsg_dff_en
-   #(.width_p($bits(rv64_frm_e)+reg_addr_width_gp+1))
+   #(.width_p($bits(rv64_frm_e)+thread_id_width_p+reg_addr_width_gp+1))
    fwb_reg
     (.clk_i(clk_i)
      ,.en_i(fdivsqrt_v_li)
 
-     ,.data_i({frm_li, instr.t.fmatype.rd_addr, decode.frd_tag})
-     ,.data_o({frm_r, frd_addr_r, frd_tag_r})
+     ,.data_i({frm_li, reservation_thread_id, instr.t.fmatype.rd_addr, decode.frd_tag})
+     ,.data_o({frm_r, frd_thread_id_r, frd_addr_r, frd_tag_r})
      );
 
   bp_be_fp_reg_s frd_data_lo;
@@ -243,6 +247,7 @@ module bp_be_pipe_long
   assign fbusy_o = fdivsqrt_v_li | ~fdivsqrt_ready_and_lo | fmask_r | fdivsqrt_pending;
   assign fwb_v_o = ~fmask_r & (fdivsqrt_v_lo | fdivsqrt_pending);
   assign fwb_pkt_cast_o = '{frd_w_v : fwb_v_o
+                            ,thread_id: frd_thread_id_r
                             ,rd_addr: frd_addr_r
                             ,rd_data: frd_data_lo
                             ,fflags : fflags_lo & {5{fwb_v_o}}
@@ -250,4 +255,3 @@ module bp_be_pipe_long
                             };
 
 endmodule
-
