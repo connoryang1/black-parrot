@@ -131,8 +131,8 @@ module bp_be_scheduler
   localparam entry_cinstr_gp = 2**fetch_sel_p;
   localparam op_ptr_width_lp = `BSG_WIDTH(entry_cinstr_gp);
   wire fe_queue_en_li                              = ~suppress_iss_i & ~ptw_busy_lo & ~hazard_v_i;
-  wire fe_queue_clr_li                             = clear_iss_i;
-  wire fe_queue_roll_li                            = commit_pkt_cast_i.npc_w_v;
+  wire fe_queue_clr_li                             = clear_iss_i | commit_pkt_cast_i.ctxtsw;
+  wire fe_queue_roll_li                            = commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw;
   wire fe_queue_read_li                            = fe_instr_not_exc_li | fe_exc_not_instr_li;
   wire [op_ptr_width_lp-1:0] fe_queue_read_size_li = issue_pkt_cast_o.size;
   wire [op_ptr_width_lp-1:0] fe_queue_read_cnt_li  = issue_pkt_cast_o.count;
