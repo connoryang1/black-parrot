@@ -254,7 +254,7 @@ module bp_be_director
         end
       else if (switch_commit_v)
         begin
-          fe_cmd_li.opcode                            = e_op_context_switch;
+          fe_cmd_li.opcode                            = e_op_state_reset;
           fe_cmd_li.npc                               = ctxtsw_target_npc_i;
           fe_cmd_pc_redirect_operands.priv            = ctxtsw_target_priv_i;
           fe_cmd_pc_redirect_operands.translation_en  = ctxtsw_target_translation_en_i;
