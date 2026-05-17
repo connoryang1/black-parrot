@@ -675,7 +675,21 @@ module bp_be_csr
       default: csr_r_data_o = csr_data_lo;
     endcase
 
-  assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special, retire_pkt_cast_i.exception};
+  wire ctxt_csr_addr_li = (csr_addr_li == 12'h081)
+                           | (csr_addr_li == 12'h082)
+                           | (csr_addr_li == 12'h083);
+
+  assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special.dcache_miss
+                                                 ,retire_pkt_cast_i.special.fencei
+                                                 ,retire_pkt_cast_i.special.sfence_vma
+                                                 ,retire_pkt_cast_i.special.dbreak
+                                                 ,retire_pkt_cast_i.special.dret
+                                                 ,retire_pkt_cast_i.special.mret
+                                                 ,retire_pkt_cast_i.special.sret
+                                                 ,retire_pkt_cast_i.special.wfi
+                                                 ,(csr_w_v_li & ~ctxt_csr_addr_li)
+                                                 ,retire_pkt_cast_i.exception
+                                                 };
   assign commit_pkt_cast_o.queue_v           = retire_pkt_cast_i.queue_v & ~|retire_pkt_cast_i.exception;
   assign commit_pkt_cast_o.instret           = retire_pkt_cast_i.instret;
   assign commit_pkt_cast_o.size              = retire_pkt_cast_i.size;
@@ -694,7 +708,7 @@ module bp_be_csr
   assign commit_pkt_cast_o.sfence            = retire_pkt_cast_i.special.sfence_vma;
   assign commit_pkt_cast_o.wfi               = retire_pkt_cast_i.special.wfi;
   assign commit_pkt_cast_o.eret              = ret_v;
-  assign commit_pkt_cast_o.csrw              = csr_w_v_li & ~(csr_addr_li == 12'h082) & ~(csr_addr_li == 12'h083);
+  assign commit_pkt_cast_o.csrw              = csr_w_v_li & ~ctxt_csr_addr_li;
   assign commit_pkt_cast_o.ctxtsw            = retire_pkt_cast_i.instret & retire_ctxtsw_v_i;
   assign commit_pkt_cast_o.resume            = retire_pkt_cast_i.exception.resume;
   assign commit_pkt_cast_o.itlb_miss         = retire_pkt_cast_i.exception.itlb_miss;

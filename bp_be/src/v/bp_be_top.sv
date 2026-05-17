@@ -159,7 +159,7 @@ module bp_be_top
   wire ctxtsw_capture_v_li = ctxtsw_token_create_v_li;
   assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_thread_id_r : current_thread_id_lo;
 
-  assign fe_ctxtsw_v_o = 1'b0;
+  assign fe_ctxtsw_v_o = ctxtsw_launch_lo;
   assign fe_ctxtsw_npc_o = pending_ctxtsw_npc_r;
   assign fe_ctxtsw_thread_id_o = pending_ctxtsw_thread_id_r;
   assign fe_ctxtsw_priv_o = pending_ctxtsw_priv_mode_r;
@@ -184,8 +184,6 @@ module bp_be_top
       current_thread_id_lo <= '0;
     else if (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw & pending_ctxtsw_v_r)
       current_thread_id_lo <= pending_ctxtsw_prev_thread_id_r;
-    else if (fe_ctxtsw_yumi_i)
-      current_thread_id_lo <= pending_ctxtsw_thread_id_r;
     else if (commit_pkt.ctxtsw)
       current_thread_id_lo <= pending_ctxtsw_thread_id_r;
   end
@@ -248,21 +246,21 @@ module bp_be_top
         context_translation_en_r[i] <= 1'b0;
         context_asid_r[i] <= '0;
       end
-    end else if (commit_pkt.ctxtsw | fe_ctxtsw_yumi_i | ctx_npc_write_v_lo) begin
+    end else if (commit_pkt.ctxtsw | ctx_npc_write_v_lo) begin
       logic [thread_id_width_p-1:0] commit_thread_id_li;
       commit_thread_id_li = ctx_npc_write_v_lo
                             ? ctx_npc_write_tid_lo
-                            : (commit_pkt.ctxtsw | fe_ctxtsw_yumi_i)
+                            : commit_pkt.ctxtsw
                               ? pending_ctxtsw_prev_thread_id_r
                               : current_thread_id_lo;
       if (commit_thread_id_li < num_threads_p) begin
         context_npc_r[commit_thread_id_li] <= ctx_npc_write_v_lo
                                               ? ctx_npc_write_npc_lo
-                                              : (commit_pkt.ctxtsw | fe_ctxtsw_yumi_i)
+                                              : commit_pkt.ctxtsw
                                                 ? pending_ctxtsw_resume_npc_r
                                                 : commit_pkt.npc;
-        context_priv_mode_r[commit_thread_id_li] <= fe_ctxtsw_yumi_i ? trans_info_lo.priv_mode : commit_pkt.priv_n;
-        context_translation_en_r[commit_thread_id_li] <= fe_ctxtsw_yumi_i ? trans_info_lo.translation_en : commit_pkt.translation_en_n;
+        context_priv_mode_r[commit_thread_id_li] <= commit_pkt.priv_n;
+        context_translation_en_r[commit_thread_id_li] <= commit_pkt.translation_en_n;
         context_asid_r[commit_thread_id_li] <= trans_info_lo.asid;
       end
     end
@@ -285,6 +283,11 @@ module bp_be_top
     && (ctx_npc_write_tid_lo == ctxtsw_target_thread_id_li)
     && (ctx_npc_write_tid_lo < num_threads_p)
     && (ctxtsw_target_thread_id_li < num_threads_p);
+  wire fast_ctxtsw_target_fwd_v =
+    ctx_npc_write_v_lo
+    && (ctx_npc_write_tid_lo == fast_ctxtsw_target_thread_id_li)
+    && (ctx_npc_write_tid_lo < num_threads_p)
+    && (fast_ctxtsw_target_thread_id_li < num_threads_p);
 
   always_comb begin
     if (context_fwd_v) begin
@@ -325,7 +328,12 @@ module bp_be_top
   end
 
   always_comb begin
-    if (fast_ctxtsw_target_thread_id_li < num_threads_p) begin
+    if (fast_ctxtsw_target_fwd_v) begin
+      fast_ctxtsw_target_npc_lo = ctx_npc_write_npc_lo;
+      fast_ctxtsw_target_priv_mode_lo = commit_pkt.priv_n;
+      fast_ctxtsw_target_translation_en_lo = commit_pkt.translation_en_n;
+      fast_ctxtsw_target_asid_lo = trans_info_lo.asid;
+    end else if (fast_ctxtsw_target_thread_id_li < num_threads_p) begin
       fast_ctxtsw_target_npc_lo = context_npc_r[fast_ctxtsw_target_thread_id_li];
       fast_ctxtsw_target_priv_mode_lo = context_priv_mode_r[fast_ctxtsw_target_thread_id_li];
       fast_ctxtsw_target_translation_en_lo = context_translation_en_r[fast_ctxtsw_target_thread_id_li];

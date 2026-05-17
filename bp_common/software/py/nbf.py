@@ -80,7 +80,7 @@ class NBF:
 
   # constructor
   def __init__(self, ncpus, ucode_file, mem_file, mem_size, checkpoint_file, config, skip_zeros,
-          data_width, boot_pc, debug, verify):
+          keep_mem_zeros, data_width, boot_pc, debug, verify):
 
     # input parameters
     self.ncpus = ncpus
@@ -90,6 +90,7 @@ class NBF:
     self.config = config
     self.checkpoint_file = checkpoint_file
     self.skip_zeros = skip_zeros
+    self.keep_mem_zeros = keep_mem_zeros
     self.data_width = data_width
     self.addr_width = data_width
     self.boot_pc = boot_pc
@@ -211,7 +212,7 @@ class NBF:
     for k in sorted(self.dram_data.keys()):
       addr = k
       opcode = self.get_size(addr)
-      if not(self.skip_zeros and self.dram_data[k] == 0):
+      if not(self.skip_zeros and self.dram_data[k] == 0 and not self.keep_mem_zeros):
         self.print_nbf(opcode, addr, self.dram_data[k])
 
   # print fence
@@ -296,6 +297,7 @@ if __name__ == "__main__":
   parser.add_argument("--config", dest='config', action='store_true', help='Do config over nbf')
   parser.add_argument("--checkpoint", dest='checkpoint_file', metavar='sample.nbf',help='checkpoint nbf file')
   parser.add_argument('--skip_zeros', dest='skip_zeros', action='store_true', help='skip zero DRAM entries')
+  parser.add_argument('--keep_mem_zeros', dest='keep_mem_zeros', action='store_true', help='emit explicit zero entries from the mem file without zero-filling all DRAM')
   parser.add_argument('--data_width', type=int, default=64, help='Data width')
   parser.add_argument('--boot_pc', dest='boot_pc', help='The first PC to be fetched')
   parser.add_argument('--debug', dest='debug', action='store_true', help='Whether to start in debug mode')
@@ -304,5 +306,5 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   converter = NBF(args.ncpus, args.ucode_file, args.mem_file, args.mem_size, args.checkpoint_file, args.config,
-          args.skip_zeros, args.data_width, args.boot_pc, args.debug, args.verify)
+          args.skip_zeros, args.keep_mem_zeros, args.data_width, args.boot_pc, args.debug, args.verify)
   converter.dump()

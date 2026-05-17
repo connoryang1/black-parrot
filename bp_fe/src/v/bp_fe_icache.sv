@@ -162,6 +162,16 @@ module bp_fe_icache
     & (~tag_mem_pkt_v_i | tag_mem_pkt_yumi_o)
     & (~data_mem_pkt_v_i | data_mem_pkt_yumi_o);
 
+  wire abort_miss = is_miss & force_i & ~complete_recv;
+  logic abort_miss_r;
+  wire abort_recv = abort_miss_r
+    & (~stat_mem_pkt_v_i | stat_mem_pkt_yumi_o)
+    & (~tag_mem_pkt_v_i | tag_mem_pkt_yumi_o)
+    & (~data_mem_pkt_v_i | data_mem_pkt_yumi_o);
+  wire abort_complete = abort_recv & cache_req_last_i;
+  logic [paddr_width_p-1:0] abort_miss_paddr_r;
+  logic [lg_assoc_lp-1:0] abort_miss_way_r;
+
   // Snoop signals
   logic [block_width_p-1:0] snoop_data;
   logic [assoc_p-1:0] snoop_hit;
@@ -516,7 +526,7 @@ module bp_fe_icache
   /////////////////////////////////////////////////////////////////////////////
   always_comb
     case (state_r)
-      e_miss    : state_n = complete_recv ? e_recover : state_r;
+      e_miss    : state_n = force_i ? e_ready : complete_recv ? e_recover : state_r;
       e_recover : state_n = force_i ? e_ready : e_ready;
       e_ready   : state_n = cache_req_yumi_i ? e_miss : state_r;
       default   : state_n = e_ready;
@@ -528,6 +538,21 @@ module bp_fe_icache
       state_r <= e_ready;
     else
       state_r <= state_n;
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      abort_miss_r <= 1'b0;
+    else if (abort_complete)
+      abort_miss_r <= 1'b0;
+    else if (abort_miss)
+      abort_miss_r <= 1'b1;
+
+  always_ff @(posedge clk_i)
+    if (cache_req_yumi_i)
+      begin
+        abort_miss_paddr_r <= paddr_tv_r;
+        abort_miss_way_r <= hit_or_repl_way;
+      end
 
   /////////////////////////////////////////////////////////////////////////////
   // SRAM Control
@@ -542,15 +567,17 @@ module bp_fe_icache
   // Tag mem is bypassed if the index is the same on consecutive reads
   wire tag_mem_bypass = v_tl_r & decode_tl_r.fetch_op & (vaddr_index == vaddr_index_tl);
   wire tag_mem_fast_read = do_recover || yumi_o & decode_lo.fetch_op & ~tag_mem_bypass;
-  wire tag_mem_fast_write = 1'b0;
-  wire tag_mem_slow_read = tag_mem_pkt_yumi_o & (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_read) ;
-  wire tag_mem_slow_write = tag_mem_pkt_yumi_o & (tag_mem_pkt_cast_i.opcode != e_cache_tag_mem_read);
+  wire tag_mem_fast_write = abort_miss;
+  wire tag_mem_slow_read = tag_mem_pkt_yumi_o & ~abort_miss_r & (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_read) ;
+  wire tag_mem_slow_write = tag_mem_pkt_yumi_o & ~abort_miss_r & (tag_mem_pkt_cast_i.opcode != e_cache_tag_mem_read);
   assign tag_mem_v_li = tag_mem_fast_read | tag_mem_fast_write | tag_mem_slow_read | tag_mem_slow_write;
   assign tag_mem_w_li = tag_mem_fast_write | tag_mem_slow_write;
-  assign tag_mem_addr_li = tag_mem_fast_read
-    ? do_recover ? vaddr_index_tl : vaddr_index
-    : tag_mem_pkt_cast_i.index;
-  assign tag_mem_pkt_yumi_o = tag_mem_pkt_v_i & ~|tag_mem_fast_read;
+  assign tag_mem_addr_li = tag_mem_fast_write
+    ? abort_miss_paddr_r[block_offset_width_lp+:sindex_width_lp]
+    : tag_mem_fast_read
+      ? do_recover ? vaddr_index_tl : vaddr_index
+      : tag_mem_pkt_cast_i.index;
+  assign tag_mem_pkt_yumi_o = tag_mem_pkt_v_i & (abort_miss_r | ~|{tag_mem_fast_read, tag_mem_fast_write});
 
   logic [assoc_p-1:0] tag_mem_way_one_hot;
   bsg_decode
@@ -560,32 +587,46 @@ module bp_fe_icache
      ,.o(tag_mem_way_one_hot)
      );
 
+  logic [assoc_p-1:0] abort_miss_way_one_hot;
+  bsg_decode
+   #(.num_out_p(assoc_p))
+   abort_miss_way_decode
+    (.i(abort_miss_way_r)
+     ,.o(abort_miss_way_one_hot)
+     );
+
   always_comb
     for (int i = 0; i < assoc_p; i++)
-      case (tag_mem_pkt_cast_i.opcode)
-        e_cache_tag_mem_set_tag:
-          begin
-            tag_mem_data_li[i]   = '{state: tag_mem_pkt_cast_i.state, tag: tag_mem_pkt_cast_i.tag};
-            tag_mem_w_mask_li[i] = '{state: {$bits(bp_coh_states_e){tag_mem_way_one_hot[i]}}
-                                     ,tag : {tag_width_p{tag_mem_way_one_hot[i]}}
-                                     };
-          end
-        e_cache_tag_mem_set_state:
-          begin
-            tag_mem_data_li[i]   = '{state: tag_mem_pkt_cast_i.state, tag: '0};
-            tag_mem_w_mask_li[i] = '{state: {$bits(bp_coh_states_e){tag_mem_way_one_hot[i]}}, tag: '0};
-          end
-        e_cache_tag_mem_set_inval:
-          begin
-            tag_mem_data_li[i] = '{state: bp_coh_states_e'('0), tag: '0};
-            tag_mem_w_mask_li[i] = '{state: bp_coh_states_e'('1), tag: '0};
-          end
-        default: // e_cache_tag_mem_set_clear
-          begin
-            tag_mem_data_li[i]   = '{state: bp_coh_states_e'('0), tag: '0};
-            tag_mem_w_mask_li[i] = '{state: bp_coh_states_e'('1), tag: '1};
-          end
-      endcase
+      if (tag_mem_fast_write)
+        begin
+          tag_mem_data_li[i]   = '{state: bp_coh_states_e'('0), tag: '0};
+          tag_mem_w_mask_li[i] = '{state: {$bits(bp_coh_states_e){abort_miss_way_one_hot[i]}}, tag: '0};
+        end
+      else
+        case (tag_mem_pkt_cast_i.opcode)
+          e_cache_tag_mem_set_tag:
+            begin
+              tag_mem_data_li[i]   = '{state: tag_mem_pkt_cast_i.state, tag: tag_mem_pkt_cast_i.tag};
+              tag_mem_w_mask_li[i] = '{state: {$bits(bp_coh_states_e){tag_mem_way_one_hot[i]}}
+                                       ,tag : {tag_width_p{tag_mem_way_one_hot[i]}}
+                                       };
+            end
+          e_cache_tag_mem_set_state:
+            begin
+              tag_mem_data_li[i]   = '{state: tag_mem_pkt_cast_i.state, tag: '0};
+              tag_mem_w_mask_li[i] = '{state: {$bits(bp_coh_states_e){tag_mem_way_one_hot[i]}}, tag: '0};
+            end
+          e_cache_tag_mem_set_inval:
+            begin
+              tag_mem_data_li[i] = '{state: bp_coh_states_e'('0), tag: '0};
+              tag_mem_w_mask_li[i] = '{state: bp_coh_states_e'('1), tag: '0};
+            end
+          default: // e_cache_tag_mem_set_clear
+            begin
+              tag_mem_data_li[i]   = '{state: bp_coh_states_e'('0), tag: '0};
+              tag_mem_w_mask_li[i] = '{state: bp_coh_states_e'('1), tag: '1};
+            end
+        endcase
 
   logic [lg_assoc_lp-1:0] tag_mem_pkt_way_r;
   bsg_dff
@@ -652,8 +693,8 @@ module bp_fe_icache
   logic [assoc_p-1:0] data_mem_fast_read, data_mem_fast_write, data_mem_slow_read, data_mem_slow_write;
   for (genvar i = 0; i < assoc_p; i++)
     begin : data_mem_lines
-      assign data_mem_slow_read[i] = data_mem_pkt_yumi_o & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read);
-      assign data_mem_slow_write[i] = data_mem_pkt_yumi_o & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_write) & data_mem_write_bank_mask[i];
+      assign data_mem_slow_read[i] = data_mem_pkt_yumi_o & ~abort_miss_r & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read);
+      assign data_mem_slow_write[i] = data_mem_pkt_yumi_o & ~abort_miss_r & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_write) & data_mem_write_bank_mask[i];
 
       assign data_mem_fast_read[i] = do_recover || yumi_o & decode_lo.fetch_op & (~data_mem_bypass | data_mem_bypass_select[i]);
 
@@ -667,7 +708,7 @@ module bp_fe_icache
     end
   assign data_mem_pkt_yumi_o = (data_mem_pkt_cast_i.opcode == e_cache_data_mem_uncached)
     ? data_mem_pkt_v_i
-    : data_mem_pkt_v_i & ~|data_mem_fast_read;
+    : data_mem_pkt_v_i & (abort_miss_r | ~|data_mem_fast_read);
 
   logic [lg_assoc_lp-1:0] data_mem_pkt_way_r;
   bsg_dff
@@ -692,8 +733,8 @@ module bp_fe_icache
   ///////////////////////////
   wire stat_mem_fast_read = ~uncached_tv_r & cache_req_yumi_i;
   wire stat_mem_fast_write = ~uncached_tv_r & yumi_i;
-  wire stat_mem_slow_write = stat_mem_pkt_v_i & (stat_mem_pkt_cast_i.opcode != e_cache_stat_mem_read);
-  assign stat_mem_pkt_yumi_o = stat_mem_pkt_v_i & ~stat_mem_fast_write & ~stat_mem_fast_read;
+  wire stat_mem_slow_write = stat_mem_pkt_yumi_o & ~abort_miss_r & (stat_mem_pkt_cast_i.opcode != e_cache_stat_mem_read);
+  assign stat_mem_pkt_yumi_o = stat_mem_pkt_v_i & (abort_miss_r | ~stat_mem_fast_write & ~stat_mem_fast_read);
   assign stat_mem_v_li = stat_mem_fast_read | stat_mem_fast_write | stat_mem_pkt_yumi_o;
   assign stat_mem_w_li = stat_mem_fast_write | (stat_mem_pkt_yumi_o & stat_mem_slow_write);
   assign stat_mem_addr_li = (stat_mem_fast_write | stat_mem_fast_read)
