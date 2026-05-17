@@ -37,6 +37,7 @@ module bp_be_scheduler
    , input                                    poison_isd_i
    , input                                    ordered_v_i
    , input [trans_info_width_lp-1:0]          trans_info_i
+   , input                                    pending_ctxtsw_sent_i
 
    // Fetch interface
    , input [fe_queue_width_lp-1:0]            fe_queue_i
@@ -135,6 +136,7 @@ module bp_be_scheduler
   wire ctxtsw_issue_hold_clear_li                  = commit_pkt_cast_i.ctxtsw
                                                      | (commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw);
   wire fe_queue_en_li                              = ~suppress_iss_i & ~ctxtsw_issue_hold_r & ~ptw_busy_lo & ~hazard_v_i;
+  wire ctxtsw_commit_accept_li                     = commit_pkt_cast_i.ctxtsw & pending_ctxtsw_sent_i & ~clear_iss_i;
   wire fe_queue_clr_li                             = clear_iss_i | commit_pkt_cast_i.ctxtsw;
   wire fe_queue_roll_li                            = commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw;
   wire fe_queue_read_li                            = fe_instr_not_exc_li | fe_exc_not_instr_li;
@@ -257,9 +259,11 @@ module bp_be_scheduler
 
   wire issue_ctxtsw_switch_v = issue_ctxtsw_v & (issue_ctxtsw_target_tid != current_thread_id_i);
   wire issue_ctxtsw_dispatch_v = fe_queue_read_li & ~poison_isd_i & issue_ctxtsw_switch_v;
-  wire ctxtsw_queue_hold_li = ctxtsw_issue_hold_r | issue_ctxtsw_dispatch_v | fe_queue_clr_li;
+  wire ctxtsw_queue_hold_li = (ctxtsw_issue_hold_r & ~ctxtsw_commit_accept_li)
+                              | issue_ctxtsw_dispatch_v
+                              | (fe_queue_clr_li & ~ctxtsw_commit_accept_li);
 
-  assign fe_queue_ready_and_o = issue_queue_ready_and_lo & ~ctxtsw_queue_hold_li;
+  assign fe_queue_ready_and_o = (issue_queue_ready_and_lo | ctxtsw_commit_accept_li) & ~ctxtsw_queue_hold_li;
 
   always_ff @(posedge clk_i)
     if (reset_i)

@@ -161,6 +161,8 @@ module bp_be_top
                                   & fe_ctxtsw_ready_i
                                   & ~pending_ctxtsw_v_r;
   assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_thread_id_r : current_thread_id_lo;
+  wire [thread_id_width_p-1:0] scheduler_current_thread_id_li =
+    (commit_pkt.ctxtsw & pending_ctxtsw_sent_r) ? pending_ctxtsw_thread_id_r : current_thread_id_lo;
 
   assign fe_ctxtsw_v_o = fast_ctxtsw_launch_v_li | ctxtsw_launch_lo;
   assign fe_ctxtsw_npc_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_npc_lo : pending_ctxtsw_npc_r;
@@ -441,6 +443,7 @@ module bp_be_top
      ,.ispec_v_i(ispec_v)
      ,.irq_pending_i(irq_pending_lo)
      ,.ordered_v_i(ordered_v)
+     ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r)
 
      ,.fe_queue_i(fe_queue_i)
      ,.fe_queue_v_i(fe_queue_v_i)
@@ -456,7 +459,7 @@ module bp_be_top
      ,.late_wb_force_i(late_wb_force_lo)
      ,.late_wb_yumi_o(late_wb_yumi_li)
 
-     ,.current_thread_id_i(current_thread_id_lo)
+     ,.current_thread_id_i(scheduler_current_thread_id_li)
 
      ,.rpush_w_v_i(ctx_rpush_v_lo)
      ,.rpush_fp_w_v_i(ctx_rpush_fp_v_lo)
