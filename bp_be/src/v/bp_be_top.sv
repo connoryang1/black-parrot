@@ -415,6 +415,8 @@ module bp_be_top
      ,.mem_ordered_i(mem_ordered_lo)
      ,.fdiv_busy_i(fdiv_busy_lo)
      ,.idiv_busy_i(idiv_busy_lo)
+     ,.current_thread_id_i(scheduler_current_thread_id_li)
+     ,.retire_thread_id_i(retire_thread_id_lo)
      ,.ispec_v_o(ispec_v)
      ,.hazard_v_o(hazard_v)
      ,.ordered_v_o(ordered_v)
