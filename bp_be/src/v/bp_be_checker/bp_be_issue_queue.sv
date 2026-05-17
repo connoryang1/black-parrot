@@ -59,6 +59,7 @@ module bp_be_issue_queue
 
   // Status
   wire ack     = (fe_queue_ready_and_o & fe_queue_v_i);
+  wire clr_enq = clr_i & ack;
   wire empty   = (rptr_r == wptr_r);
   wire empty_n = (rptr_n == wptr_n);
   wire full    = (cptr_r.mem == wptr_r.mem) && (cptr_r.wrap != wptr_r.wrap);
@@ -77,7 +78,7 @@ module bp_be_issue_queue
   // Calculate next pointer jump
   logic [ptr_width_lp-1:0] wptr_jmp, rptr_jmp, cptr_jmp;
   assign rptr_jmp = clr_i ? -rptr_r : roll_i ? (cptr_r - rptr_r + deq) : read;
-  assign wptr_jmp = clr_i ? -wptr_r : enq;
+  assign wptr_jmp = clr_i ? (clr_enq ? ptr_width_lp'(enq) - wptr_r : -wptr_r) : enq;
   assign cptr_jmp = clr_i ? -cptr_r : deq;
 
   bsg_circular_ptr
@@ -112,15 +113,16 @@ module bp_be_issue_queue
 
   logic [fetch_width_p-1:0] queue_instr, queue_instr_n;
   assign queue_instr = fe_queue_cast_i.instr;
-  wire preissue_v = (|read & ~empty_n) | roll_i | (|enq & empty);
-  wire bypass_preissue = (wptr_r == rptr_n);
+  wire preissue_v = (|read & ~empty_n) | roll_i | (|enq & (empty | clr_i));
+  wire bypass_preissue = (wptr_r == rptr_n) | clr_enq;
+  wire [mem_ptr_width_lp-1:0] wptr_mem_li = clr_enq ? '0 : wptr_r.mem;
   bsg_mem_1r1w
    #(.width_p(fetch_width_p), .els_p(fe_queue_fifo_els_p))
    preissue_fifo_mem
     (.w_clk_i(clk_i)
      ,.w_reset_i(reset_i)
      ,.w_v_i(|enq)
-     ,.w_addr_i(wptr_r.mem)
+     ,.w_addr_i(wptr_mem_li)
      ,.w_data_i(queue_instr)
      ,.r_v_i(~bypass_preissue)
      ,.r_addr_i(rptr_n.mem)
@@ -128,6 +130,10 @@ module bp_be_issue_queue
      );
 
   wire [entry_ptr_width_lp-1:0] preissue_entry_sel = bypass_preissue ? wptr_r.entry : rptr_n.entry;
+  wire [branch_metadata_fwd_width_p-1:0] preissue_branch_metadata_fwd =
+    bypass_preissue ? fe_queue_cast_i.branch_metadata_fwd : fe_queue_lo.branch_metadata_fwd;
+  wire [thread_id_width_p-1:0] preissue_thread_id =
+    preissue_branch_metadata_fwd[branch_metadata_fwd_width_p-1 -: thread_id_width_p];
   logic [fetch_cinstr_p:0][cinstr_width_gp-1:0] queue_instr_raw;
   assign queue_instr_raw[0+:fetch_cinstr_p] = bypass_preissue ? queue_instr : queue_instr_n;
   assign queue_instr_raw[fetch_cinstr_p] = '0;
@@ -153,6 +159,7 @@ module bp_be_issue_queue
       preissue_pkt_cast_o = '0;
       preissue_pkt_cast_o.size = preissue_size[preissue_entry_sel];
       preissue_pkt_cast_o.instr = preissue_instr[preissue_entry_sel];
+      preissue_pkt_cast_o.thread_id = preissue_thread_id;
 
       // Decide whether to read from regfile
       casez (preissue_instr[preissue_entry_sel].t.fmatype.opcode)
@@ -236,7 +243,7 @@ module bp_be_issue_queue
     (.w_clk_i(clk_i)
      ,.w_reset_i(reset_i)
      ,.w_v_i(|enq)
-     ,.w_addr_i(wptr_r.mem)
+     ,.w_addr_i(wptr_mem_li)
      ,.w_data_i(fe_queue_cast_i)
      ,.r_v_i(~bypass_issue)
      ,.r_addr_i(rptr_r.mem)
@@ -286,6 +293,7 @@ module bp_be_issue_queue
       issue_pkt_cast_o = '0;
 
       issue_pkt_cast_o.v                    = en_i & ~empty;
+      issue_pkt_cast_o.thread_id            = vaddr_width_p'(preissue_pkt_r.thread_id);
       issue_pkt_cast_o.fetch                = (fe_queue_lo.msg_type == e_instr_fetch) & !illegal_instr_lo;
       issue_pkt_cast_o.itlb_miss            = (fe_queue_lo.msg_type == e_itlb_miss);
       issue_pkt_cast_o.instr_access_fault   = (fe_queue_lo.msg_type == e_instr_access_fault);
@@ -315,4 +323,3 @@ module bp_be_issue_queue
     end
 
 endmodule
-

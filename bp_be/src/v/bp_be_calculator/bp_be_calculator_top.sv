@@ -88,22 +88,29 @@ module bp_be_calculator_top
    , output logic                                    stat_mem_pkt_yumi_o
    , output logic [dcache_stat_info_width_lp-1:0]    stat_mem_o
 
-   // Context switching via CTXT CSR (0x081)
+   // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]                   current_thread_id_i
-   , output logic                                    csr_ctxt_write_v_o
-   , output logic [thread_id_width_p-1:0]            csr_ctxt_write_data_o
+   // Retire thread owns the instruction currently committing in the backend.
+   , input [thread_id_width_p-1:0]                   retire_thread_id_i
 
    // Bootstrap: write target NPC into context_storage for a given thread (CSR 0x082)
    , output logic                                    ctx_npc_write_v_o
    , output logic [thread_id_width_p-1:0]            ctx_npc_write_tid_o
    , output logic [vaddr_width_p-1:0]                ctx_npc_write_npc_o
 
-   // rpush: write arbitrary register of a disabled thread's register file (CSR 0x083)
+   // CSR 0x083 remote register write into another hardware thread context
    , output logic                                    ctx_rpush_v_o
    , output logic                                    ctx_rpush_fp_v_o
    , output logic [thread_id_width_p-1:0]            ctx_rpush_tid_o
    , output logic [reg_addr_width_gp-1:0]            ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]               ctx_rpush_data_o
+
+   // Early classified ctxtsw event. Observable only until BE context state
+   // consumes it as an architectural mini-commit.
+   , output logic                                    fast_ctxtsw_v_o
+   , output logic [thread_id_width_p-1:0]            fast_ctxtsw_old_thread_id_o
+   , output logic [thread_id_width_p-1:0]            fast_ctxtsw_thread_id_o
+   , output logic [vaddr_width_p-1:0]                fast_ctxtsw_resume_npc_o
    );
 
   // Declare parameterizable structs
@@ -152,17 +159,22 @@ module bp_be_calculator_top
 
   bp_be_wb_pkt_s pipe_mem_late_wb_pkt;
   logic pipe_mem_late_wb_v, pipe_mem_late_wb_yumi;
+  wire pipe_flush_v = commit_pkt_cast_o.npc_w_v | commit_pkt_cast_o.ctxtsw;
 
   // Generating match vector for bypass
   logic [2:0][pipe_stage_els_lp-1:0] match_rs;
   logic [pipe_stage_els_lp-1:0][dpath_width_gp-1:0] forward_data;
   for (genvar i = 0; i < pipe_stage_els_lp; i++)
     begin : forward_match
-      assign match_rs[0][i] = ((i < 4) & dispatch_pkt_cast_i.decode.irs1_r_v & comp_stage_r[i].ird_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs1_addr == comp_stage_r[i].rd_addr))
-                              || (dispatch_pkt_cast_i.decode.frs1_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs1_addr == comp_stage_r[i].rd_addr));
-      assign match_rs[1][i] = ((i < 4) & dispatch_pkt_cast_i.decode.irs2_r_v & comp_stage_r[i].ird_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs2_addr == comp_stage_r[i].rd_addr))
-                              || (dispatch_pkt_cast_i.decode.frs2_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs2_addr == comp_stage_r[i].rd_addr));
-      assign match_rs[2][i] = (dispatch_pkt_cast_i.decode.frs3_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs3_addr == comp_stage_r[i].rd_addr));
+      wire same_thread_li = dispatch_pkt_cast_i.thread_id[0 +: thread_id_width_p] == comp_stage_r[i].thread_id;
+      assign match_rs[0][i] = same_thread_li
+                              & (((i < 4) & dispatch_pkt_cast_i.decode.irs1_r_v & comp_stage_r[i].ird_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs1_addr == comp_stage_r[i].rd_addr))
+                                 || (dispatch_pkt_cast_i.decode.frs1_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs1_addr == comp_stage_r[i].rd_addr)));
+      assign match_rs[1][i] = same_thread_li
+                              & (((i < 4) & dispatch_pkt_cast_i.decode.irs2_r_v & comp_stage_r[i].ird_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs2_addr == comp_stage_r[i].rd_addr))
+                                 || (dispatch_pkt_cast_i.decode.frs2_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs2_addr == comp_stage_r[i].rd_addr)));
+      assign match_rs[2][i] = same_thread_li
+                              & (dispatch_pkt_cast_i.decode.frs3_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs3_addr == comp_stage_r[i].rd_addr));
 
       assign forward_data[i] = comp_stage_n[i+1].rd_data;
     end
@@ -211,7 +223,7 @@ module bp_be_calculator_top
      ,.cfg_bus_i(cfg_bus_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
 
      ,.retire_v_i(exc_stage_r[2].v)
      ,.retire_queue_v_i(exc_stage_r[2].queue_v)
@@ -240,8 +252,7 @@ module bp_be_calculator_top
 
      // Context switching
      ,.current_thread_id_i(current_thread_id_i)
-     ,.csr_ctxt_write_v_o(csr_ctxt_write_v_o)
-     ,.csr_ctxt_write_data_o(csr_ctxt_write_data_o)
+     ,.retire_thread_id_i(retire_thread_id_i)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
@@ -261,7 +272,7 @@ module bp_be_calculator_top
 
      ,.en_i(~exc_stage_r[0].ispec_v)
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
 
      ,.data_o(pipe_int_early_data_lo)
      ,.v_o(pipe_int_early_data_v_lo)
@@ -276,6 +287,13 @@ module bp_be_calculator_top
   assign br_pkt_cast_o.btaken = br_pkt_cast_o.v & pipe_int_early_btaken_lo;
   assign br_pkt_cast_o.bspec  = br_pkt_cast_o.v & exc_stage_r[0].ispec_v;
   assign br_pkt_cast_o.npc    = pipe_int_early_npc_lo;
+
+  assign fast_ctxtsw_v_o = reservation_r.v
+                            & reservation_r.ctxtsw_v
+                            & ~pipe_flush_v;
+  assign fast_ctxtsw_old_thread_id_o = reservation_r.thread_id[0 +: thread_id_width_p];
+  assign fast_ctxtsw_thread_id_o = reservation_r.ctxtsw_target_tid;
+  assign fast_ctxtsw_resume_npc_o = reservation_r.pc + (reservation_r.size << 1'b1);
 
   logic [dword_width_gp-1:0] rs2_val_r;
   if (integer_support_p[e_catchup])
@@ -327,7 +345,7 @@ module bp_be_calculator_top
 
          ,.en_i(exc_stage_r[1].ispec_v)
          ,.reservation_i(catchup_reservation_r)
-         ,.flush_i(commit_pkt_cast_o.npc_w_v)
+         ,.flush_i(pipe_flush_v)
 
          ,.data_o(pipe_int_catchup_data_lo)
          ,.v_o(pipe_int_catchup_data_v_lo)
@@ -367,7 +385,7 @@ module bp_be_calculator_top
      ,.reset_i(reset_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.frm_dyn_i(frm_dyn_lo)
 
      ,.data_o(pipe_aux_data_lo)
@@ -384,7 +402,7 @@ module bp_be_calculator_top
 
      ,.cfg_bus_i(cfg_bus_i)
 
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.sfence_i(commit_pkt_cast_o.sfence)
 
      ,.busy_o(mem_busy_o)
@@ -453,7 +471,7 @@ module bp_be_calculator_top
      ,.reset_i(reset_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.frm_dyn_i(frm_dyn_lo)
 
      ,.imul_data_o(pipe_mul_data_lo)
@@ -471,7 +489,7 @@ module bp_be_calculator_top
      ,.reset_i(reset_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.ibusy_o(idiv_busy_o)
      ,.fbusy_o(fdiv_busy_o)
      ,.frm_dyn_i(frm_dyn_lo)
@@ -594,14 +612,18 @@ module bp_be_calculator_top
           exc_stage_n[0].spec                     |= dispatch_pkt_cast_i.special;
           exc_stage_n[0].exc                      |= dispatch_pkt_cast_i.exception;
 
-          exc_stage_n[0].v                        &= ~commit_pkt_cast_o.npc_w_v | dispatch_pkt_cast_i.nspec_v;
-          exc_stage_n[1].v                        &= ~commit_pkt_cast_o.npc_w_v | exc_stage_r[0].nspec_v;
-          exc_stage_n[2].v                        &= ~commit_pkt_cast_o.npc_w_v | exc_stage_r[1].nspec_v;
-          exc_stage_n[3].v                        &=  commit_pkt_cast_o.instret | exc_stage_r[2].nspec_v;
+          exc_stage_n[0].v                        &= (~pipe_flush_v | dispatch_pkt_cast_i.nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
+          exc_stage_n[1].v                        &= (~pipe_flush_v | exc_stage_r[0].nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
+          exc_stage_n[2].v                        &= (~pipe_flush_v | exc_stage_r[1].nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
+          exc_stage_n[3].v                        &= (commit_pkt_cast_o.instret | exc_stage_r[2].nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
 
-          exc_stage_n[0].queue_v                  &= ~commit_pkt_cast_o.npc_w_v;
-          exc_stage_n[1].queue_v                  &= ~commit_pkt_cast_o.npc_w_v;
-          exc_stage_n[2].queue_v                  &= ~commit_pkt_cast_o.npc_w_v;
+          exc_stage_n[0].queue_v                  &= ~pipe_flush_v;
+          exc_stage_n[1].queue_v                  &= ~pipe_flush_v;
+          exc_stage_n[2].queue_v                  &= ~pipe_flush_v;
 
           exc_stage_n[1].exc.illegal_instr        |= pipe_sys_illegal_instr_lo;
 

@@ -152,6 +152,7 @@ module bp_cacc_vdp
      ,.v_o(acache_v_lo)
      ,.data_o(acache_data_lo)
      ,.rd_addr_o()
+     ,.thread_id_o()
      ,.int_o()
      ,.float_o()
      ,.ptw_o()
@@ -351,8 +352,9 @@ module bp_cacc_vdp
                                            ? (input_b_ptr+len_b_cnt*8)
                                            : (input_a_ptr+len_a_cnt*8)
                                          : res_ptr;
-  assign acache_pkt_li = '{opcode: load ? e_dcache_op_ld : e_dcache_op_sd
-                           ,offset: vaddr[0+:page_offset_width_gp]
+  assign acache_pkt_li = '{thread_id: '0
+                           ,opcode: load ? e_dcache_op_ld : e_dcache_op_sd
+                           ,vaddr: vaddr
                            ,default: '0
                            };
 
@@ -430,4 +432,3 @@ module bp_cacc_vdp
       state_r <= state_n;
 
 endmodule
-

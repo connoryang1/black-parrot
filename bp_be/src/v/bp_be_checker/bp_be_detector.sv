@@ -35,6 +35,8 @@ module bp_be_detector
    , input                             fdiv_busy_i
    , input                             mem_busy_i
    , input                             mem_ordered_i
+   , input [thread_id_width_p-1:0]     current_thread_id_i
+   , input [thread_id_width_p-1:0]     retire_thread_id_i
 
    // Pipeline control signals from the checker to the calculator
    , output logic                      hazard_v_o
@@ -64,12 +66,14 @@ module bp_be_detector
   logic frd_sb_waw_haz_v;
   logic [2:0] frs1_data_haz_v, frs2_data_haz_v, frs3_data_haz_v;
   logic [2:0] rs1_match_vector, rs2_match_vector, rs3_match_vector, rd_match_vector;
+  logic [2:0] dep_thread_match_vector;
   logic score_rs1_match, score_rs2_match, score_rs3_match, score_rd_match;
 
   bp_be_decode_s decode;
   rv64_instr_s instr;
   assign decode = issue_pkt_cast_i.decode;
   bp_be_dep_status_s [3:0] dep_status_r;
+  logic [3:0][thread_id_width_p-1:0] dep_thread_id_r;
 
   logic fence_haz_v, cmd_haz_v, fflags_haz_v, iscore_haz_v, fscore_haz_v;
   logic data_haz_v, control_haz_v, struct_haz_v;
@@ -79,6 +83,8 @@ module bp_be_detector
   wire [reg_addr_width_gp-1:0] check_rs2_li = issue_pkt_cast_i.instr.t.fmatype.rs2_addr;
   wire [reg_addr_width_gp-1:0] check_rs3_li = issue_pkt_cast_i.instr.t.fmatype.rs3_addr;
   wire [reg_addr_width_gp-1:0] check_rd_li  = issue_pkt_cast_i.instr.t.fmatype.rd_addr;
+  wire [thread_id_width_p-1:0] check_thread_id_li =
+    issue_pkt_cast_i.thread_id[0 +: thread_id_width_p];
 
   wire [reg_addr_width_gp-1:0] clear_rd_li = late_wb_pkt_cast_i.rd_addr;
 
@@ -110,11 +116,14 @@ module bp_be_detector
      ,.reset_i(reset_i)
 
      ,.score_v_i(score_int_v_li)
+     ,.score_thread_id_i(retire_thread_id_i)
      ,.score_rd_i(score_rd_li)
 
      ,.clear_v_i(clear_int_v_li)
+     ,.clear_thread_id_i(late_wb_pkt_cast_i.thread_id)
      ,.clear_rd_i(clear_rd_li)
 
+     ,.check_thread_id_i(check_thread_id_li)
      ,.check_rs_i({check_rs2_li, check_rs1_li})
      ,.check_rd_i(check_rd_li)
      ,.rs_match_o(irs_match_lo)
@@ -132,11 +141,14 @@ module bp_be_detector
      ,.reset_i(reset_i)
 
      ,.score_v_i(score_fp_v_li)
+     ,.score_thread_id_i(retire_thread_id_i)
      ,.score_rd_i(score_rd_li)
 
      ,.clear_v_i(clear_fp_v_li)
+     ,.clear_thread_id_i(late_wb_pkt_cast_i.thread_id)
      ,.clear_rd_i(clear_rd_li)
 
+     ,.check_thread_id_i(check_thread_id_li)
      ,.check_rs_i({check_rs3_li, check_rs2_li, check_rs1_li})
      ,.check_rd_i(check_rd_li)
      ,.rs_match_o(frs_match_lo)
@@ -150,10 +162,11 @@ module bp_be_detector
       //   can be handled through forwarding
       for (int i = 0; i < 3; i++)
         begin
-          rs1_match_vector[i] = (issue_pkt_cast_i.instr.t.fmatype.rs1_addr == dep_status_r[i].rd_addr);
-          rs2_match_vector[i] = (issue_pkt_cast_i.instr.t.fmatype.rs2_addr == dep_status_r[i].rd_addr);
-          rs3_match_vector[i] = (issue_pkt_cast_i.instr.t.fmatype.rs3_addr == dep_status_r[i].rd_addr);
-          rd_match_vector [i] = (issue_pkt_cast_i.instr.t.fmatype.rd_addr  == dep_status_r[i].rd_addr);
+          dep_thread_match_vector[i] = (check_thread_id_li == dep_thread_id_r[i]);
+          rs1_match_vector[i] = dep_thread_match_vector[i] & (issue_pkt_cast_i.instr.t.fmatype.rs1_addr == dep_status_r[i].rd_addr);
+          rs2_match_vector[i] = dep_thread_match_vector[i] & (issue_pkt_cast_i.instr.t.fmatype.rs2_addr == dep_status_r[i].rd_addr);
+          rs3_match_vector[i] = dep_thread_match_vector[i] & (issue_pkt_cast_i.instr.t.fmatype.rs3_addr == dep_status_r[i].rd_addr);
+          rd_match_vector [i] = dep_thread_match_vector[i] & (issue_pkt_cast_i.instr.t.fmatype.rd_addr  == dep_status_r[i].rd_addr);
         end
       score_rs1_match = (issue_pkt_cast_i.instr.t.fmatype.rs1_addr == score_rd_li);
       score_rs2_match = (issue_pkt_cast_i.instr.t.fmatype.rs2_addr == score_rd_li);
@@ -232,10 +245,10 @@ module bp_be_detector
       cmd_haz_v          = cmd_full_i;
 
       fflags_haz_v = (decode.csr_r_v | decode.csr_w_v)
-                     & (dep_status_r[0].fflags_v
-                        | dep_status_r[1].fflags_v
-                        | dep_status_r[2].fflags_v
-                        | dep_status_r[3].fflags_v
+                     & ((dep_status_r[0].fflags_v & (check_thread_id_li == dep_thread_id_r[0]))
+                        | (dep_status_r[1].fflags_v & (check_thread_id_li == dep_thread_id_r[1]))
+                        | (dep_status_r[2].fflags_v & (check_thread_id_li == dep_thread_id_r[2]))
+                        | (dep_status_r[3].fflags_v & (check_thread_id_li == dep_thread_id_r[3]))
                         | fdiv_busy_i
                         );
 
@@ -294,7 +307,8 @@ module bp_be_detector
     begin
       dep_status_r[0]   <= dispatch_pkt_cast_i.v ? dep_status_n : '0;
       dep_status_r[3:1] <= dep_status_r[2:0];
+      dep_thread_id_r[0]   <= dispatch_pkt_cast_i.thread_id[0 +: thread_id_width_p];
+      dep_thread_id_r[3:1] <= dep_thread_id_r[2:0];
     end
 
 endmodule
-

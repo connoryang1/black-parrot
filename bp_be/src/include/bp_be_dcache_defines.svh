@@ -15,6 +15,7 @@
   `define declare_bp_be_dcache_pkt_s(vaddr_width_mp) \
     typedef struct packed                            \
     {                                                \
+      logic [thread_id_width_p-1:0]    thread_id;    \
       logic [reg_addr_width_gp-1:0]    rd_addr;      \
       bp_be_dcache_fu_op_e             opcode;       \
       logic [vaddr_width_mp-1:0]       vaddr;        \
@@ -24,7 +25,7 @@
     (1+ways_mp+(dword_width_gp>>3)+dword_width_gp+caddr_width_mp)
 
   `define bp_be_dcache_pkt_width(vaddr_width_mp) \
-    (reg_addr_width_gp+$bits(bp_be_dcache_fu_op_e)+vaddr_width_mp)
+    (thread_id_width_p+reg_addr_width_gp+$bits(bp_be_dcache_fu_op_e)+vaddr_width_mp)
 
   `define declare_bp_be_dcache_engine_if(addr_width_mp, tag_width_mp, sets_mp, ways_mp, data_width_mp, block_width_mp, fill_width_mp, id_width_mp) \
     `declare_bp_cache_engine_generic_if(addr_width_mp, tag_width_mp, sets_mp, ways_mp, data_width_mp, block_width_mp, fill_width_mp, id_width_mp, be_dcache)
@@ -33,4 +34,3 @@
     `declare_bp_cache_engine_generic_if_widths(addr_width_mp, tag_width_mp, sets_mp, ways_mp, data_width_mp, block_width_mp, fill_width_mp, id_width_mp, dcache)
 
 `endif
-

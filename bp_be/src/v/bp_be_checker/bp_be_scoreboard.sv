@@ -14,11 +14,14 @@ module bp_be_scoreboard
    , input                                       reset_i
 
    , input                                       score_v_i
+   , input [thread_id_width_p-1:0]               score_thread_id_i
    , input [reg_addr_width_gp-1:0]               score_rd_i
 
    , input                                       clear_v_i
+   , input [thread_id_width_p-1:0]               clear_thread_id_i
    , input [reg_addr_width_gp-1:0]               clear_rd_i
 
+   , input [thread_id_width_p-1:0]               check_thread_id_i
    , input [num_rs_p-1:0][reg_addr_width_gp-1:0] check_rs_i
    , input               [reg_addr_width_gp-1:0] check_rd_i
 
@@ -26,14 +29,20 @@ module bp_be_scoreboard
    , output logic                                rd_match_o
    );
 
-  localparam rf_els_lp = 2**reg_addr_width_gp;
+  localparam rf_addr_width_lp = reg_addr_width_gp + thread_id_width_p;
+  localparam rf_els_lp = 2**rf_addr_width_lp;
   logic [rf_els_lp-1:0] scoreboard_r;
+
+  wire [rf_addr_width_lp-1:0] score_addr_li = {score_thread_id_i, score_rd_i};
+  wire [rf_addr_width_lp-1:0] clear_addr_li = {clear_thread_id_i, clear_rd_i};
+  logic [num_rs_p-1:0][rf_addr_width_lp-1:0] check_rs_addr_li;
+  wire [rf_addr_width_lp-1:0] check_rd_addr_li = {check_thread_id_i, check_rd_i};
 
   logic [rf_els_lp-1:0] score_onehot_li;
   bsg_decode_with_v
    #(.num_out_p(rf_els_lp))
    score_decode
-    (.i(score_rd_i)
+    (.i(score_addr_li)
      ,.v_i(score_v_i)
      ,.o(score_onehot_li)
      );
@@ -42,7 +51,7 @@ module bp_be_scoreboard
   bsg_decode_with_v
    #(.num_out_p(rf_els_lp))
    clear_decode
-    (.i(clear_rd_i)
+    (.i(clear_addr_li)
      ,.v_i(clear_v_i)
      ,.o(clear_onehot_li)
      );
@@ -60,11 +69,11 @@ module bp_be_scoreboard
 
   for (genvar i = 0; i < num_rs_p; i++)
     begin : rs
-      assign rs_match_o[i] = scoreboard_r[check_rs_i[i]];
+      assign check_rs_addr_li[i] = {check_thread_id_i, check_rs_i[i]};
+      assign rs_match_o[i] = scoreboard_r[check_rs_addr_li[i]];
     end
-  assign rd_match_o = scoreboard_r[check_rd_i];
+  assign rd_match_o = scoreboard_r[check_rd_addr_li];
 
 endmodule
 
 `BSG_ABSTRACT_MODULE(bp_be_scoreboard)
-
