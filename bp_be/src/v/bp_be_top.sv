@@ -157,14 +157,19 @@ module bp_be_top
   wire ctxtsw_token_cancel_v_li = cfg_bus_cast_i.freeze | commit_pkt.resume | (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw);
   wire ctxtsw_token_clear_v_li = ctxtsw_token_cancel_v_li | ctxtsw_token_finalize_v_li;
   wire ctxtsw_capture_v_li = ctxtsw_token_create_v_li;
+  wire fast_ctxtsw_launch_v_li = ctxtsw_token_create_v_li
+                                  & fe_ctxtsw_ready_i
+                                  & ~pending_ctxtsw_v_r;
   assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_thread_id_r : current_thread_id_lo;
 
-  assign fe_ctxtsw_v_o = ctxtsw_launch_lo;
-  assign fe_ctxtsw_npc_o = pending_ctxtsw_npc_r;
-  assign fe_ctxtsw_thread_id_o = pending_ctxtsw_thread_id_r;
-  assign fe_ctxtsw_priv_o = pending_ctxtsw_priv_mode_r;
-  assign fe_ctxtsw_translation_en_o = pending_ctxtsw_translation_en_r;
-  assign fe_ctxtsw_asid_o = pending_ctxtsw_asid_r;
+  assign fe_ctxtsw_v_o = fast_ctxtsw_launch_v_li | ctxtsw_launch_lo;
+  assign fe_ctxtsw_npc_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_npc_lo : pending_ctxtsw_npc_r;
+  assign fe_ctxtsw_thread_id_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_thread_id_lo : pending_ctxtsw_thread_id_r;
+  assign fe_ctxtsw_priv_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_priv_mode_lo : pending_ctxtsw_priv_mode_r;
+  assign fe_ctxtsw_translation_en_o = fast_ctxtsw_launch_v_li
+                                      ? fast_ctxtsw_target_translation_en_lo
+                                      : pending_ctxtsw_translation_en_r;
+  assign fe_ctxtsw_asid_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_asid_lo : pending_ctxtsw_asid_r;
 
   // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
   logic ctx_npc_write_v_lo;
