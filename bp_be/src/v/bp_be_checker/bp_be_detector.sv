@@ -83,6 +83,8 @@ module bp_be_detector
   wire [reg_addr_width_gp-1:0] check_rs2_li = issue_pkt_cast_i.instr.t.fmatype.rs2_addr;
   wire [reg_addr_width_gp-1:0] check_rs3_li = issue_pkt_cast_i.instr.t.fmatype.rs3_addr;
   wire [reg_addr_width_gp-1:0] check_rd_li  = issue_pkt_cast_i.instr.t.fmatype.rd_addr;
+  wire [thread_id_width_p-1:0] check_thread_id_li =
+    issue_pkt_cast_i.thread_id[0 +: thread_id_width_p];
 
   wire [reg_addr_width_gp-1:0] clear_rd_li = late_wb_pkt_cast_i.rd_addr;
 
@@ -121,7 +123,7 @@ module bp_be_detector
      ,.clear_thread_id_i(late_wb_pkt_cast_i.thread_id)
      ,.clear_rd_i(clear_rd_li)
 
-     ,.check_thread_id_i(current_thread_id_i)
+     ,.check_thread_id_i(check_thread_id_li)
      ,.check_rs_i({check_rs2_li, check_rs1_li})
      ,.check_rd_i(check_rd_li)
      ,.rs_match_o(irs_match_lo)
@@ -146,7 +148,7 @@ module bp_be_detector
      ,.clear_thread_id_i(late_wb_pkt_cast_i.thread_id)
      ,.clear_rd_i(clear_rd_li)
 
-     ,.check_thread_id_i(current_thread_id_i)
+     ,.check_thread_id_i(check_thread_id_li)
      ,.check_rs_i({check_rs3_li, check_rs2_li, check_rs1_li})
      ,.check_rd_i(check_rd_li)
      ,.rs_match_o(frs_match_lo)
@@ -160,7 +162,7 @@ module bp_be_detector
       //   can be handled through forwarding
       for (int i = 0; i < 3; i++)
         begin
-          dep_thread_match_vector[i] = (current_thread_id_i == dep_thread_id_r[i]);
+          dep_thread_match_vector[i] = (check_thread_id_li == dep_thread_id_r[i]);
           rs1_match_vector[i] = dep_thread_match_vector[i] & (issue_pkt_cast_i.instr.t.fmatype.rs1_addr == dep_status_r[i].rd_addr);
           rs2_match_vector[i] = dep_thread_match_vector[i] & (issue_pkt_cast_i.instr.t.fmatype.rs2_addr == dep_status_r[i].rd_addr);
           rs3_match_vector[i] = dep_thread_match_vector[i] & (issue_pkt_cast_i.instr.t.fmatype.rs3_addr == dep_status_r[i].rd_addr);
@@ -243,10 +245,10 @@ module bp_be_detector
       cmd_haz_v          = cmd_full_i;
 
       fflags_haz_v = (decode.csr_r_v | decode.csr_w_v)
-                     & ((dep_status_r[0].fflags_v & (current_thread_id_i == dep_thread_id_r[0]))
-                        | (dep_status_r[1].fflags_v & (current_thread_id_i == dep_thread_id_r[1]))
-                        | (dep_status_r[2].fflags_v & (current_thread_id_i == dep_thread_id_r[2]))
-                        | (dep_status_r[3].fflags_v & (current_thread_id_i == dep_thread_id_r[3]))
+                     & ((dep_status_r[0].fflags_v & (check_thread_id_li == dep_thread_id_r[0]))
+                        | (dep_status_r[1].fflags_v & (check_thread_id_li == dep_thread_id_r[1]))
+                        | (dep_status_r[2].fflags_v & (check_thread_id_li == dep_thread_id_r[2]))
+                        | (dep_status_r[3].fflags_v & (check_thread_id_li == dep_thread_id_r[3]))
                         | fdiv_busy_i
                         );
 

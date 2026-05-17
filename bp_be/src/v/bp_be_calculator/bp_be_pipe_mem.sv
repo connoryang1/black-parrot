@@ -221,7 +221,8 @@ module bp_be_pipe_mem
 
   bp_be_dcache_pkt_s dcache_pkt;
   wire dcache_pkt_v = is_req;
-  assign dcache_pkt = '{rd_addr : instr.t.rtype.rd_addr
+  assign dcache_pkt = '{thread_id : reservation_thread_id
+                        ,rd_addr : instr.t.rtype.rd_addr
                         ,opcode : decode.fu_op.t.dcache_fu_op
                         ,vaddr  : eaddr
                         };
@@ -241,6 +242,7 @@ module bp_be_pipe_mem
   logic [dword_width_gp-1:0] dcache_data;
   logic [$bits(bp_be_int_tag_e)-1:0] dcache_tag;
   logic [reg_addr_width_gp-1:0] dcache_rd_addr;
+  logic [thread_id_width_p-1:0] dcache_thread_id;
   logic dcache_unsigned, dcache_int, dcache_float, dcache_ptw, dcache_ret, dcache_late;
   logic dcache_busy_lo, dcache_ordered_lo;
   wire [dword_width_gp-1:0] dcache_st_data = rs2_val_i;
@@ -267,6 +269,7 @@ module bp_be_pipe_mem
      ,.v_o(dcache_v)
      ,.data_o(dcache_data)
      ,.rd_addr_o(dcache_rd_addr)
+     ,.thread_id_o(dcache_thread_id)
      ,.unsigned_o(dcache_unsigned)
      ,.tag_o(dcache_tag)
      ,.int_o(dcache_int)
@@ -343,7 +346,7 @@ module bp_be_pipe_mem
   #(.width_p(dpath_width_gp+reg_addr_width_gp+thread_id_width_p))
   data_reg
    (.clk_i(negedge_clk)
-    ,.data_i({dcache_data_n, dcache_rd_addr, reservation_thread_id})
+    ,.data_i({dcache_data_n, dcache_rd_addr, dcache_thread_id})
     ,.data_o({dcache_data_r, dcache_rd_addr_r, dcache_thread_id_r})
     );
 

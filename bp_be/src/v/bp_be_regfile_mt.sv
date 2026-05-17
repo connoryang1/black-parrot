@@ -144,16 +144,14 @@ module bp_be_regfile_mt
 
   // Save the written data for forwarding (use muxed write port values to capture remote writes too)
   logic [data_width_p-1:0] rd_data_r;
-  logic [thread_id_width_p-1:0] rd_thread_id_r;
-  logic [reg_addr_width_gp-1:0] rd_addr_r;
   wire [thread_id_width_p-1:0] w_thread_id_mux = rpush_w_v_i ? rpush_thread_id_i : rd_thread_id_i;
   wire [reg_addr_width_gp-1:0] w_reg_addr_mux  = rpush_w_v_i ? rpush_addr_i : rd_addr_i;
   bsg_dff
-   #(.width_p(data_width_p + thread_id_width_p + reg_addr_width_gp))
+   #(.width_p(data_width_p))
    rd_reg
     (.clk_i(clk_i)
-     ,.data_i({w_data_mux, w_thread_id_mux, w_reg_addr_mux})
-     ,.data_o({rd_data_r, rd_thread_id_r, rd_addr_r})
+     ,.data_i(w_data_mux)
+     ,.data_o(rd_data_r)
      );
 
   // Forwarding and bypass logic for each read port
@@ -192,7 +190,7 @@ module bp_be_regfile_mt
 
       logic [data_width_p-1:0] rs_data_n, rs_data_r;
       // Check for replacement: write to same thread and same register (delayed, covers both wb and remote write)
-      wire same_thread_r = (rd_thread_id_r == rs_thread_id_r);
+      wire same_thread_r = (w_thread_id_mux == rs_thread_id_r);
       wire replace_rs = w_v_mux & same_thread_r & (rs_addr_r == w_reg_addr_mux);
       assign rs_data_n = replace_rs ? w_data_mux : fwd_data_lo;
 

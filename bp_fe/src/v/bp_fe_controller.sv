@@ -159,7 +159,9 @@ module bp_fe_controller
                                       : context_switch_v
                                       ? fe_cmd_cast_i.operands.pc_redirect_operands.context_switch_thread_id
                                       : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd[branch_metadata_fwd_width_p-1 -: thread_id_width_p];
-  assign redirect_br_metadata_fwd_o = ctxtsw_accept_v ? '0 : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd;
+  assign redirect_br_metadata_fwd_o = ctxtsw_accept_v
+                                      ? branch_metadata_fwd_width_p'({ctxtsw_thread_id_i, {(branch_metadata_fwd_width_p-thread_id_width_p){1'b0}}})
+                                      : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd;
 
   assign attaboy_v_o               = attaboy_v;
   assign attaboy_force_o           = ~fe_queue_ready_and_i;

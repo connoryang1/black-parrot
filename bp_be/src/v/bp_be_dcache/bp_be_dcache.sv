@@ -133,6 +133,7 @@ module bp_be_dcache
    , output logic                                    v_o
    , output logic [data_width_p-1:0]                 data_o
    , output logic [reg_addr_width_gp-1:0]            rd_addr_o
+   , output logic [thread_id_width_p-1:0]            thread_id_o
    , output logic [$bits(bp_be_int_tag_e)-1:0]       tag_o
    , output logic                                    unsigned_o
    , output logic                                    int_o
@@ -222,6 +223,7 @@ module bp_be_dcache
   logic [block_width_p-1:0] snoop_ld_data;
   logic [paddr_width_p-1:0] snoop_paddr;
   logic [data_width_p-1:0] snoop_st_data;
+  logic [thread_id_width_p-1:0] snoop_thread_id;
   logic [2:0][assoc_p-1:0] snoop_hit;
   logic [assoc_p-1:0] snoop_bank_sel_one_hot;
   bp_be_dcache_decode_s snoop_decode;
@@ -308,6 +310,7 @@ module bp_be_dcache
   // TL Stage
   /////////////////////////////////////////////////////////////////////////////
   bp_be_dcache_decode_s decode_tl_r;
+  logic [thread_id_width_p-1:0] thread_id_tl_r;
   logic [page_offset_width_gp-1:0] offset_tl_r;
 
   assign safe_tl_we = v_i & ~busy_o;
@@ -324,11 +327,11 @@ module bp_be_dcache
 
   // Save stage information
   bsg_dff
-   #(.width_p(page_offset_width_gp+$bits(bp_be_dcache_decode_s)))
+   #(.width_p(page_offset_width_gp+thread_id_width_p+$bits(bp_be_dcache_decode_s)))
    tl_stage_reg
     (.clk_i(clk_i)
-     ,.data_i({offset, decode_lo})
-     ,.data_o({offset_tl_r, decode_tl_r})
+     ,.data_i({offset, dcache_pkt_cast_i.thread_id, decode_lo})
+     ,.data_o({offset_tl_r, thread_id_tl_r, decode_tl_r})
      );
 
   wire [paddr_width_p-1:0]   paddr_tl = {ptag_i, offset_tl_r};
@@ -372,6 +375,7 @@ module bp_be_dcache
   logic [assoc_p-1:0][bank_width_lp-1:0] ld_data_tv_r;
   logic [assoc_p-1:0] load_hit_v_tv_r, store_hit_v_tv_r, way_v_tv_r, bank_sel_one_hot_tv_r;
   bp_be_dcache_decode_s decode_tv_r;
+  logic [thread_id_width_p-1:0] thread_id_tv_r;
   logic sc_success_tv, sc_fail_tv;
   logic fill_restart_tv;
 
@@ -398,15 +402,16 @@ module bp_be_dcache
   logic [assoc_p-1:0] bank_sel_one_hot_tv_n;
   logic uncached_tv_n;
   bp_be_dcache_decode_s decode_tv_n;
+  logic [thread_id_width_p-1:0] thread_id_tv_n;
   // workaround for verilator 5.036
   assign {way_v_tv_n, store_hit_tv_n, load_hit_tv_n, ld_data_tv_n, st_data_tv_n, paddr_tv_n, bank_sel_one_hot_tv_n
-          ,uncached_tv_n, decode_tv_n
+          ,uncached_tv_n, thread_id_tv_n, decode_tv_n
           } = snoop_v
               ? {snoop_hit, snoop_ld_data, snoop_st_data, snoop_paddr, snoop_bank_sel_one_hot
-                 ,snoop_uncached, snoop_decode
+                 ,snoop_uncached, snoop_thread_id, snoop_decode
                  }
               : {way_v_tl, store_hit_tl, load_hit_tl, data_mem_data_lo, st_data_tl, paddr_tl, bank_sel_one_hot_tl
-                 ,uncached_tl, decode_tl_r
+                 ,uncached_tl, thread_id_tl_r, decode_tl_r
                  };
   //bsg_mux
   // #(.width_p(3*assoc_p+block_width_p+data_width_p+paddr_width_p+assoc_p+1+$bits(bp_be_dcache_decode_s)), .els_p(2))
@@ -424,13 +429,13 @@ module bp_be_dcache
 
   wire snoop_tv_n = snoop_v;
   bsg_dff
-   #(.width_p(1+3*assoc_p+paddr_width_p+block_width_p+data_width_p+assoc_p+1+$bits(bp_be_dcache_decode_s)))
+   #(.width_p(1+3*assoc_p+paddr_width_p+block_width_p+data_width_p+assoc_p+1+thread_id_width_p+$bits(bp_be_dcache_decode_s)))
    tv_stage_reg
     (.clk_i(clk_i)
      ,.data_i({snoop_tv_n, way_v_tv_n, store_hit_tv_n, load_hit_tv_n, paddr_tv_n, ld_data_tv_n
-               ,st_data_tv_n, bank_sel_one_hot_tv_n, uncached_tv_n, decode_tv_n})
+               ,st_data_tv_n, bank_sel_one_hot_tv_n, uncached_tv_n, thread_id_tv_n, decode_tv_n})
      ,.data_o({snoop_tv_r, way_v_tv_r, store_hit_v_tv_r, load_hit_v_tv_r, paddr_tv_r, ld_data_tv_r
-               ,st_data_tv_r, bank_sel_one_hot_tv_r, uncached_tv_r, decode_tv_r})
+               ,st_data_tv_r, bank_sel_one_hot_tv_r, uncached_tv_r, thread_id_tv_r, decode_tv_r})
      );
 
   logic [lg_assoc_lp-1:0] store_hit_way_tv;
@@ -501,6 +506,7 @@ module bp_be_dcache
   assign v_o        = cache_hit_tv;
   assign data_o     = sc_success_tv ? 1'b0 : sc_fail_tv ? 1'b1 : final_data_tv;
   assign rd_addr_o  = decode_tv_r.rd_addr;
+  assign thread_id_o = thread_id_tv_r;
   assign unsigned_o = !decode_tv_r.signed_op;
   assign tag_o      = decode_tv_r.tag;
   assign int_o      = decode_tv_r.int_op;
@@ -1195,14 +1201,15 @@ module bp_be_dcache
   logic fill_uncached_r;
   logic [paddr_width_p-1:0] fill_paddr_r;
   logic [dword_width_gp-1:0] fill_st_data_r;
+  logic [thread_id_width_p-1:0] fill_thread_id_r;
   bp_be_dcache_decode_s fill_decode_r;
   bsg_dff_en
-   #(.width_p(1+dword_width_gp+paddr_width_p+$bits(bp_be_dcache_decode_s)))
+   #(.width_p(1+dword_width_gp+paddr_width_p+thread_id_width_p+$bits(bp_be_dcache_decode_s)))
    mshr_reg
     (.clk_i(clk_i)
      ,.en_i(blocking_sent)
-     ,.data_i({uncached_tv_r, st_data_tv_r, paddr_tv_r, decode_tv_r})
-     ,.data_o({fill_uncached_r, fill_st_data_r, fill_paddr_r, fill_decode_r})
+     ,.data_i({uncached_tv_r, st_data_tv_r, paddr_tv_r, thread_id_tv_r, decode_tv_r})
+     ,.data_o({fill_uncached_r, fill_st_data_r, fill_paddr_r, fill_thread_id_r, fill_decode_r})
      );
 
   if (features_p[e_cfg_hit_under_miss])
@@ -1253,6 +1260,7 @@ module bp_be_dcache
   assign snoop_ld_data  = data_mem_data_li;
   assign snoop_paddr    = fill_paddr_r;
   assign snoop_st_data  = fill_st_data_r;
+  assign snoop_thread_id = fill_thread_id_r;
   assign snoop_decode   = fill_decode_r;
   assign snoop_uncached = fill_uncached_r;
 
@@ -1265,4 +1273,3 @@ module bp_be_dcache
      );
 
 endmodule
-

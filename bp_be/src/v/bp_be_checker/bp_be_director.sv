@@ -96,6 +96,8 @@ module bp_be_director
 
   bp_fe_cmd_s fe_cmd_li;
   bp_fe_cmd_pc_redirect_operands_s fe_cmd_pc_redirect_operands;
+  wire [branch_metadata_fwd_width_p-1:0] current_thread_metadata_li =
+    branch_metadata_fwd_width_p'({current_thread_id_i, {(branch_metadata_fwd_width_p-thread_id_width_p){1'b0}}});
   logic fe_cmd_v_li;
   logic cmd_empty_n_lo, cmd_empty_r_lo;
   logic cmd_full_n_lo, cmd_full_r_lo;
@@ -264,6 +266,16 @@ module bp_be_director
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
           fe_cmd_v_li = switch_commit_fe_control_v;
+        end
+      else if (ctxtsw_cancel_v & pending_ctxtsw_sent_i)
+        begin
+          fe_cmd_li.opcode                                 = e_op_pc_redirection;
+          fe_cmd_li.npc                                    = commit_pkt_cast_i.npc;
+          fe_cmd_pc_redirect_operands.subopcode            = e_subop_resume;
+          fe_cmd_pc_redirect_operands.branch_metadata_fwd  = current_thread_metadata_li;
+          fe_cmd_li.operands.pc_redirect_operands          = fe_cmd_pc_redirect_operands;
+
+          fe_cmd_v_li = 1'b1;
         end
       else if (wait_v)
         begin
