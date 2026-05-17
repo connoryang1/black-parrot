@@ -137,6 +137,7 @@ module bp_be_director
   wire ctxtsw_launch_token_v  = ctxtsw_launch_pending_i;
   wire ctxtsw_fe_ready_v      = fe_ctxtsw_ready_i;
   wire switch_commit_v = commit_pkt_cast_i.ctxtsw;
+  wire switch_commit_fe_control_v = switch_commit_v & ~pending_ctxtsw_sent_i;
   wire ctxtsw_finalize_v      = switch_commit_v;
   wire ctxtsw_cancel_v        = commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw;
   wire wait_v          = commit_pkt_cast_i.wfi;
@@ -153,7 +154,7 @@ module bp_be_director
                                  & ~ctxtsw_finalize_v
                                  & ~ctxtsw_cancel_v;
 
-  assign poison_isd_o = npc_mismatch_v | switch_commit_v;
+  assign poison_isd_o = npc_mismatch_v | switch_commit_fe_control_v;
   assign ctxtsw_launch_o = ctxtsw_launch_allowed_v;
 
   logic btaken_pending, attaboy_pending;
@@ -183,7 +184,7 @@ module bp_be_director
                               ? e_wait
                               : fencei_v
                                 ? e_fencei
-                                : (fe_cmd_nonattaboy_v | switch_commit_v)
+                                : (fe_cmd_nonattaboy_v | switch_commit_fe_control_v)
                                   ? e_cmd_fence
                                   : state_r;
         e_freeze
@@ -262,7 +263,7 @@ module bp_be_director
           fe_cmd_pc_redirect_operands.context_switch_thread_id = ctxtsw_target_thread_id_i;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
-          fe_cmd_v_li = ~pending_ctxtsw_sent_i;
+          fe_cmd_v_li = switch_commit_fe_control_v;
         end
       else if (wait_v)
         begin

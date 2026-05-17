@@ -159,6 +159,7 @@ module bp_be_calculator_top
 
   bp_be_wb_pkt_s pipe_mem_late_wb_pkt;
   logic pipe_mem_late_wb_v, pipe_mem_late_wb_yumi;
+  wire pipe_flush_v = commit_pkt_cast_o.npc_w_v | commit_pkt_cast_o.ctxtsw;
 
   // Generating match vector for bypass
   logic [2:0][pipe_stage_els_lp-1:0] match_rs;
@@ -222,7 +223,7 @@ module bp_be_calculator_top
      ,.cfg_bus_i(cfg_bus_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
 
      ,.retire_v_i(exc_stage_r[2].v)
      ,.retire_queue_v_i(exc_stage_r[2].queue_v)
@@ -271,7 +272,7 @@ module bp_be_calculator_top
 
      ,.en_i(~exc_stage_r[0].ispec_v)
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
 
      ,.data_o(pipe_int_early_data_lo)
      ,.v_o(pipe_int_early_data_v_lo)
@@ -289,7 +290,7 @@ module bp_be_calculator_top
 
   assign fast_ctxtsw_v_o = reservation_r.v
                             & reservation_r.ctxtsw_v
-                            & ~commit_pkt_cast_o.npc_w_v;
+                            & ~pipe_flush_v;
   assign fast_ctxtsw_old_thread_id_o = reservation_r.thread_id[0 +: thread_id_width_p];
   assign fast_ctxtsw_thread_id_o = reservation_r.ctxtsw_target_tid;
   assign fast_ctxtsw_resume_npc_o = reservation_r.pc + (reservation_r.size << 1'b1);
@@ -344,7 +345,7 @@ module bp_be_calculator_top
 
          ,.en_i(exc_stage_r[1].ispec_v)
          ,.reservation_i(catchup_reservation_r)
-         ,.flush_i(commit_pkt_cast_o.npc_w_v)
+         ,.flush_i(pipe_flush_v)
 
          ,.data_o(pipe_int_catchup_data_lo)
          ,.v_o(pipe_int_catchup_data_v_lo)
@@ -384,7 +385,7 @@ module bp_be_calculator_top
      ,.reset_i(reset_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.frm_dyn_i(frm_dyn_lo)
 
      ,.data_o(pipe_aux_data_lo)
@@ -401,7 +402,7 @@ module bp_be_calculator_top
 
      ,.cfg_bus_i(cfg_bus_i)
 
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.sfence_i(commit_pkt_cast_o.sfence)
 
      ,.busy_o(mem_busy_o)
@@ -470,7 +471,7 @@ module bp_be_calculator_top
      ,.reset_i(reset_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.frm_dyn_i(frm_dyn_lo)
 
      ,.imul_data_o(pipe_mul_data_lo)
@@ -488,7 +489,7 @@ module bp_be_calculator_top
      ,.reset_i(reset_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.ibusy_o(idiv_busy_o)
      ,.fbusy_o(fdiv_busy_o)
      ,.frm_dyn_i(frm_dyn_lo)
@@ -611,14 +612,18 @@ module bp_be_calculator_top
           exc_stage_n[0].spec                     |= dispatch_pkt_cast_i.special;
           exc_stage_n[0].exc                      |= dispatch_pkt_cast_i.exception;
 
-          exc_stage_n[0].v                        &= ~commit_pkt_cast_o.npc_w_v | dispatch_pkt_cast_i.nspec_v;
-          exc_stage_n[1].v                        &= ~commit_pkt_cast_o.npc_w_v | exc_stage_r[0].nspec_v;
-          exc_stage_n[2].v                        &= ~commit_pkt_cast_o.npc_w_v | exc_stage_r[1].nspec_v;
-          exc_stage_n[3].v                        &=  commit_pkt_cast_o.instret | exc_stage_r[2].nspec_v;
+          exc_stage_n[0].v                        &= (~pipe_flush_v | dispatch_pkt_cast_i.nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
+          exc_stage_n[1].v                        &= (~pipe_flush_v | exc_stage_r[0].nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
+          exc_stage_n[2].v                        &= (~pipe_flush_v | exc_stage_r[1].nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
+          exc_stage_n[3].v                        &= (commit_pkt_cast_o.instret | exc_stage_r[2].nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
 
-          exc_stage_n[0].queue_v                  &= ~commit_pkt_cast_o.npc_w_v;
-          exc_stage_n[1].queue_v                  &= ~commit_pkt_cast_o.npc_w_v;
-          exc_stage_n[2].queue_v                  &= ~commit_pkt_cast_o.npc_w_v;
+          exc_stage_n[0].queue_v                  &= ~pipe_flush_v;
+          exc_stage_n[1].queue_v                  &= ~pipe_flush_v;
+          exc_stage_n[2].queue_v                  &= ~pipe_flush_v;
 
           exc_stage_n[1].exc.illegal_instr        |= pipe_sys_illegal_instr_lo;
 

@@ -82,6 +82,7 @@ module bp_be_scheduler
   logic [fetch_ptr_p-1:0] ptw_count_lo;
   logic ptw_instr_page_fault_lo, ptw_load_page_fault_lo, ptw_store_page_fault_lo;
   logic [dword_width_gp-1:0] ptw_addr_lo, ptw_pte_lo;
+  logic issue_queue_ready_and_lo;
   wire ptw_v_li = late_wb_yumi_o & late_wb_pkt_cast_i.ptw_w_v;
   wire [dword_width_gp-1:0] ptw_data_li = late_wb_pkt_cast_i.rd_data;
   bp_be_ptw
@@ -130,7 +131,10 @@ module bp_be_scheduler
 
   localparam entry_cinstr_gp = 2**fetch_sel_p;
   localparam op_ptr_width_lp = `BSG_WIDTH(entry_cinstr_gp);
-  wire fe_queue_en_li                              = ~suppress_iss_i & ~ptw_busy_lo & ~hazard_v_i;
+  logic ctxtsw_issue_hold_r;
+  wire ctxtsw_issue_hold_clear_li                  = commit_pkt_cast_i.ctxtsw
+                                                     | (commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw);
+  wire fe_queue_en_li                              = ~suppress_iss_i & ~ctxtsw_issue_hold_r & ~ptw_busy_lo & ~hazard_v_i;
   wire fe_queue_clr_li                             = clear_iss_i | commit_pkt_cast_i.ctxtsw;
   wire fe_queue_roll_li                            = commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw;
   wire fe_queue_read_li                            = fe_instr_not_exc_li | fe_exc_not_instr_li;
@@ -162,7 +166,7 @@ module bp_be_scheduler
 
      ,.fe_queue_i(fe_queue_i)
      ,.fe_queue_v_i(fe_queue_v_i)
-     ,.fe_queue_ready_and_o(fe_queue_ready_and_o)
+     ,.fe_queue_ready_and_o(issue_queue_ready_and_lo)
 
      ,.decode_info_i(decode_info_i)
      ,.preissue_pkt_o(preissue_pkt)
@@ -251,6 +255,20 @@ module bp_be_scheduler
       ? thread_id_width_p'(issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
       : thread_id_width_p'(irf_rs1[0 +: thread_id_width_p]);
 
+  wire issue_ctxtsw_switch_v = issue_ctxtsw_v & (issue_ctxtsw_target_tid != current_thread_id_i);
+  wire issue_ctxtsw_dispatch_v = fe_queue_read_li & ~poison_isd_i & issue_ctxtsw_switch_v;
+  wire ctxtsw_queue_hold_li = ctxtsw_issue_hold_r | issue_ctxtsw_dispatch_v | fe_queue_clr_li;
+
+  assign fe_queue_ready_and_o = issue_queue_ready_and_lo & ~ctxtsw_queue_hold_li;
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ctxtsw_issue_hold_r <= 1'b0;
+    else if (ctxtsw_issue_hold_clear_li)
+      ctxtsw_issue_hold_r <= 1'b0;
+    else if (issue_ctxtsw_dispatch_v)
+      ctxtsw_issue_hold_r <= 1'b1;
+
   assign wb_instr_li = '{rd_addr: late_wb_pkt_cast_i.rd_addr, default: '0};
   assign wb_decode_li = '{irf_w_v: late_wb_pkt_cast_i.ird_w_v, frf_w_v: late_wb_pkt_cast_i.frd_w_v, default: '0};
   assign walk_decode_li = '{pipe_mem_final_v: ptw_walk_lo, dcache_mmu_v: ptw_walk_lo, fu_op: e_dcache_op_ptw, default: '0};
@@ -263,7 +281,7 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.queue_v    = (fe_queue_read_li & ~poison_isd_i);
       dispatch_pkt_cast_o.ispec_v    = fe_instr_not_exc_li & ispec_v_i;
       dispatch_pkt_cast_o.nspec_v    = ptw_v_lo | writeback_v;
-      dispatch_pkt_cast_o.ctxtsw_v   = issue_ctxtsw_v;
+      dispatch_pkt_cast_o.ctxtsw_v   = issue_ctxtsw_switch_v;
       dispatch_pkt_cast_o.ctxtsw_target_tid = issue_ctxtsw_target_tid;
       dispatch_pkt_cast_o.pc         = expected_npc_i;
       dispatch_pkt_cast_o.thread_id  = writeback_v

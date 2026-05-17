@@ -54,8 +54,8 @@ module bp_be_regfile_mt
    , input [reg_addr_width_gp-1:0]                     rd_addr_i
    , input [data_width_p-1:0]                           rd_data_i
 
-   // rpush write bus - software-initiated write to a remote (disabled) thread's register
-   // Encoding: {reg_addr[4:0], thread_id[1:0]} selects destination; rpush_data_i is the value
+   // CSR 0x083 remote-write bus: software-initiated write into another thread's register state
+   // Encoding: {thread_id, reg_addr} selects the destination register; rpush_data_i is the value
    , input                                              rpush_w_v_i
    , input [thread_id_width_p-1:0]                     rpush_thread_id_i
    , input [reg_addr_width_gp-1:0]                     rpush_addr_i
@@ -142,7 +142,7 @@ module bp_be_regfile_mt
       $error("Error: unsupported number of read ports");
     end
 
-  // Save the written data for forwarding (use muxed write port values to capture rpush too)
+  // Save the written data for forwarding (use muxed write port values to capture remote writes too)
   logic [data_width_p-1:0] rd_data_r;
   logic [thread_id_width_p-1:0] rd_thread_id_r;
   logic [reg_addr_width_gp-1:0] rd_addr_r;
@@ -165,7 +165,7 @@ module bp_be_regfile_mt
       // Check for reads from x0 (should always return 0)
       wire zero_rs = rs_r_v_i[i] & (rs_addr_i[i] == '0) & (zero_x0_p == 1);
 
-      // Check for forwarding: write to same thread and same register (covers both wb and rpush)
+      // Check for forwarding: write to same thread and same register (covers both wb and remote write)
       wire same_thread = (w_thread_id_mux == rs_thread_id_i[i]);
       wire fwd_rs = w_v_mux & same_thread & rs_r_v_i[i] & (w_reg_addr_mux == rs_addr_i[i]);
 
@@ -191,10 +191,10 @@ module bp_be_regfile_mt
          );
 
       logic [data_width_p-1:0] rs_data_n, rs_data_r;
-      // Check for replacement: write to same thread and same register (delayed, covers wb and rpush)
+      // Check for replacement: write to same thread and same register (delayed, covers both wb and remote write)
       wire same_thread_r = (rd_thread_id_r == rs_thread_id_r);
       wire replace_rs = w_v_mux & same_thread_r & (rs_addr_r == w_reg_addr_mux);
-      assign rs_data_n = replace_rs ? rd_data_i : fwd_data_lo;
+      assign rs_data_n = replace_rs ? w_data_mux : fwd_data_lo;
 
       bsg_dff_en
        #(.width_p(data_width_p))
