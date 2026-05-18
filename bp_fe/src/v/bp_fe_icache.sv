@@ -153,18 +153,24 @@ module bp_fe_icache
   logic v_tl_n, v_tl_r;
   logic v_tv_n, v_tv_r;
 
-  wire critical_recv = is_miss & cache_req_critical_i
+  localparam id_width_safe_lp = (id_width_p == 0) ? 1 : id_width_p;
+  logic abort_miss_r;
+  logic [id_width_safe_lp-1:0] cache_req_id_r, miss_id_r, abort_miss_id_r;
+  wire [id_width_p-1:0] cache_req_id_li = cache_req_id_r[0+:id_width_p];
+  wire miss_resp = (cache_req_id_i == miss_id_r[0+:id_width_p]);
+  wire abort_resp = abort_miss_r & (cache_req_id_i == abort_miss_id_r[0+:id_width_p]);
+
+  wire critical_recv = is_miss & cache_req_critical_i & miss_resp
     & (~stat_mem_pkt_v_i | stat_mem_pkt_yumi_o)
     & (~tag_mem_pkt_v_i | tag_mem_pkt_yumi_o)
     & (~data_mem_pkt_v_i | data_mem_pkt_yumi_o);
-  wire complete_recv = is_miss & cache_req_last_i
+  wire complete_recv = is_miss & cache_req_last_i & miss_resp
     & (~stat_mem_pkt_v_i | stat_mem_pkt_yumi_o)
     & (~tag_mem_pkt_v_i | tag_mem_pkt_yumi_o)
     & (~data_mem_pkt_v_i | data_mem_pkt_yumi_o);
 
   wire abort_miss = is_miss & force_i & ~complete_recv;
-  logic abort_miss_r;
-  wire abort_recv = abort_miss_r
+  wire abort_recv = abort_resp
     & (~stat_mem_pkt_v_i | stat_mem_pkt_yumi_o)
     & (~tag_mem_pkt_v_i | tag_mem_pkt_yumi_o)
     & (~data_mem_pkt_v_i | data_mem_pkt_yumi_o);
@@ -488,7 +494,7 @@ module bp_fe_icache
      ,msg_type: cached_req ? e_miss_load : uncached_req ? e_uc_load : e_cache_inval
      ,subop   : e_req_amoswap
      ,hit     : hit_v_tv
-     ,id      : '0
+     ,id      : cache_req_id_li
      ,data    : '0
      };
 
@@ -541,11 +547,28 @@ module bp_fe_icache
 
   always_ff @(posedge clk_i)
     if (reset_i)
-      abort_miss_r <= 1'b0;
-    else if (abort_complete)
-      abort_miss_r <= 1'b0;
-    else if (abort_miss)
-      abort_miss_r <= 1'b1;
+      begin
+        abort_miss_r <= 1'b0;
+        cache_req_id_r <= '0;
+        miss_id_r <= '0;
+        abort_miss_id_r <= '0;
+      end
+    else
+      begin
+        if (cache_req_yumi_i)
+          begin
+            miss_id_r <= cache_req_id_r;
+            cache_req_id_r <= cache_req_id_r + id_width_safe_lp'(1'b1);
+          end
+
+        if (abort_complete)
+          abort_miss_r <= 1'b0;
+        else if (abort_miss)
+          begin
+            abort_miss_r <= 1'b1;
+            abort_miss_id_r <= miss_id_r;
+          end
+      end
 
   always_ff @(posedge clk_i)
     if (cache_req_yumi_i)
@@ -568,8 +591,8 @@ module bp_fe_icache
   wire tag_mem_bypass = v_tl_r & decode_tl_r.fetch_op & (vaddr_index == vaddr_index_tl);
   wire tag_mem_fast_read = do_recover || yumi_o & decode_lo.fetch_op & ~tag_mem_bypass;
   wire tag_mem_fast_write = abort_miss;
-  wire tag_mem_slow_read = tag_mem_pkt_yumi_o & ~abort_miss_r & (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_read) ;
-  wire tag_mem_slow_write = tag_mem_pkt_yumi_o & ~abort_miss_r & (tag_mem_pkt_cast_i.opcode != e_cache_tag_mem_read);
+  wire tag_mem_slow_read = tag_mem_pkt_yumi_o & ~abort_resp & (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_read) ;
+  wire tag_mem_slow_write = tag_mem_pkt_yumi_o & ~abort_resp & (tag_mem_pkt_cast_i.opcode != e_cache_tag_mem_read);
   assign tag_mem_v_li = tag_mem_fast_read | tag_mem_fast_write | tag_mem_slow_read | tag_mem_slow_write;
   assign tag_mem_w_li = tag_mem_fast_write | tag_mem_slow_write;
   assign tag_mem_addr_li = tag_mem_fast_write
@@ -577,7 +600,7 @@ module bp_fe_icache
     : tag_mem_fast_read
       ? do_recover ? vaddr_index_tl : vaddr_index
       : tag_mem_pkt_cast_i.index;
-  assign tag_mem_pkt_yumi_o = tag_mem_pkt_v_i & (abort_miss_r | ~|{tag_mem_fast_read, tag_mem_fast_write});
+  assign tag_mem_pkt_yumi_o = tag_mem_pkt_v_i & (abort_resp | ~|{tag_mem_fast_read, tag_mem_fast_write});
 
   logic [assoc_p-1:0] tag_mem_way_one_hot;
   bsg_decode
@@ -693,8 +716,8 @@ module bp_fe_icache
   logic [assoc_p-1:0] data_mem_fast_read, data_mem_fast_write, data_mem_slow_read, data_mem_slow_write;
   for (genvar i = 0; i < assoc_p; i++)
     begin : data_mem_lines
-      assign data_mem_slow_read[i] = data_mem_pkt_yumi_o & ~abort_miss_r & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read);
-      assign data_mem_slow_write[i] = data_mem_pkt_yumi_o & ~abort_miss_r & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_write) & data_mem_write_bank_mask[i];
+      assign data_mem_slow_read[i] = data_mem_pkt_yumi_o & ~abort_resp & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read);
+      assign data_mem_slow_write[i] = data_mem_pkt_yumi_o & ~abort_resp & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_write) & data_mem_write_bank_mask[i];
 
       assign data_mem_fast_read[i] = do_recover || yumi_o & decode_lo.fetch_op & (~data_mem_bypass | data_mem_bypass_select[i]);
 
@@ -708,7 +731,7 @@ module bp_fe_icache
     end
   assign data_mem_pkt_yumi_o = (data_mem_pkt_cast_i.opcode == e_cache_data_mem_uncached)
     ? data_mem_pkt_v_i
-    : data_mem_pkt_v_i & (abort_miss_r | ~|data_mem_fast_read);
+    : data_mem_pkt_v_i & (abort_resp | ~|data_mem_fast_read);
 
   logic [lg_assoc_lp-1:0] data_mem_pkt_way_r;
   bsg_dff
@@ -733,8 +756,8 @@ module bp_fe_icache
   ///////////////////////////
   wire stat_mem_fast_read = ~uncached_tv_r & cache_req_yumi_i;
   wire stat_mem_fast_write = ~uncached_tv_r & yumi_i;
-  wire stat_mem_slow_write = stat_mem_pkt_yumi_o & ~abort_miss_r & (stat_mem_pkt_cast_i.opcode != e_cache_stat_mem_read);
-  assign stat_mem_pkt_yumi_o = stat_mem_pkt_v_i & (abort_miss_r | ~stat_mem_fast_write & ~stat_mem_fast_read);
+  wire stat_mem_slow_write = stat_mem_pkt_yumi_o & ~abort_resp & (stat_mem_pkt_cast_i.opcode != e_cache_stat_mem_read);
+  assign stat_mem_pkt_yumi_o = stat_mem_pkt_v_i & (abort_resp | ~stat_mem_fast_write & ~stat_mem_fast_read);
   assign stat_mem_v_li = stat_mem_fast_read | stat_mem_fast_write | stat_mem_pkt_yumi_o;
   assign stat_mem_w_li = stat_mem_fast_write | (stat_mem_pkt_yumi_o & stat_mem_slow_write);
   assign stat_mem_addr_li = (stat_mem_fast_write | stat_mem_fast_read)

@@ -182,6 +182,11 @@ module bp_uce
   assign cache_req_metadata = cache_req_metadata_v_r ? cache_req_metadata_r : cache_req_metadata_cast_i;
   wire cache_req_metadata_v = cache_req_metadata_v_i | cache_req_metadata_v_r;
 
+  bp_cache_req_s overlap_req_r;
+  bp_cache_req_metadata_s overlap_metadata_r;
+  logic overlap_req_v_r, overlap_metadata_v_r, overlap_sent_r, overlap_meta_pending_r;
+  logic overlap_accept_li, overlap_metadata_accept_li, overlap_send_li, overlap_done_li;
+
   logic [block_width_p-1:0] dirty_data_r;
   wire dirty_data_read = data_mem_pkt_v_o & (data_mem_pkt_cast_o.opcode == e_cache_data_mem_read);
   bsg_dff_sync_read
@@ -321,6 +326,23 @@ module bp_uce
   wire nonblocking_v_r = cache_req_v_r & (uc_store_v_r | wt_store_v_r) & ~uc_evict_v_r;
 
   wire [block_size_in_fill_lp-1:0] fill_index_shift = (assoc_p > 1) ? (fsm_rev_addr_li[byte_offset_width_lp+:bank_offset_width_lp] >> bank_sub_offset_width_lp) : '0;
+  wire primary_resp_li = load_resp_v_li
+    & cache_req_v_r
+    & (fsm_rev_addr_li[paddr_width_p-1:block_offset_width_lp] == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
+  wire overlap_resp_li = load_resp_v_li
+    & overlap_req_v_r
+    & (fsm_rev_addr_li[paddr_width_p-1:block_offset_width_lp] == overlap_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
+  wire overlap_same_block_li =
+    (cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp] == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
+  wire overlap_eligible_li = (id_width_p > 0)
+    & is_read_request
+    & cache_req_v_i
+    & miss_load_v_li
+    & cache_req_v_r
+    & miss_load_v_r
+    & ~cache_req_metadata.dirty
+    & ~overlap_req_v_r
+    & ~overlap_same_block_li;
 
   logic [index_width_lp-1:0] index_cnt;
   logic index_clear, index_up;
@@ -375,8 +397,8 @@ module bp_uce
      ,.yumi_i(fsm_rev_yumi_lo & fsm_rev_last_li)
      ,.count_o(credit_count_lo)
      );
-  assign cache_req_credits_full_o  = cache_req_v_r && (credit_count_lo == coh_noc_max_credits_p);
-  assign cache_req_credits_empty_o = ~cache_req_v_r && (credit_count_lo == 0);
+  assign cache_req_credits_full_o  = (cache_req_v_r | overlap_req_v_r) && (credit_count_lo == coh_noc_max_credits_p);
+  assign cache_req_credits_empty_o = ~(cache_req_v_r | overlap_req_v_r) && (credit_count_lo == 0);
 
   logic [fill_width_p-1:0] writeback_data;
   wire [fill_cnt_width_lp-1:0] dirty_data_select = fsm_fwd_addr_lo[fill_offset_width_lp+:fill_cnt_width_lp];
@@ -432,7 +454,12 @@ module bp_uce
 
       cache_req_critical_o = '0;
       cache_req_last_o = '0;
+      cache_req_id_o = cache_req_r.id;
       cache_req_done = '0;
+      overlap_accept_li = 1'b0;
+      overlap_metadata_accept_li = overlap_meta_pending_r & cache_req_metadata_v_i;
+      overlap_send_li = 1'b0;
+      overlap_done_li = 1'b0;
 
       fsm_fwd_header_lo = '0;
       fsm_fwd_data_lo = '0;
@@ -757,6 +784,21 @@ module bp_uce
 
         e_read_wait:
           begin
+            cache_req_yumi_o = overlap_eligible_li;
+            overlap_accept_li = cache_req_yumi_o;
+
+            if (overlap_req_v_r & overlap_metadata_v_r & ~overlap_sent_r)
+              begin
+                fsm_fwd_header_lo.msg_type = e_bedrock_mem_rd;
+                fsm_fwd_header_lo.addr     = overlap_req_r.addr;
+                fsm_fwd_header_lo.size     = bp_bedrock_msg_size_e'(overlap_req_r.size);
+                fsm_fwd_header_lo.payload.way_id = lce_assoc_p'(overlap_metadata_r.hit_or_repl_way);
+                fsm_fwd_header_lo.payload.lce_id = lce_id_i;
+                fsm_fwd_header_lo.payload.src_did = did_i;
+                fsm_fwd_v_lo = fsm_fwd_ready_then_li & ~cache_req_credits_full_o;
+                overlap_send_li = fsm_fwd_v_lo & fsm_fwd_last_lo;
+              end
+
             // send the sub-block from L2 to cache
             tag_mem_pkt_cast_o.opcode = e_cache_tag_mem_set_tag;
             tag_mem_pkt_cast_o.index  = fsm_rev_addr_li[block_offset_width_lp+:index_width_lp];
@@ -775,11 +817,15 @@ module bp_uce
 
             load_resp_yumi_lo = (~fsm_rev_new_li | tag_mem_pkt_yumi_i) && data_mem_pkt_yumi_i;
 
+            cache_req_id_o = overlap_resp_li ? overlap_req_r.id : cache_req_r.id;
             cache_req_critical_o = load_resp_v_li & fsm_rev_critical_li;
             cache_req_last_o = load_resp_v_li & fsm_rev_last_li;
-            cache_req_done = cache_req_last_o & load_resp_yumi_lo;
+            cache_req_done = primary_resp_li & cache_req_last_o & load_resp_yumi_lo;
+            overlap_done_li = overlap_resp_li & cache_req_last_o & load_resp_yumi_lo;
 
-            state_n = cache_req_done ? e_ready : e_read_wait;
+            state_n = ((cache_req_v_r & ~cache_req_done) | (overlap_req_v_r & ~overlap_done_li))
+                      ? e_read_wait
+                      : e_ready;
           end
 
         e_uc_read_wait:
@@ -821,9 +867,46 @@ module bp_uce
   // synopsys sync_set_reset "reset_i"
   always_ff @(posedge clk_i)
     if (reset_i)
-      state_r <= e_reset;
+      begin
+        state_r <= e_reset;
+        overlap_req_v_r <= 1'b0;
+        overlap_metadata_v_r <= 1'b0;
+        overlap_sent_r <= 1'b0;
+        overlap_meta_pending_r <= 1'b0;
+        overlap_req_r <= '0;
+        overlap_metadata_r <= '0;
+      end
     else
-      state_r <= state_n;
+      begin
+        state_r <= state_n;
+
+        if (overlap_accept_li)
+          begin
+            overlap_req_r <= cache_req_cast_i;
+            overlap_req_v_r <= 1'b1;
+            overlap_metadata_v_r <= 1'b0;
+            overlap_sent_r <= 1'b0;
+            overlap_meta_pending_r <= 1'b1;
+          end
+
+        if (overlap_metadata_accept_li)
+          begin
+            overlap_metadata_r <= cache_req_metadata_cast_i;
+            overlap_metadata_v_r <= 1'b1;
+            overlap_meta_pending_r <= 1'b0;
+          end
+
+        if (overlap_send_li)
+          overlap_sent_r <= 1'b1;
+
+        if (overlap_done_li)
+          begin
+            overlap_req_v_r <= 1'b0;
+            overlap_metadata_v_r <= 1'b0;
+            overlap_sent_r <= 1'b0;
+            overlap_meta_pending_r <= 1'b0;
+          end
+      end
 
   // synopsys translate_off
   always_ff @(negedge clk_i)
@@ -834,4 +917,3 @@ module bp_uce
 endmodule
 
 `BSG_ABSTRACT_MODULE(bp_uce)
-
