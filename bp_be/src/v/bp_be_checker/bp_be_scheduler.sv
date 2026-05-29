@@ -311,8 +311,8 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.ctxtsw_target_tid = issue_ctxtsw_target_tid;
       dispatch_pkt_cast_o.pc         = expected_npc_i;
       dispatch_pkt_cast_o.thread_id  = writeback_v
-                                       ? vaddr_width_p'(late_wb_pkt_cast_i.thread_id)
-                                       : vaddr_width_p'(issue_thread_id_li);
+                                       ? late_wb_pkt_cast_i.thread_id
+                                       : issue_thread_id_li;
       dispatch_pkt_cast_o.instr      = be_exc_not_instr_li ? be_exc_instr_li   : fe_exc_not_instr_li ? fe_exc_instr_li  : issue_pkt_cast_o.instr;
       dispatch_pkt_cast_o.size       = be_exc_not_instr_li ? be_exc_size_li    : fe_exc_not_instr_li ? fe_exc_size_li   : issue_pkt_cast_o.size;
       dispatch_pkt_cast_o.count      = be_exc_not_instr_li ? be_exc_count_li   : fe_exc_not_instr_li ? fe_exc_count_li  : issue_pkt_cast_o.count;

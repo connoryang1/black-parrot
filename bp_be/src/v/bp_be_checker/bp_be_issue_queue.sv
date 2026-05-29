@@ -293,7 +293,7 @@ module bp_be_issue_queue
       issue_pkt_cast_o = '0;
 
       issue_pkt_cast_o.v                    = en_i & ~empty;
-      issue_pkt_cast_o.thread_id            = vaddr_width_p'(preissue_pkt_r.thread_id);
+      issue_pkt_cast_o.thread_id            = preissue_pkt_r.thread_id;
       issue_pkt_cast_o.fetch                = (fe_queue_lo.msg_type == e_instr_fetch) & !illegal_instr_lo;
       issue_pkt_cast_o.itlb_miss            = (fe_queue_lo.msg_type == e_itlb_miss);
       issue_pkt_cast_o.instr_access_fault   = (fe_queue_lo.msg_type == e_instr_access_fault);
