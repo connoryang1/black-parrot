@@ -250,6 +250,7 @@ module bp_be_director
           fe_cmd_li.opcode                            = e_op_pc_redirection;
           fe_cmd_li.npc                               = commit_pkt_cast_i.npc;
           fe_cmd_pc_redirect_operands.subopcode       = e_subop_translation_switch;
+          fe_cmd_pc_redirect_operands.branch_metadata_fwd = current_thread_metadata_li;
           fe_cmd_pc_redirect_operands.translation_en  = commit_pkt_cast_i.translation_en_n;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
