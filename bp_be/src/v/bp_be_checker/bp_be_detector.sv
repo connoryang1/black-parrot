@@ -75,7 +75,7 @@ module bp_be_detector
   bp_be_dep_status_s [3:0] dep_status_r;
   logic [3:0][thread_id_width_p-1:0] dep_thread_id_r;
 
-  logic fence_haz_v, cmd_haz_v, fflags_haz_v, iscore_haz_v, fscore_haz_v;
+  logic fence_haz_v, cmd_haz_v, fflags_haz_v, csr_rs1_haz_v, iscore_haz_v, fscore_haz_v;
   logic data_haz_v, control_haz_v, struct_haz_v;
 
   wire [reg_addr_width_gp-1:0] score_rd_li  = commit_pkt_cast_i.instr.t.fmatype.rd_addr;
@@ -252,7 +252,12 @@ module bp_be_detector
                         | fdiv_busy_i
                         );
 
-      control_haz_v = fence_haz_v | fflags_haz_v;
+      csr_rs1_haz_v = decode.csr_w_v
+                      & (issue_pkt_cast_i.instr inside {`RV64_CSRRW, `RV64_CSRRS, `RV64_CSRRC})
+                      & rs1_match_vector[0]
+                      & dep_status_r[0].eint_iwb_v;
+
+      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v;
 
       // Combine all data hazard information
       // TODO: Parameterize away floating point data hazards without hardware support
