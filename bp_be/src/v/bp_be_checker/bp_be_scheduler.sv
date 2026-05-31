@@ -307,8 +307,8 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.queue_v    = (fe_queue_read_li & ~poison_isd_i & ~ctxtsw_cancel_drain_li);
       dispatch_pkt_cast_o.ispec_v    = fe_instr_not_exc_li & ispec_v_i;
       dispatch_pkt_cast_o.nspec_v    = ptw_v_lo | writeback_v;
-      dispatch_pkt_cast_o.ctxtsw_v   = issue_ctxtsw_switch_v;
-      dispatch_pkt_cast_o.ctxtsw_target_tid = issue_ctxtsw_target_tid;
+      dispatch_pkt_cast_o.ctxtsw_v   = issue_ctxtsw_dispatch_v;
+      dispatch_pkt_cast_o.ctxtsw_target_tid = issue_ctxtsw_dispatch_v ? issue_ctxtsw_target_tid : '0;
       dispatch_pkt_cast_o.pc         = expected_npc_i;
       dispatch_pkt_cast_o.thread_id  = writeback_v
                                        ? late_wb_pkt_cast_i.thread_id
