@@ -120,13 +120,14 @@
       logic                              fmem_fwb_v;                                               \
       logic                              mul_iwb_v;                                                \
       logic                              mul_fwb_v;                                                \
-      logic                              fma_iwb_v;                                                \
-      logic                              fma_fwb_v;                                                \
-      logic                              long_iwb_v;                                               \
-      logic                              long_fwb_v;                                               \
-                                                                                                   \
-      logic [rv64_reg_addr_width_gp-1:0] rd_addr;                                                  \
-    }  bp_be_dep_status_s;                                                                         \
+	      logic                              fma_iwb_v;                                                \
+	      logic                              fma_fwb_v;                                                \
+	      logic                              long_iwb_v;                                               \
+	      logic                              long_fwb_v;                                               \
+	      logic                              trans_info_v;                                             \
+	                                                                                                   \
+	      logic [rv64_reg_addr_width_gp-1:0] rd_addr;                                                  \
+	    }  bp_be_dep_status_s;                                                                         \
                                                                                                    \
     typedef struct packed                                                                          \
     {                                                                                              \

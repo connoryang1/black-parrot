@@ -133,6 +133,7 @@ module bp_be_calculator_top
   bp_be_wb_pkt_s [pipe_stage_els_lp-1:0] comp_stage_r;
 
   rv64_frm_e frm_dyn_lo;
+  bp_be_trans_info_s reservation_trans_info_lo;
 
   bp_be_wb_pkt_s pipe_long_iwb_pkt, pipe_long_fwb_pkt;
 
@@ -248,6 +249,7 @@ module bp_be_calculator_top
 
      ,.decode_info_o(decode_info_o)
      ,.trans_info_o(trans_info_o)
+     ,.reservation_trans_info_o(reservation_trans_info_lo)
      ,.frm_dyn_o(frm_dyn_lo)
 
      // Context switching
@@ -460,7 +462,7 @@ module bp_be_calculator_top
      ,.late_wb_pkt_o(pipe_mem_late_wb_pkt)
      ,.late_wb_v_o(pipe_mem_late_wb_v)
 
-     ,.trans_info_i(trans_info_o)
+     ,.trans_info_i(reservation_trans_info_lo)
      );
 
   // Floating point pipe: 3/4 cycle latency
