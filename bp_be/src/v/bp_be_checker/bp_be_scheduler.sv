@@ -57,6 +57,7 @@ module bp_be_scheduler
 
    // Current thread ID for register file reads/writes
    , input [thread_id_width_p-1:0]            current_thread_id_i
+   , input [thread_id_width_p-1:0]            retire_thread_id_i
 
    // CSR 0x083 remote register write into another hardware thread context
    , input                                    rpush_w_v_i
@@ -83,9 +84,21 @@ module bp_be_scheduler
   logic [fetch_ptr_p-1:0] ptw_count_lo;
   logic ptw_instr_page_fault_lo, ptw_load_page_fault_lo, ptw_store_page_fault_lo;
   logic [dword_width_gp-1:0] ptw_addr_lo, ptw_pte_lo;
+  logic [thread_id_width_p-1:0] ptw_thread_id_r;
   logic issue_queue_ready_and_lo;
   wire ptw_v_li = late_wb_yumi_o & late_wb_pkt_cast_i.ptw_w_v;
   wire [dword_width_gp-1:0] ptw_data_li = late_wb_pkt_cast_i.rd_data;
+  wire ptw_start_li = ~ptw_busy_lo
+                      & (commit_pkt_cast_i.itlb_miss
+                         | commit_pkt_cast_i.dtlb_store_miss
+                         | commit_pkt_cast_i.dtlb_load_miss);
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ptw_thread_id_r <= '0;
+    else if (ptw_start_li)
+      ptw_thread_id_r <= retire_thread_id_i;
+
   bp_be_ptw
    #(.bp_params_p(bp_params_p)
      ,.pte_width_p(sv39_pte_width_gp)
@@ -272,7 +285,11 @@ module bp_be_scheduler
       : thread_id_width_p'(irf_rs1[0 +: thread_id_width_p]);
 
   wire issue_ctxtsw_switch_v = issue_ctxtsw_v & (issue_ctxtsw_target_tid != issue_thread_id_li);
-  wire issue_ctxtsw_dispatch_v = fe_queue_read_li & ~poison_isd_i & ~ctxtsw_cancel_drain_li & issue_ctxtsw_switch_v;
+  wire issue_ctxtsw_dispatch_v = fe_queue_read_li
+                                  & ~hazard_v_i
+                                  & ~poison_isd_i
+                                  & ~ctxtsw_cancel_drain_li
+                                  & issue_ctxtsw_switch_v;
   wire ctxtsw_queue_hold_li = (ctxtsw_issue_hold_r & ~ctxtsw_commit_accept_li)
                               | issue_ctxtsw_dispatch_v
                               | (fe_queue_clr_li & ~ctxtsw_commit_accept_li);
@@ -310,7 +327,9 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.ctxtsw_v   = issue_ctxtsw_dispatch_v;
       dispatch_pkt_cast_o.ctxtsw_target_tid = issue_ctxtsw_dispatch_v ? issue_ctxtsw_target_tid : '0;
       dispatch_pkt_cast_o.pc         = expected_npc_i;
-      dispatch_pkt_cast_o.thread_id  = writeback_v
+      dispatch_pkt_cast_o.thread_id  = ptw_v_lo
+                                       ? ptw_thread_id_r
+                                       : writeback_v
                                        ? late_wb_pkt_cast_i.thread_id
                                        : issue_thread_id_li;
       dispatch_pkt_cast_o.instr      = be_exc_not_instr_li ? be_exc_instr_li   : fe_exc_not_instr_li ? fe_exc_instr_li  : issue_pkt_cast_o.instr;

@@ -57,10 +57,13 @@ module bp_be_csr_wrapper_mt
    // Slow signals
    , output logic [decode_info_width_lp-1:0] decode_info_o
    , output logic [trans_info_width_lp-1:0]  trans_info_o
+   , output logic [trans_info_width_lp-1:0]  reservation_trans_info_o
    , output rv64_frm_e                       frm_dyn_o
 
    // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]           current_thread_id_i
+   // CSR reads belong to the instruction in the reservation station.
+   , input [thread_id_width_p-1:0]           csr_thread_id_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
 
@@ -103,9 +106,9 @@ module bp_be_csr_wrapper_mt
   rv64_fflags_s [num_threads_p-1:0]                  fflags_acc_gated;
 
   for (genvar i = 0; i < num_threads_p; i++) begin : gen_gate
-    wire active = (current_thread_id_i == thread_id_width_p'(i));
+    wire csr_active = (csr_thread_id_i == thread_id_width_p'(i));
     wire retire_active = (retire_thread_id_i == thread_id_width_p'(i));
-    assign csr_r_v_gated[i]     = csr_r_v_i & active;
+    assign csr_r_v_gated[i]     = csr_r_v_i & csr_active;
     assign frf_w_v_gated[i]     = frf_w_v_i & retire_active;
     assign retire_pkt_gated[i]  = retire_active ? retire_pkt_i : '0;
     assign retire_ctxtsw_v_gated[i] = retire_ctxtsw_v_i & retire_active;
@@ -157,11 +160,12 @@ module bp_be_csr_wrapper_mt
   end
 
   // Mux all outputs from the active thread
-  assign csr_r_data_o          = csr_r_data_co[current_thread_id_i];
-  assign csr_r_illegal_o       = csr_r_illegal_co[current_thread_id_i];
+  assign csr_r_data_o          = csr_r_data_co[csr_thread_id_i];
+  assign csr_r_illegal_o       = csr_r_illegal_co[csr_thread_id_i];
   assign commit_pkt_o          = commit_pkt_co[current_thread_id_i];
   assign decode_info_o         = decode_info_co[current_thread_id_i];
   assign trans_info_o          = trans_info_co[current_thread_id_i];
+  assign reservation_trans_info_o = trans_info_co[csr_thread_id_i];
   assign frm_dyn_o             = frm_dyn_co[current_thread_id_i];
   assign irq_pending_o         = irq_pending_co[current_thread_id_i];
   assign irq_waiting_o         = irq_waiting_co[current_thread_id_i];

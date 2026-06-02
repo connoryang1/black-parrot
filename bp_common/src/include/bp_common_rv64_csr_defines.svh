@@ -254,7 +254,7 @@
   {                                                                                        \
     /* We only support No Translation and SV39 */                                          \
     logic        mode;                                                                     \
-    /* We don't currently have ASID support */                                             \
+    logic [15:0] asid;                                                                     \
     /* We only support 39 bit physical address. */                                         \
     /* TODO: Generate this based on vaddr */                                               \
     logic [(paddr_width_mp-page_offset_width_gp)-1:0] ppn;                                 \
@@ -772,13 +772,14 @@
 
   `define compress_satp_s(data_cast_mp, vaddr_width_mp, paddr_width_mp) \
     '{mode: data_cast_mp.mode[3]   \
+      ,asid: data_cast_mp.asid     \
       ,ppn: data_cast_mp.ppn[(paddr_width_mp-page_offset_width_gp)-1:0] \
       }
 
   `define decompress_satp_s(data_comp_mp) \
     '{mode: {data_comp_mp.mode, 3'b000} \
+      ,asid: data_comp_mp.asid           \
       ,ppn: {16'h0, data_comp_mp.ppn}   \
-      ,default: '0                      \
       }
 
   `define compress_mstatus_s(data_cast_mp, vaddr_width_mp, paddr_width_mp) \
@@ -1070,4 +1071,3 @@
     `declare_csr_addr(csr_name_mp, 0, 0)
 
 `endif
-
