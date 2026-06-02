@@ -55,6 +55,7 @@ module bp_be_pipe_sys
 
    , output logic [decode_info_width_lp-1:0] decode_info_o
    , output logic [trans_info_width_lp-1:0]  trans_info_o
+   , output logic [trans_info_width_lp-1:0]  reservation_trans_info_o
    , output rv64_frm_e                       frm_dyn_o
 
    // Current thread selects the active per-thread CSR instance.
@@ -85,10 +86,12 @@ module bp_be_pipe_sys
   `bp_cast_o(bp_be_commit_pkt_s, commit_pkt);
   `bp_cast_o(bp_be_decode_info_s, decode_info);
   `bp_cast_o(bp_be_trans_info_s, trans_info);
+  `bp_cast_o(bp_be_trans_info_s, reservation_trans_info);
 
   assign reservation = reservation_i;
   assign decode = reservation.decode;
   assign instr  = reservation.instr;
+  wire [thread_id_width_p-1:0] reservation_thread_id = reservation.thread_id[0 +: thread_id_width_p];
   wire [vaddr_width_p-1:0] pc  = reservation.pc;
   wire [dword_width_gp-1:0] rs1 = reservation.isrc1;
   wire [dword_width_gp-1:0] rs2 = reservation.isrc2;
@@ -129,9 +132,12 @@ module bp_be_pipe_sys
      ,.commit_pkt_o(commit_pkt_cast_o)
      ,.decode_info_o(decode_info_cast_o)
      ,.trans_info_o(trans_info_cast_o)
+     ,.reservation_trans_info_o(reservation_trans_info_cast_o)
      ,.frm_dyn_o(frm_dyn_o)
-     // Pass current thread ID for CSR returns
+     // Current selects slow CSR state; reservation thread owns CSR reads
+     // and memory translation information.
      ,.current_thread_id_i(current_thread_id_i)
+     ,.csr_thread_id_i(reservation_thread_id)
      ,.retire_thread_id_i(retire_thread_id_i)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
