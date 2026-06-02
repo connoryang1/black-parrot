@@ -75,7 +75,7 @@ module bp_be_detector
   bp_be_dep_status_s [3:0] dep_status_r;
   logic [3:0][thread_id_width_p-1:0] dep_thread_id_r;
 
-  logic fence_haz_v, cmd_haz_v, fflags_haz_v, csr_rs1_haz_v, iscore_haz_v, fscore_haz_v;
+  logic fence_haz_v, cmd_haz_v, fflags_haz_v, csr_rs1_haz_v, csr_trans_haz_v, iscore_haz_v, fscore_haz_v;
   logic data_haz_v, control_haz_v, struct_haz_v;
 
   wire [reg_addr_width_gp-1:0] score_rd_li  = commit_pkt_cast_i.instr.t.fmatype.rd_addr;
@@ -252,12 +252,43 @@ module bp_be_detector
                         | fdiv_busy_i
                         );
 
-      csr_rs1_haz_v = decode.csr_w_v
-                      & (issue_pkt_cast_i.instr inside {`RV64_CSRRW, `RV64_CSRRS, `RV64_CSRRC})
-                      & rs1_match_vector[0]
-                      & dep_status_r[0].eint_iwb_v;
+      /*
+       * Register-form CSR writes consume rs1 outside the normal integer
+       * forwarding path. In particular, the early context-switch classifier
+       * reads the target thread id from the scheduler regfile output, so a
+       * csrw 0x081 immediately after a produced rs1 value must wait until the
+       * value is architectural.
+       */
+	      csr_rs1_haz_v = issue_pkt_cast_i.csrw
+	                      & (issue_pkt_cast_i.instr inside {`RV64_CSRRW, `RV64_CSRRS, `RV64_CSRRC})
+                      & ((rs1_match_vector[0]
+                           & (dep_status_r[0].eint_iwb_v
+                              | dep_status_r[0].fint_iwb_v
+                              | dep_status_r[0].aux_iwb_v
+                              | dep_status_r[0].mul_iwb_v
+                              | dep_status_r[0].emem_iwb_v
+                              | dep_status_r[0].fmem_iwb_v
+                              | dep_status_r[0].long_iwb_v))
+                         | (rs1_match_vector[1]
+                            & (dep_status_r[1].fmem_iwb_v
+                               | dep_status_r[1].mul_iwb_v
+                               | dep_status_r[1].long_iwb_v))
+                         | (rs1_match_vector[2]
+	                            & dep_status_r[2].long_iwb_v));
 
-      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v;
+	      /*
+	       * Memory operations consume trans_info_i directly from the CSR block.
+	       * Translation-affecting CSR writes must retire before a following
+	       * load/store can sample mstatus/satp-derived privilege, MPRV, ASID, or
+	       * page-table base state.
+	       */
+	      csr_trans_haz_v = (decode.pipe_mem_early_v | decode.pipe_mem_final_v)
+	                        & ((dep_status_r[0].trans_info_v & (check_thread_id_li == dep_thread_id_r[0]))
+	                           | (dep_status_r[1].trans_info_v & (check_thread_id_li == dep_thread_id_r[1]))
+	                           | (dep_status_r[2].trans_info_v & (check_thread_id_li == dep_thread_id_r[2]))
+	                           | (dep_status_r[3].trans_info_v & (check_thread_id_li == dep_thread_id_r[3])));
+
+	      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v | csr_trans_haz_v;
 
       // Combine all data hazard information
       // TODO: Parameterize away floating point data hazards without hardware support
@@ -303,10 +334,13 @@ module bp_be_detector
       dep_status_n.mul_fwb_v   = dep_decode.pipe_mul_v       & dep_decode.frf_w_v;
       dep_status_n.fma_iwb_v   = dep_decode.pipe_fma_v       & dep_decode.irf_w_v;
       dep_status_n.fma_fwb_v   = dep_decode.pipe_fma_v       & dep_decode.frf_w_v;
-      dep_status_n.long_iwb_v  = dep_decode.pipe_long_v      & dep_decode.irf_w_v;
-      dep_status_n.long_fwb_v  = dep_decode.pipe_long_v      & dep_decode.frf_w_v;
-      dep_status_n.rd_addr     = dispatch_pkt_cast_i.instr.t.rtype.rd_addr;
-    end
+	      dep_status_n.long_iwb_v  = dep_decode.pipe_long_v      & dep_decode.irf_w_v;
+	      dep_status_n.long_fwb_v  = dep_decode.pipe_long_v      & dep_decode.frf_w_v;
+	      dep_status_n.trans_info_v = dispatch_pkt_cast_i.special.csrw
+	                                  & (dispatch_pkt_cast_i.instr.t.itype.imm12
+	                                     inside {`CSR_ADDR_MSTATUS, `CSR_ADDR_SSTATUS, `CSR_ADDR_SATP});
+	      dep_status_n.rd_addr     = dispatch_pkt_cast_i.instr.t.rtype.rd_addr;
+	    end
 
   always_ff @(posedge clk_i)
     begin
