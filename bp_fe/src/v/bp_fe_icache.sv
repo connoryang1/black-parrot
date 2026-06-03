@@ -414,11 +414,19 @@ module bp_fe_icache
      ,.v_o(hit_v_tv)
      );
 
+  logic [assoc_p-1:0] hit_way_one_hot_tv;
+  bsg_decode
+   #(.num_out_p(assoc_p))
+   hit_way_decode
+    (.i(hit_index_tv)
+     ,.o(hit_way_one_hot_tv)
+     );
+
   logic [assoc_p-1:0] ld_data_way_select_tv;
   bsg_adder_one_hot
    #(.width_p(assoc_p))
    select_adder
-    (.a_i(hit_v_tv_r)
+    (.a_i({assoc_p{hit_v_tv}} & hit_way_one_hot_tv)
      ,.b_i(bank_sel_one_hot_tv_r)
      ,.o(ld_data_way_select_tv)
      );
