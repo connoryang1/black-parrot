@@ -367,8 +367,10 @@ module bp_uce
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
 
-     // credit consumed when memory command sends
-     ,.v_i(fsm_fwd_v_lo & fsm_fwd_last_lo)
+     // Count a transaction as outstanding as soon as its first forward beat is
+     // accepted. Store responses can return before the final beat of a streamed
+     // write leaves the UCE.
+     ,.v_i(fsm_fwd_v_lo & fsm_fwd_new_lo)
      ,.ready_param_i(fsm_fwd_ready_then_li)
 
      // credit returned when memory response fully consumed
@@ -377,6 +379,7 @@ module bp_uce
      );
   assign cache_req_credits_full_o  = cache_req_v_r && (credit_count_lo == coh_noc_max_credits_p);
   assign cache_req_credits_empty_o = ~cache_req_v_r && (credit_count_lo == 0);
+  wire cache_req_credit_ready_lo = ~cache_req_credits_full_o | ~fsm_fwd_new_lo;
 
   logic [fill_width_p-1:0] writeback_data;
   wire [fill_cnt_width_lp-1:0] dirty_data_select = fsm_fwd_addr_lo[fill_offset_width_lp+:fill_cnt_width_lp];
@@ -540,7 +543,7 @@ module bp_uce
             fsm_fwd_header_lo.payload.lce_id = lce_id_i;
             fsm_fwd_header_lo.payload.src_did = did_i;
             fsm_fwd_data_lo                  = writeback_data;
-            fsm_fwd_v_lo = fsm_fwd_ready_then_li & ~cache_req_credits_full_o;
+            fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo;
 
             way_up = fsm_fwd_v_lo & fsm_fwd_last_lo;
             index_up = way_done;
@@ -637,7 +640,7 @@ module bp_uce
             fsm_fwd_header_lo.payload.lce_id = lce_id_i;
             fsm_fwd_header_lo.payload.src_did = did_i;
             fsm_fwd_data_lo                   = writeback_data;
-            fsm_fwd_v_lo = fsm_fwd_ready_then_li & ~cache_req_credits_full_o;
+            fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo;
 
             state_n = (fsm_fwd_v_lo & fsm_fwd_last_lo)
                       ? e_send_critical
@@ -653,7 +656,7 @@ module bp_uce
               fsm_fwd_header_lo.payload.way_id = lce_assoc_p'(cache_req_metadata.hit_or_repl_way);
               fsm_fwd_header_lo.payload.lce_id = lce_id_i;
               fsm_fwd_header_lo.payload.src_did = did_i;
-              fsm_fwd_v_lo = fsm_fwd_ready_then_li & ~cache_req_credits_full_o;
+              fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo;
 
               state_n = (fsm_fwd_v_lo & fsm_fwd_last_lo)
                         ? cache_req_metadata.dirty
@@ -671,7 +674,7 @@ module bp_uce
               fsm_fwd_header_lo.payload.src_did = did_i;
               fsm_fwd_header_lo.subop    = mem_wr_subop;
               fsm_fwd_data_lo            = {fill_width_p/dword_width_gp{cache_req_r.data}};
-              fsm_fwd_v_lo = fsm_fwd_ready_then_li & ~cache_req_credits_full_o;
+              fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo;
 
               state_n = (fsm_fwd_v_lo & fsm_fwd_last_lo) ? e_uc_read_wait : state_r;
             end
@@ -685,7 +688,7 @@ module bp_uce
               fsm_fwd_header_lo.payload.src_did = did_i;
               fsm_fwd_header_lo.subop    = mem_wr_subop;
               fsm_fwd_data_lo            = {fill_width_p/dword_width_gp{cache_req_r.data}};
-              fsm_fwd_v_lo = fsm_fwd_ready_then_li & ~cache_req_credits_full_o;
+              fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo;
 
               cache_req_done = fsm_fwd_v_lo & fsm_fwd_last_lo;
 
@@ -748,7 +751,7 @@ module bp_uce
             fsm_fwd_header_lo.payload.lce_id = lce_id_i;
             fsm_fwd_header_lo.payload.src_did = did_i;
             fsm_fwd_data_lo                  = writeback_data;
-            fsm_fwd_v_lo = fsm_fwd_ready_then_li & ~cache_req_credits_full_o;
+            fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo;
 
             cache_req_done = fsm_fwd_v_lo & fsm_fwd_last_lo;
 
@@ -812,7 +815,7 @@ module bp_uce
           fsm_fwd_header_lo.payload.src_did = did_i;
           fsm_fwd_header_lo.subop          = wt_store_v_r ? e_bedrock_store : mem_wr_subop;
           fsm_fwd_data_lo                  = {fill_width_p/dword_width_gp{cache_req_r.data}};
-          fsm_fwd_v_lo = fsm_fwd_ready_then_li & ~cache_req_credits_full_o;
+          fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo;
 
           cache_req_done = fsm_fwd_v_lo & fsm_fwd_last_lo;
         end
