@@ -52,6 +52,8 @@
                                                                                                    \
     , localparam num_threads_p = proc_param_lp.num_threads                                         \
     , localparam thread_id_width_p = `BSG_SAFE_CLOG2(num_threads_p)                                \
+    , localparam num_contexts_p = proc_param_lp.num_contexts                                       \
+    , localparam context_id_width_p = `BSG_SAFE_CLOG2(num_contexts_p)                              \
                                                                                                    \
     , localparam branch_metadata_fwd_width_p = proc_param_lp.branch_metadata_fwd_width             \
     , localparam ras_idx_width_p             = proc_param_lp.ras_idx_width                         \
@@ -323,6 +325,7 @@
           ,`bp_aviary_parameter_override(dma_noc_len_width, override_cfg_mp, default_cfg_mp)       \
                                                                                                    \
           ,`bp_aviary_parameter_override(num_threads, override_cfg_mp, default_cfg_mp)             \
+          ,`bp_aviary_parameter_override(num_contexts, override_cfg_mp, default_cfg_mp)            \
           }
 
 `endif

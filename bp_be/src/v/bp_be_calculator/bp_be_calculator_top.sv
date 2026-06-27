@@ -109,7 +109,7 @@ module bp_be_calculator_top
    // consumes it as an architectural mini-commit.
    , output logic                                    fast_ctxtsw_v_o
    , output logic [thread_id_width_p-1:0]            fast_ctxtsw_old_thread_id_o
-   , output logic [thread_id_width_p-1:0]            fast_ctxtsw_thread_id_o
+   , output logic [context_id_width_p-1:0]           fast_ctxtsw_thread_id_o
    , output logic [vaddr_width_p-1:0]                fast_ctxtsw_resume_npc_o
    );
 

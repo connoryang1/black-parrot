@@ -277,6 +277,9 @@
 
     // Number of hardware thread contexts per core.
     int num_threads;
+    // Number of software-visible contexts. This may exceed the number of
+    // physically resident hardware thread slots.
+    int num_contexts;
 
   }  bp_proc_param_s;
 
@@ -393,6 +396,7 @@
       ,dma_noc_max_credits   : 32
 
       ,num_threads           : 4               // Default multi-context configuration
+      ,num_contexts          : 4               // Defaults to resident slots until context cache is enabled
       };
 
   // BP_CUSTOM_DEFINES_PATH can be set to a file which has the custom defines below set
@@ -505,6 +509,7 @@
       ,`bp_aviary_define_override(dma_noc_len_width, BP_MEM_NOC_LEN_WIDTH, `BP_CUSTOM_BASE_CFG)
 
       ,`bp_aviary_define_override(num_threads, BP_NUM_THREADS, `BP_CUSTOM_BASE_CFG)
+      ,`bp_aviary_define_override(num_contexts, BP_NUM_CONTEXTS, `BP_CUSTOM_BASE_CFG)
       };
 
 `endif
