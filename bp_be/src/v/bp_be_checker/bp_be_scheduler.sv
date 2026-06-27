@@ -287,10 +287,10 @@ module bp_be_scheduler
   wire [thread_id_width_p-1:0] issue_thread_id_li =
     issue_pkt_cast_o.thread_id[0 +: thread_id_width_p];
 
-  wire [thread_id_width_p-1:0] issue_ctxtsw_target_tid =
+  wire [context_id_width_p-1:0] issue_ctxtsw_target_tid =
     issue_ctxtsw_imm_v
-      ? thread_id_width_p'(issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
-      : thread_id_width_p'(irf_rs1[0 +: thread_id_width_p]);
+      ? context_id_width_p'(issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
+      : context_id_width_p'(irf_rs1[0 +: context_id_width_p]);
 
   wire issue_ctxtsw_switch_v = issue_ctxtsw_v & (issue_ctxtsw_target_tid != issue_thread_id_li);
   wire issue_ctxtsw_dispatch_v = fe_queue_read_li

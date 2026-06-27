@@ -121,6 +121,7 @@ module bp_be_top
     ,e_ctxtsw_canceled
   } spec_ctxtsw_state_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_prev_thread_id_r;
+  logic [context_id_width_p-1:0] pending_ctxtsw_context_id_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_resume_npc_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
@@ -131,6 +132,7 @@ module bp_be_top
   logic [thread_id_width_p-1:0] current_thread_id_lo;
   logic fast_ctxtsw_v_lo;
   logic [thread_id_width_p-1:0] fast_ctxtsw_old_thread_id_lo;
+  logic [context_id_width_p-1:0] fast_ctxtsw_context_id_lo;
   logic [thread_id_width_p-1:0] fast_ctxtsw_thread_id_lo;
   logic [vaddr_width_p-1:0] fast_ctxtsw_resume_npc_lo;
   logic [vaddr_width_p-1:0] fast_ctxtsw_target_npc_lo;
@@ -205,6 +207,7 @@ module bp_be_top
       ctxtsw_launch_pending_r <= 1'b0;
       spec_ctxtsw_state_r <= e_ctxtsw_idle;
       pending_ctxtsw_prev_thread_id_r <= '0;
+      pending_ctxtsw_context_id_r <= '0;
       pending_ctxtsw_thread_id_r <= '0;
       pending_ctxtsw_resume_npc_r <= '0;
       pending_ctxtsw_npc_r <= '0;
@@ -225,6 +228,7 @@ module bp_be_top
         ctxtsw_launch_pending_r <= 1'b1;
         spec_ctxtsw_state_r <= e_ctxtsw_prepared;
         pending_ctxtsw_prev_thread_id_r <= fast_ctxtsw_old_thread_id_lo;
+        pending_ctxtsw_context_id_r <= fast_ctxtsw_context_id_lo;
         pending_ctxtsw_thread_id_r <= fast_ctxtsw_thread_id_lo;
         pending_ctxtsw_resume_npc_r <= fast_ctxtsw_resume_npc_lo;
         pending_ctxtsw_npc_r <= fast_ctxtsw_target_npc_lo;
@@ -283,7 +287,8 @@ module bp_be_top
                        && (context_write_thread_id_li == context_read_thread_id_li)
                        && (context_write_thread_id_li < num_threads_p)
                        && (context_read_thread_id_li < num_threads_p);
-  wire [thread_id_width_p-1:0] ctxtsw_target_thread_id_li = dispatch_pkt.ctxtsw_target_tid;
+  wire [context_id_width_p-1:0] ctxtsw_target_context_id_li = dispatch_pkt.ctxtsw_target_tid;
+  wire [thread_id_width_p-1:0] ctxtsw_target_thread_id_li = ctxtsw_target_context_id_li[0 +: thread_id_width_p];
   wire [thread_id_width_p-1:0] fast_ctxtsw_target_thread_id_li = fast_ctxtsw_thread_id_lo;
   wire ctxtsw_target_fwd_v =
     ctx_npc_write_v_lo
@@ -544,8 +549,10 @@ module bp_be_top
      ,.ctx_rpush_data_o(ctx_rpush_data_lo)
      ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
      ,.fast_ctxtsw_old_thread_id_o(fast_ctxtsw_old_thread_id_lo)
-     ,.fast_ctxtsw_thread_id_o(fast_ctxtsw_thread_id_lo)
+     ,.fast_ctxtsw_thread_id_o(fast_ctxtsw_context_id_lo)
      ,.fast_ctxtsw_resume_npc_o(fast_ctxtsw_resume_npc_lo)
      );
+
+  assign fast_ctxtsw_thread_id_lo = fast_ctxtsw_context_id_lo[0 +: thread_id_width_p];
 
 endmodule
