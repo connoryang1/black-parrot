@@ -120,6 +120,18 @@ module bp_be_top
     ,e_ctxtsw_finalized
     ,e_ctxtsw_canceled
   } spec_ctxtsw_state_r;
+  enum logic [3:0] {
+    e_context_cache_idle
+    ,e_context_cache_wait_ctxtsw_commit
+    ,e_context_cache_wait_drain
+    ,e_context_cache_save_regs
+    ,e_context_cache_save_npc
+    ,e_context_cache_restore_regs
+    ,e_context_cache_restore_npc
+    ,e_context_cache_install_slot
+    ,e_context_cache_launch_fe
+    ,e_context_cache_done
+  } context_cache_state_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_prev_thread_id_r;
   logic [context_id_width_p-1:0] pending_ctxtsw_context_id_r;
   logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
@@ -142,6 +154,13 @@ module bp_be_top
   logic [1:0] fast_ctxtsw_target_priv_mode_lo;
   logic fast_ctxtsw_target_translation_en_lo;
   logic [asid_width_p-1:0] fast_ctxtsw_target_asid_lo;
+  logic context_cache_miss_pending_r;
+  logic [context_id_width_p-1:0] context_cache_target_context_id_r;
+  logic [context_id_width_p-1:0] context_cache_victim_context_id_r;
+  logic [thread_id_width_p-1:0] context_cache_victim_thread_id_r;
+  logic [reg_addr_width_gp-1:0] context_cache_reg_idx_r;
+  logic [15:0] context_cache_state_cycles_r;
+  logic [dword_width_gp-1:0] context_cache_miss_count_r;
   logic [num_threads_p-1:0][vaddr_width_p-1:0] context_npc_r;
   logic [num_threads_p-1:0][1:0] context_priv_mode_r;
   logic [num_threads_p-1:0] context_translation_en_r;
@@ -160,6 +179,8 @@ module bp_be_top
   logic ctxtsw_target_resident_v_li;
   logic [thread_id_width_p-1:0] ctxtsw_target_thread_id_li;
   logic fast_ctxtsw_resident_v_li;
+  logic context_cache_miss_v_li;
+  logic [context_id_width_p-1:0] context_cache_miss_context_id_li;
   wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
                                   & fast_ctxtsw_resident_v_li
                                   & ~cfg_bus_cast_i.freeze
@@ -339,6 +360,98 @@ module bp_be_top
     if (fast_ctxtsw_context_id_lo < num_contexts_p) begin
       fast_ctxtsw_resident_v_li = logical_context_resident_v_r[fast_ctxtsw_context_id_lo];
       fast_ctxtsw_thread_id_lo = logical_context_slot_r[fast_ctxtsw_context_id_lo];
+    end
+  end
+
+  always_comb begin
+    context_cache_miss_v_li = 1'b0;
+    context_cache_miss_context_id_li = '0;
+
+    if (fast_ctxtsw_v_lo && !fast_ctxtsw_resident_v_li) begin
+      context_cache_miss_v_li = 1'b1;
+      context_cache_miss_context_id_li = fast_ctxtsw_context_id_lo;
+    end else if (dispatch_pkt.ctxtsw_v && !ctxtsw_target_resident_v_li) begin
+      context_cache_miss_v_li = 1'b1;
+      context_cache_miss_context_id_li = ctxtsw_target_context_id_li;
+    end
+  end
+
+  // Passive context-cache FSM skeleton. The first active implementation will
+  // replace the unsupported nonresident fatal with this FSM's save/restore path.
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      context_cache_state_r <= e_context_cache_idle;
+      context_cache_miss_pending_r <= 1'b0;
+      context_cache_target_context_id_r <= '0;
+      context_cache_victim_context_id_r <= '0;
+      context_cache_victim_thread_id_r <= '0;
+      context_cache_reg_idx_r <= '0;
+      context_cache_state_cycles_r <= '0;
+      context_cache_miss_count_r <= '0;
+    end else begin
+      context_cache_state_cycles_r <= (context_cache_state_r == e_context_cache_idle)
+                                      ? '0
+                                      : context_cache_state_cycles_r + 16'd1;
+
+      unique case (context_cache_state_r)
+        e_context_cache_idle: begin
+          context_cache_reg_idx_r <= '0;
+          if (context_cache_miss_v_li) begin
+            context_cache_state_r <= e_context_cache_wait_ctxtsw_commit;
+            context_cache_miss_pending_r <= 1'b1;
+            context_cache_target_context_id_r <= context_cache_miss_context_id_li;
+            context_cache_victim_context_id_r <= current_context_id_r;
+            context_cache_victim_thread_id_r <= current_thread_id_lo;
+            context_cache_miss_count_r <= context_cache_miss_count_r + dword_width_gp'(1);
+          end
+        end
+
+        e_context_cache_wait_ctxtsw_commit:
+          context_cache_state_r <= commit_pkt.ctxtsw
+                                   ? e_context_cache_wait_drain
+                                   : context_cache_state_r;
+
+        e_context_cache_wait_drain: begin
+          context_cache_reg_idx_r <= '0;
+          context_cache_state_r <= e_context_cache_save_regs;
+        end
+
+        e_context_cache_save_regs: begin
+          context_cache_reg_idx_r <= context_cache_reg_idx_r + reg_addr_width_gp'(1);
+          context_cache_state_r <= (context_cache_reg_idx_r == reg_addr_width_gp'(31))
+                                   ? e_context_cache_save_npc
+                                   : context_cache_state_r;
+        end
+
+        e_context_cache_save_npc: begin
+          context_cache_reg_idx_r <= '0;
+          context_cache_state_r <= e_context_cache_restore_regs;
+        end
+
+        e_context_cache_restore_regs: begin
+          context_cache_reg_idx_r <= context_cache_reg_idx_r + reg_addr_width_gp'(1);
+          context_cache_state_r <= (context_cache_reg_idx_r == reg_addr_width_gp'(31))
+                                   ? e_context_cache_restore_npc
+                                   : context_cache_state_r;
+        end
+
+        e_context_cache_restore_npc:
+          context_cache_state_r <= e_context_cache_install_slot;
+
+        e_context_cache_install_slot:
+          context_cache_state_r <= e_context_cache_launch_fe;
+
+        e_context_cache_launch_fe:
+          context_cache_state_r <= e_context_cache_done;
+
+        e_context_cache_done: begin
+          context_cache_state_r <= e_context_cache_idle;
+          context_cache_miss_pending_r <= 1'b0;
+        end
+
+        default:
+          context_cache_state_r <= e_context_cache_idle;
+      endcase
     end
   end
 
