@@ -159,6 +159,7 @@ module bp_be_top
   logic [context_id_width_p-1:0] context_cache_target_context_id_r;
   logic [context_id_width_p-1:0] context_cache_victim_context_id_r;
   logic [thread_id_width_p-1:0] context_cache_victim_thread_id_r;
+  logic [vaddr_width_p-1:0] context_cache_resume_npc_r;
   logic [reg_addr_width_gp-1:0] context_cache_reg_idx_r;
   logic [15:0] context_cache_state_cycles_r;
   logic [dword_width_gp-1:0] context_cache_miss_count_r;
@@ -186,6 +187,10 @@ module bp_be_top
   logic fast_ctxtsw_resident_v_li;
   logic context_cache_miss_v_li;
   logic [context_id_width_p-1:0] context_cache_miss_context_id_li;
+  logic [vaddr_width_p-1:0] context_cache_miss_resume_npc_li;
+  logic context_cache_commit_v_li;
+  logic context_cache_launch_v_li;
+  logic context_cache_active_li;
   logic context_cache_scheduler_drain_ready_lo;
   logic context_cache_calculator_drain_ready_lo;
   logic context_cache_drain_safe_li;
@@ -215,8 +220,10 @@ module bp_be_top
   wire fast_ctxtsw_launch_v_li = ctxtsw_token_create_v_li
                                   & fe_ctxtsw_ready_i
                                   & ~pending_ctxtsw_v_r;
-  assign context_cache_drain_safe_li = context_cache_scheduler_drain_ready_lo
-                                       & context_cache_calculator_drain_ready_lo
+  assign context_cache_commit_v_li = commit_pkt.ctxtsw & context_cache_miss_pending_r;
+  assign context_cache_launch_v_li = context_cache_state_r == e_context_cache_launch_fe;
+  assign context_cache_active_li = context_cache_state_r != e_context_cache_idle;
+  assign context_cache_drain_safe_li = context_cache_calculator_drain_ready_lo
                                        & ~dispatch_pkt.v
                                        & ~late_wb_v_lo
                                        & ~(iwb_pkt.ird_w_v | fwb_pkt.frd_w_v)
@@ -255,14 +262,24 @@ module bp_be_top
   assign scheduler_rpush_v_li = ctx_rpush_v_lo & ctx_rpush_resident_v_li;
   assign scheduler_rpush_fp_v_li = ctx_rpush_fp_v_lo & ctx_rpush_resident_v_li;
 
-  assign fe_ctxtsw_v_o = fast_ctxtsw_launch_v_li | ctxtsw_launch_lo;
-  assign fe_ctxtsw_npc_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_npc_lo : pending_ctxtsw_npc_r;
-  assign fe_ctxtsw_thread_id_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_thread_id_lo : pending_ctxtsw_thread_id_r;
-  assign fe_ctxtsw_priv_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_priv_mode_lo : pending_ctxtsw_priv_mode_r;
-  assign fe_ctxtsw_translation_en_o = fast_ctxtsw_launch_v_li
+  assign fe_ctxtsw_v_o = context_cache_launch_v_li | fast_ctxtsw_launch_v_li | ctxtsw_launch_lo;
+  assign fe_ctxtsw_npc_o = context_cache_launch_v_li
+                            ? logical_context_npc_r[context_cache_target_context_id_r]
+                            : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_npc_lo : pending_ctxtsw_npc_r;
+  assign fe_ctxtsw_thread_id_o = context_cache_launch_v_li
+                                  ? context_cache_victim_thread_id_r
+                                  : fast_ctxtsw_launch_v_li ? fast_ctxtsw_thread_id_lo : pending_ctxtsw_thread_id_r;
+  assign fe_ctxtsw_priv_o = context_cache_launch_v_li
+                             ? logical_context_priv_mode_r[context_cache_target_context_id_r]
+                             : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_priv_mode_lo : pending_ctxtsw_priv_mode_r;
+  assign fe_ctxtsw_translation_en_o = context_cache_launch_v_li
+                                      ? logical_context_translation_en_r[context_cache_target_context_id_r]
+                                      : fast_ctxtsw_launch_v_li
                                       ? fast_ctxtsw_target_translation_en_lo
                                       : pending_ctxtsw_translation_en_r;
-  assign fe_ctxtsw_asid_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_asid_lo : pending_ctxtsw_asid_r;
+  assign fe_ctxtsw_asid_o = context_cache_launch_v_li
+                             ? logical_context_asid_r[context_cache_target_context_id_r]
+                             : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_asid_lo : pending_ctxtsw_asid_r;
 
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
@@ -270,6 +287,10 @@ module bp_be_top
         logical_context_resident_v_r[i] <= (i < num_threads_p);
         logical_context_slot_r[i] <= thread_id_width_p'(i);
       end
+    end else if (context_cache_state_r == e_context_cache_install_slot) begin
+      logical_context_resident_v_r[context_cache_victim_context_id_r] <= 1'b0;
+      logical_context_resident_v_r[context_cache_target_context_id_r] <= 1'b1;
+      logical_context_slot_r[context_cache_target_context_id_r] <= context_cache_victim_thread_id_r;
     end
   end
 
@@ -291,9 +312,13 @@ module bp_be_top
       current_thread_id_lo <= '0;
       current_context_id_r <= '0;
     end
+    else if (context_cache_state_r == e_context_cache_install_slot) begin
+      current_thread_id_lo <= context_cache_victim_thread_id_r;
+      current_context_id_r <= context_cache_target_context_id_r;
+    end
     else if (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw & pending_ctxtsw_v_r)
       current_thread_id_lo <= pending_ctxtsw_prev_thread_id_r;
-    else if (commit_pkt.ctxtsw) begin
+    else if (commit_pkt.ctxtsw & pending_ctxtsw_v_r) begin
       current_thread_id_lo <= pending_ctxtsw_thread_id_r;
       current_context_id_r <= pending_ctxtsw_context_id_r;
     end
@@ -342,7 +367,7 @@ module bp_be_top
       if (ctxtsw_launch_lo)
         spec_ctxtsw_state_r <= e_ctxtsw_launched;
 
-      if (fe_ctxtsw_yumi_i) begin
+      if (fe_ctxtsw_yumi_i && !context_cache_launch_v_li) begin
         pending_ctxtsw_sent_r <= 1'b1;
         ctxtsw_launch_pending_r <= 1'b0;
         spec_ctxtsw_state_r <= e_ctxtsw_launched;
@@ -367,18 +392,31 @@ module bp_be_top
       end
     end else begin
       if (commit_pkt.ctxtsw) begin
-        if (pending_ctxtsw_prev_thread_id_r < num_threads_p) begin
-          context_npc_r[pending_ctxtsw_prev_thread_id_r] <= pending_ctxtsw_resume_npc_r;
-          context_priv_mode_r[pending_ctxtsw_prev_thread_id_r] <= commit_pkt.priv_n;
-          context_translation_en_r[pending_ctxtsw_prev_thread_id_r] <= commit_pkt.translation_en_n;
-          context_asid_r[pending_ctxtsw_prev_thread_id_r] <= trans_info_lo.asid;
+        logic [thread_id_width_p-1:0] save_thread_id_li;
+        logic [context_id_width_p-1:0] save_context_id_li;
+        logic [vaddr_width_p-1:0] save_resume_npc_li;
+        save_thread_id_li = context_cache_commit_v_li
+                            ? context_cache_victim_thread_id_r
+                            : pending_ctxtsw_prev_thread_id_r;
+        save_context_id_li = context_cache_commit_v_li
+                             ? context_cache_victim_context_id_r
+                             : current_context_id_r;
+        save_resume_npc_li = context_cache_commit_v_li
+                             ? context_cache_resume_npc_r
+                             : pending_ctxtsw_resume_npc_r;
+
+        if (save_thread_id_li < num_threads_p) begin
+          context_npc_r[save_thread_id_li] <= save_resume_npc_li;
+          context_priv_mode_r[save_thread_id_li] <= commit_pkt.priv_n;
+          context_translation_en_r[save_thread_id_li] <= commit_pkt.translation_en_n;
+          context_asid_r[save_thread_id_li] <= trans_info_lo.asid;
         end
 
-        if (current_context_id_r < num_contexts_p) begin
-          logical_context_npc_r[current_context_id_r] <= pending_ctxtsw_resume_npc_r;
-          logical_context_priv_mode_r[current_context_id_r] <= commit_pkt.priv_n;
-          logical_context_translation_en_r[current_context_id_r] <= commit_pkt.translation_en_n;
-          logical_context_asid_r[current_context_id_r] <= trans_info_lo.asid;
+        if (save_context_id_li < num_contexts_p) begin
+          logical_context_npc_r[save_context_id_li] <= save_resume_npc_li;
+          logical_context_priv_mode_r[save_context_id_li] <= commit_pkt.priv_n;
+          logical_context_translation_en_r[save_context_id_li] <= commit_pkt.translation_en_n;
+          logical_context_asid_r[save_context_id_li] <= trans_info_lo.asid;
         end
       end
 
@@ -395,11 +433,24 @@ module bp_be_top
           context_asid_r[ctx_npc_write_thread_id_li] <= trans_info_lo.asid;
         end
       end
+
+      if (context_cache_state_r == e_context_cache_install_slot) begin
+        context_npc_r[context_cache_victim_thread_id_r]
+          <= logical_context_npc_r[context_cache_target_context_id_r];
+        context_priv_mode_r[context_cache_victim_thread_id_r]
+          <= logical_context_priv_mode_r[context_cache_target_context_id_r];
+        context_translation_en_r[context_cache_victim_thread_id_r]
+          <= logical_context_translation_en_r[context_cache_target_context_id_r];
+        context_asid_r[context_cache_victim_thread_id_r]
+          <= logical_context_asid_r[context_cache_target_context_id_r];
+      end
     end
   end
 
   wire [thread_id_width_p-1:0] context_read_thread_id_li =
-    commit_pkt.ctxtsw ? pending_ctxtsw_thread_id_r : current_thread_id_lo;
+    commit_pkt.ctxtsw
+    ? (context_cache_commit_v_li ? current_thread_id_lo : pending_ctxtsw_thread_id_r)
+    : current_thread_id_lo;
   wire [thread_id_width_p-1:0] context_write_thread_id_li =
     ctx_npc_write_resident_v_li ? ctx_npc_write_thread_id_li
     : commit_pkt.ctxtsw ? pending_ctxtsw_prev_thread_id_r
@@ -444,13 +495,16 @@ module bp_be_top
   always_comb begin
     context_cache_miss_v_li = 1'b0;
     context_cache_miss_context_id_li = '0;
+    context_cache_miss_resume_npc_li = '0;
 
     if (fast_ctxtsw_v_lo && !fast_ctxtsw_resident_v_li) begin
       context_cache_miss_v_li = 1'b1;
       context_cache_miss_context_id_li = fast_ctxtsw_context_id_lo;
+      context_cache_miss_resume_npc_li = fast_ctxtsw_resume_npc_lo;
     end else if (dispatch_pkt.ctxtsw_v && !ctxtsw_target_resident_v_li) begin
       context_cache_miss_v_li = 1'b1;
       context_cache_miss_context_id_li = ctxtsw_target_context_id_li;
+      context_cache_miss_resume_npc_li = dispatch_pkt.pc + (dispatch_pkt.size << 1'b1);
     end
   end
 
@@ -463,6 +517,7 @@ module bp_be_top
       context_cache_target_context_id_r <= '0;
       context_cache_victim_context_id_r <= '0;
       context_cache_victim_thread_id_r <= '0;
+      context_cache_resume_npc_r <= '0;
       context_cache_reg_idx_r <= '0;
       context_cache_state_cycles_r <= '0;
       context_cache_miss_count_r <= '0;
@@ -492,6 +547,7 @@ module bp_be_top
             context_cache_target_context_id_r <= context_cache_miss_context_id_li;
             context_cache_victim_context_id_r <= current_context_id_r;
             context_cache_victim_thread_id_r <= current_thread_id_lo;
+            context_cache_resume_npc_r <= context_cache_miss_resume_npc_li;
             context_cache_miss_count_r <= context_cache_miss_count_r + dword_width_gp'(1);
           end
         end
@@ -534,7 +590,9 @@ module bp_be_top
           context_cache_state_r <= e_context_cache_launch_fe;
 
         e_context_cache_launch_fe:
-          context_cache_state_r <= e_context_cache_done;
+          context_cache_state_r <= fe_ctxtsw_yumi_i
+                                   ? e_context_cache_done
+                                   : context_cache_state_r;
 
         e_context_cache_done: begin
           context_cache_state_r <= e_context_cache_idle;
@@ -547,16 +605,23 @@ module bp_be_top
     end
   end
 
-  // Until the save/restore FSM exists, nonresident switches are unsupported.
-  // Failing in simulation is safer than silently truncating logical IDs.
 `ifndef SYNTHESIS
-  always_ff @(posedge clk_i)
-    if (!reset_i && fast_ctxtsw_v_lo && !fast_ctxtsw_resident_v_li)
-      $fatal(1, "Nonresident context switch target %0d is not implemented yet", fast_ctxtsw_context_id_lo);
+  always_ff @(posedge clk_i) begin
+    if (!reset_i
+        && context_cache_miss_v_li
+        && context_cache_active_li
+        && (context_cache_miss_context_id_li != context_cache_target_context_id_r))
+      $fatal(1, "Nested nonresident context switch target %0d is not supported", context_cache_miss_context_id_li);
+  end
 `endif
 
   always_comb begin
-    if (context_fwd_v) begin
+    if (context_cache_commit_v_li) begin
+      context_npc_lo = logical_context_npc_r[context_cache_target_context_id_r];
+      context_priv_mode_lo = logical_context_priv_mode_r[context_cache_target_context_id_r];
+      context_translation_en_lo = logical_context_translation_en_r[context_cache_target_context_id_r];
+      context_asid_lo = logical_context_asid_r[context_cache_target_context_id_r];
+    end else if (context_fwd_v) begin
       context_npc_lo = ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc;
       context_priv_mode_lo = commit_pkt.priv_n;
       context_translation_en_lo = commit_pkt.translation_en_n;
@@ -630,7 +695,7 @@ module bp_be_top
      ,.dispatch_ctxtsw_target_priv_i(ctxtsw_target_priv_mode_lo)
      ,.dispatch_ctxtsw_target_translation_en_i(ctxtsw_target_translation_en_lo)
      ,.pending_ctxtsw_v_i(pending_ctxtsw_v_r)
-     ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r)
+     ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r | context_cache_miss_pending_r)
      ,.ctxtsw_launch_pending_i(ctxtsw_launch_pending_r)
      ,.ctxtsw_target_npc_i(pending_ctxtsw_npc_r)
      ,.ctxtsw_target_thread_id_i(pending_ctxtsw_thread_id_r)
@@ -697,14 +762,14 @@ module bp_be_top
      ,.decode_info_i(decode_info_lo)
      ,.trans_info_i(trans_info_lo)
      ,.issue_pkt_o(issue_pkt)
-     ,.suppress_iss_i(suppress_iss_lo)
+     ,.suppress_iss_i(suppress_iss_lo | context_cache_active_li)
      ,.clear_iss_i(clear_iss_lo)
      ,.expected_npc_i(expected_npc_lo)
      ,.hazard_v_i(hazard_v)
      ,.ispec_v_i(ispec_v)
      ,.irq_pending_i(irq_pending_lo)
      ,.ordered_v_i(ordered_v)
-     ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r)
+     ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r | context_cache_active_li)
 
      ,.fe_queue_i(fe_queue_i)
      ,.fe_queue_v_i(fe_queue_v_i)
