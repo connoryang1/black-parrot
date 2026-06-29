@@ -129,6 +129,8 @@ module bp_be_top
   logic pending_ctxtsw_translation_en_r;
   logic [asid_width_p-1:0] pending_ctxtsw_asid_r;
   logic ctxtsw_launch_lo;
+  logic [num_contexts_p-1:0] logical_context_resident_v_r;
+  logic [num_contexts_p-1:0][thread_id_width_p-1:0] logical_context_slot_r;
   logic [thread_id_width_p-1:0] current_thread_id_lo;
   logic fast_ctxtsw_v_lo;
   logic [thread_id_width_p-1:0] fast_ctxtsw_old_thread_id_lo;
@@ -154,7 +156,13 @@ module bp_be_top
 
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
-  wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo & ~cfg_bus_cast_i.freeze & ~commit_pkt.resume;
+  logic ctxtsw_target_resident_v_li;
+  logic [thread_id_width_p-1:0] ctxtsw_target_thread_id_li;
+  logic fast_ctxtsw_resident_v_li;
+  wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
+                                  & fast_ctxtsw_resident_v_li
+                                  & ~cfg_bus_cast_i.freeze
+                                  & ~commit_pkt.resume;
   wire ctxtsw_token_finalize_v_li = commit_pkt.ctxtsw;
   wire ctxtsw_token_cancel_v_li = cfg_bus_cast_i.freeze | commit_pkt.resume | (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw);
   wire ctxtsw_token_clear_v_li = ctxtsw_token_cancel_v_li | ctxtsw_token_finalize_v_li;
@@ -174,6 +182,15 @@ module bp_be_top
                                       ? fast_ctxtsw_target_translation_en_lo
                                       : pending_ctxtsw_translation_en_r;
   assign fe_ctxtsw_asid_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_asid_lo : pending_ctxtsw_asid_r;
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      for (int i = 0; i < num_contexts_p; i++) begin
+        logical_context_resident_v_r[i] <= (i < num_threads_p);
+        logical_context_slot_r[i] <= thread_id_width_p'(i);
+      end
+    end
+  end
 
   // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
   logic ctx_npc_write_v_lo;
@@ -288,18 +305,45 @@ module bp_be_top
                        && (context_write_thread_id_li < num_threads_p)
                        && (context_read_thread_id_li < num_threads_p);
   wire [context_id_width_p-1:0] ctxtsw_target_context_id_li = dispatch_pkt.ctxtsw_target_tid;
-  wire [thread_id_width_p-1:0] ctxtsw_target_thread_id_li = ctxtsw_target_context_id_li[0 +: thread_id_width_p];
   wire [thread_id_width_p-1:0] fast_ctxtsw_target_thread_id_li = fast_ctxtsw_thread_id_lo;
   wire ctxtsw_target_fwd_v =
     ctx_npc_write_v_lo
     && (ctx_npc_write_tid_lo == ctxtsw_target_thread_id_li)
     && (ctx_npc_write_tid_lo < num_threads_p)
+    && ctxtsw_target_resident_v_li
     && (ctxtsw_target_thread_id_li < num_threads_p);
   wire fast_ctxtsw_target_fwd_v =
     ctx_npc_write_v_lo
     && (ctx_npc_write_tid_lo == fast_ctxtsw_target_thread_id_li)
     && (ctx_npc_write_tid_lo < num_threads_p)
+    && fast_ctxtsw_resident_v_li
     && (fast_ctxtsw_target_thread_id_li < num_threads_p);
+
+  always_comb begin
+    ctxtsw_target_resident_v_li = 1'b0;
+    ctxtsw_target_thread_id_li = '0;
+    if (ctxtsw_target_context_id_li < num_contexts_p) begin
+      ctxtsw_target_resident_v_li = logical_context_resident_v_r[ctxtsw_target_context_id_li];
+      ctxtsw_target_thread_id_li = logical_context_slot_r[ctxtsw_target_context_id_li];
+    end
+  end
+
+  always_comb begin
+    fast_ctxtsw_resident_v_li = 1'b0;
+    fast_ctxtsw_thread_id_lo = '0;
+    if (fast_ctxtsw_context_id_lo < num_contexts_p) begin
+      fast_ctxtsw_resident_v_li = logical_context_resident_v_r[fast_ctxtsw_context_id_lo];
+      fast_ctxtsw_thread_id_lo = logical_context_slot_r[fast_ctxtsw_context_id_lo];
+    end
+  end
+
+  // Until the save/restore FSM exists, nonresident switches are unsupported.
+  // Failing in simulation is safer than silently truncating logical IDs.
+`ifndef SYNTHESIS
+  always_ff @(posedge clk_i)
+    if (!reset_i && fast_ctxtsw_v_lo && !fast_ctxtsw_resident_v_li)
+      $fatal(1, "Nonresident context switch target %0d is not implemented yet", fast_ctxtsw_context_id_lo);
+`endif
 
   always_comb begin
     if (context_fwd_v) begin
@@ -326,7 +370,7 @@ module bp_be_top
       ctxtsw_target_priv_mode_lo = commit_pkt.priv_n;
       ctxtsw_target_translation_en_lo = commit_pkt.translation_en_n;
       ctxtsw_target_asid_lo = trans_info_lo.asid;
-    end else if (ctxtsw_target_thread_id_li < num_threads_p) begin
+    end else if (ctxtsw_target_resident_v_li && (ctxtsw_target_thread_id_li < num_threads_p)) begin
       ctxtsw_target_npc_lo = context_npc_r[ctxtsw_target_thread_id_li];
       ctxtsw_target_priv_mode_lo = context_priv_mode_r[ctxtsw_target_thread_id_li];
       ctxtsw_target_translation_en_lo = context_translation_en_r[ctxtsw_target_thread_id_li];
@@ -345,7 +389,7 @@ module bp_be_top
       fast_ctxtsw_target_priv_mode_lo = commit_pkt.priv_n;
       fast_ctxtsw_target_translation_en_lo = commit_pkt.translation_en_n;
       fast_ctxtsw_target_asid_lo = trans_info_lo.asid;
-    end else if (fast_ctxtsw_target_thread_id_li < num_threads_p) begin
+    end else if (fast_ctxtsw_resident_v_li && (fast_ctxtsw_target_thread_id_li < num_threads_p)) begin
       fast_ctxtsw_target_npc_lo = context_npc_r[fast_ctxtsw_target_thread_id_li];
       fast_ctxtsw_target_priv_mode_lo = context_priv_mode_r[fast_ctxtsw_target_thread_id_li];
       fast_ctxtsw_target_translation_en_lo = context_translation_en_r[fast_ctxtsw_target_thread_id_li];
@@ -552,7 +596,5 @@ module bp_be_top
      ,.fast_ctxtsw_thread_id_o(fast_ctxtsw_context_id_lo)
      ,.fast_ctxtsw_resume_npc_o(fast_ctxtsw_resume_npc_lo)
      );
-
-  assign fast_ctxtsw_thread_id_lo = fast_ctxtsw_context_id_lo[0 +: thread_id_width_p];
 
 endmodule
