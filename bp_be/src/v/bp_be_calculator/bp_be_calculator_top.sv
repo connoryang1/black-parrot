@@ -113,6 +113,8 @@ module bp_be_calculator_top
    , output logic [thread_id_width_p-1:0]            fast_ctxtsw_old_thread_id_o
    , output logic [context_id_width_p-1:0]           fast_ctxtsw_thread_id_o
    , output logic [vaddr_width_p-1:0]                fast_ctxtsw_resume_npc_o
+
+   , output logic                                    context_cache_drain_ready_o
    );
 
   // Declare parameterizable structs
@@ -162,6 +164,7 @@ module bp_be_calculator_top
 
   bp_be_wb_pkt_s pipe_mem_late_wb_pkt;
   logic pipe_mem_late_wb_v, pipe_mem_late_wb_yumi;
+  logic calculator_pipe_active_lo;
   wire pipe_flush_v = commit_pkt_cast_o.npc_w_v | commit_pkt_cast_o.ctxtsw;
 
   // Generating match vector for bypass
@@ -535,6 +538,24 @@ module bp_be_calculator_top
   assign late_wb_pkt_cast_o = late_wb_pkt_sel;
   assign late_wb_v_o = |late_wb_grants_lo;
   assign late_wb_force_o = pipe_mem_late_wb_v;
+
+  always_comb begin
+    calculator_pipe_active_lo = reservation_r.v | dispatch_pkt_cast_i.v;
+    for (int i = 0; i < pipe_stage_els_lp; i++) begin
+      calculator_pipe_active_lo |= exc_stage_r[i].v;
+      calculator_pipe_active_lo |= comp_stage_r[i].ird_w_v | comp_stage_r[i].frd_w_v;
+    end
+  end
+
+  assign context_cache_drain_ready_o = ~calculator_pipe_active_lo
+                                        & ~mem_busy_o
+                                        & mem_ordered_o
+                                        & ~idiv_busy_o
+                                        & ~fdiv_busy_o
+                                        & ~pipe_mem_late_wb_v
+                                        & ~pipe_long_idata_v_lo
+                                        & ~pipe_long_fdata_v_lo
+                                        & ~late_wb_v_o;
 
   // If a pipeline has completed an instruction (pipe_xxx_v), then mux in the calculated result.
   // Else, mux in the previous stage of the completion pipe. Since we are single issue and have

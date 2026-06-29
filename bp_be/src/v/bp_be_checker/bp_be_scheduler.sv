@@ -66,6 +66,8 @@ module bp_be_scheduler
    , input [thread_id_width_p-1:0]            rpush_tid_i
    , input [reg_addr_width_gp-1:0]            rpush_reg_i
    , input [dpath_width_gp-1:0]               rpush_data_i
+
+   , output logic                             context_cache_drain_ready_o
    );
 
   // Declare parameterizable structures
@@ -87,6 +89,7 @@ module bp_be_scheduler
   logic [dword_width_gp-1:0] ptw_addr_lo, ptw_pte_lo;
   logic [thread_id_width_p-1:0] ptw_thread_id_r;
   logic issue_queue_ready_and_lo;
+  logic issue_queue_empty_lo;
   wire ptw_v_li = late_wb_yumi_o & late_wb_pkt_cast_i.ptw_w_v;
   wire [dword_width_gp-1:0] ptw_data_li = late_wb_pkt_cast_i.rd_data;
   wire ptw_start_li = ~ptw_busy_lo
@@ -204,6 +207,7 @@ module bp_be_scheduler
      ,.decode_info_i(decode_info_i)
      ,.preissue_pkt_o(preissue_pkt)
      ,.issue_pkt_o(issue_pkt_cast_o)
+     ,.empty_o(issue_queue_empty_lo)
      );
   rv64_instr_fmatype_s preissue_instr;
   assign preissue_instr = preissue_pkt.instr;
@@ -304,6 +308,13 @@ module bp_be_scheduler
                               | (fe_queue_clr_li & ~ctxtsw_commit_accept_li);
 
   assign fe_queue_ready_and_o = (issue_queue_ready_and_lo | ctxtsw_commit_accept_li) & ~ctxtsw_queue_hold_li;
+  assign context_cache_drain_ready_o = issue_queue_empty_lo
+                                        & ~issue_pkt_cast_o.v
+                                        & ~dispatch_pkt_cast_o.v
+                                        & ~ptw_busy_lo
+                                        & ~writeback_v
+                                        & ~ctxtsw_issue_hold_r
+                                        & ~ctxtsw_cancel_drain_li;
 
   always_ff @(posedge clk_i)
     if (reset_i)
