@@ -268,10 +268,10 @@
     (7+vaddr_width_mp+thread_id_width_p+instr_width_gp+fetch_ptr_mp+issue_ptr_mp+$bits(bp_be_decode_s)+dpath_width_gp+branch_metadata_fwd_width_mp+13)
 
   `define bp_be_dispatch_pkt_width(vaddr_width_mp, fetch_ptr_mp, issue_ptr_mp) \
-    (6+2*vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+3*dpath_width_gp+$bits(bp_be_decode_s)+$bits(bp_be_exception_s)+$bits(bp_be_special_s)+thread_id_width_p+(context_id_width_p-thread_id_width_p))
+    (6+2*vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+3*dpath_width_gp+$bits(bp_be_decode_s)+$bits(bp_be_exception_s)+$bits(bp_be_special_s)+thread_id_width_p+context_id_width_p)
 
   `define bp_be_reservation_width(vaddr_width_mp, fetch_ptr_mp, issue_ptr_mp) \
-    (2+2*vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+$bits(bp_be_decode_s)+3*int_rec_width_gp+3*dp_rec_width_gp+thread_id_width_p+(context_id_width_p-thread_id_width_p))
+    (2+2*vaddr_width_mp+rv64_instr_width_gp+fetch_ptr_mp+issue_ptr_mp+$bits(bp_be_decode_s)+3*int_rec_width_gp+3*dp_rec_width_gp+thread_id_width_p+context_id_width_p)
 
   `define bp_be_branch_pkt_width(vaddr_width_mp) \
     (4+vaddr_width_mp)
