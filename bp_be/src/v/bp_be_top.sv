@@ -184,6 +184,15 @@ module bp_be_top
   logic context_cache_scheduler_drain_ready_lo;
   logic context_cache_calculator_drain_ready_lo;
   logic context_cache_drain_safe_li;
+  logic context_cache_scan_r_v_li;
+  logic context_cache_scan_w_v_li;
+  logic [thread_id_width_p-1:0] context_cache_scan_thread_id_li;
+  logic [reg_addr_width_gp-1:0] context_cache_scan_addr_li;
+  logic [dpath_width_gp-1:0] context_cache_scan_w_data_li;
+  logic [dpath_width_gp-1:0] context_cache_scan_r_data_lo;
+  logic context_cache_scan_save_v_r;
+  logic [reg_addr_width_gp-1:0] context_cache_scan_save_idx_r;
+  logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_int_shadow_r;
   wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
                                   & fast_ctxtsw_resident_v_li
                                   & ~cfg_bus_cast_i.freeze
@@ -204,6 +213,11 @@ module bp_be_top
                                        & mem_ordered_lo
                                        & ~idiv_busy_lo
                                        & ~fdiv_busy_lo;
+  assign context_cache_scan_r_v_li = context_cache_state_r == e_context_cache_save_regs;
+  assign context_cache_scan_w_v_li = context_cache_state_r == e_context_cache_restore_regs;
+  assign context_cache_scan_thread_id_li = context_cache_victim_thread_id_r;
+  assign context_cache_scan_addr_li = context_cache_reg_idx_r;
+  assign context_cache_scan_w_data_li = context_cache_int_shadow_r[context_cache_reg_idx_r];
   assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_thread_id_r : current_thread_id_lo;
   wire [thread_id_width_p-1:0] scheduler_current_thread_id_li =
     (commit_pkt.ctxtsw & pending_ctxtsw_sent_r) ? pending_ctxtsw_thread_id_r : current_thread_id_lo;
@@ -400,10 +414,18 @@ module bp_be_top
       context_cache_reg_idx_r <= '0;
       context_cache_state_cycles_r <= '0;
       context_cache_miss_count_r <= '0;
+      context_cache_scan_save_v_r <= 1'b0;
+      context_cache_scan_save_idx_r <= '0;
+      for (int i = 0; i < 2**reg_addr_width_gp; i++)
+        context_cache_int_shadow_r[i] <= '0;
     end else begin
       context_cache_state_cycles_r <= (context_cache_state_r == e_context_cache_idle)
                                       ? '0
                                       : context_cache_state_cycles_r + 16'd1;
+      context_cache_scan_save_v_r <= context_cache_scan_r_v_li;
+      context_cache_scan_save_idx_r <= context_cache_reg_idx_r;
+      if (context_cache_scan_save_v_r)
+        context_cache_int_shadow_r[context_cache_scan_save_idx_r] <= context_cache_scan_r_data_lo;
 
       unique case (context_cache_state_r)
         e_context_cache_idle: begin
@@ -424,7 +446,7 @@ module bp_be_top
                                    : context_cache_state_r;
 
         e_context_cache_wait_drain: begin
-          context_cache_reg_idx_r <= '0;
+          context_cache_reg_idx_r <= reg_addr_width_gp'(1);
           context_cache_state_r <= context_cache_drain_safe_li
                                    ? e_context_cache_save_regs
                                    : context_cache_state_r;
@@ -438,7 +460,7 @@ module bp_be_top
         end
 
         e_context_cache_save_npc: begin
-          context_cache_reg_idx_r <= '0;
+          context_cache_reg_idx_r <= reg_addr_width_gp'(1);
           context_cache_state_r <= e_context_cache_restore_regs;
         end
 
@@ -654,6 +676,12 @@ module bp_be_top
      ,.rpush_tid_i(ctx_rpush_tid_lo)
      ,.rpush_reg_i(ctx_rpush_reg_lo)
      ,.rpush_data_i(ctx_rpush_data_lo)
+     ,.context_cache_scan_r_v_i(context_cache_scan_r_v_li)
+     ,.context_cache_scan_w_v_i(context_cache_scan_w_v_li)
+     ,.context_cache_scan_thread_id_i(context_cache_scan_thread_id_li)
+     ,.context_cache_scan_addr_i(context_cache_scan_addr_li)
+     ,.context_cache_scan_w_data_i(context_cache_scan_w_data_li)
+     ,.context_cache_scan_r_data_o(context_cache_scan_r_data_lo)
      ,.context_cache_drain_ready_o(context_cache_scheduler_drain_ready_lo)
      );
 
