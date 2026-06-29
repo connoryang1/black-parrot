@@ -33,6 +33,7 @@ module bp_be_issue_queue
    , input [decode_info_width_lp-1:0]          decode_info_i
    , output logic [preissue_pkt_width_lp-1:0]  preissue_pkt_o
    , output logic [issue_pkt_width_lp-1:0]     issue_pkt_o
+   , output logic                              empty_o
    );
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
@@ -250,6 +251,7 @@ module bp_be_issue_queue
      ,.r_data_o(fe_queue_lo)
      );
   assign fe_queue_ready_and_o = ~full;
+  assign empty_o = empty;
 
   wire [vaddr_width_p-1:0] issue_pc = fe_queue_lo.pc + (rptr_r.entry << 1'b1);
   wire [instr_width_gp-1:0] issue_instr = preissue_pkt_r.instr;
