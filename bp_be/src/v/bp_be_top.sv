@@ -591,6 +591,7 @@ module bp_be_top
      ,.cmd_full_n_i(cmd_full_n_lo)
      // Context switching
      ,.current_thread_id_i(current_thread_id_lo)
+     ,.current_context_id_i(current_context_id_r)
      ,.retire_thread_id_i(retire_thread_id_lo)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_lo)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_lo)
