@@ -194,6 +194,12 @@ module bp_be_top
   logic context_cache_scan_save_v_r;
   logic [reg_addr_width_gp-1:0] context_cache_scan_save_idx_r;
   logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_int_shadow_r;
+  logic ctx_npc_write_resident_v_li;
+  logic [thread_id_width_p-1:0] ctx_npc_write_thread_id_li;
+  logic ctx_rpush_resident_v_li;
+  logic [thread_id_width_p-1:0] ctx_rpush_thread_id_li;
+  logic scheduler_rpush_v_li;
+  logic scheduler_rpush_fp_v_li;
   wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
                                   & fast_ctxtsw_resident_v_li
                                   & ~cfg_bus_cast_i.freeze
@@ -223,6 +229,27 @@ module bp_be_top
   wire [thread_id_width_p-1:0] scheduler_current_thread_id_li =
     (commit_pkt.ctxtsw & pending_ctxtsw_sent_r) ? pending_ctxtsw_thread_id_r : current_thread_id_lo;
 
+  always_comb begin
+    ctx_npc_write_resident_v_li = 1'b0;
+    ctx_npc_write_thread_id_li = '0;
+    if (ctx_npc_write_v_lo && (ctx_npc_write_tid_lo < num_contexts_p)) begin
+      ctx_npc_write_resident_v_li = logical_context_resident_v_r[ctx_npc_write_tid_lo];
+      ctx_npc_write_thread_id_li = logical_context_slot_r[ctx_npc_write_tid_lo];
+    end
+  end
+
+  always_comb begin
+    ctx_rpush_resident_v_li = 1'b0;
+    ctx_rpush_thread_id_li = '0;
+    if ((ctx_rpush_v_lo | ctx_rpush_fp_v_lo) && (ctx_rpush_tid_lo < num_contexts_p)) begin
+      ctx_rpush_resident_v_li = logical_context_resident_v_r[ctx_rpush_tid_lo];
+      ctx_rpush_thread_id_li = logical_context_slot_r[ctx_rpush_tid_lo];
+    end
+  end
+
+  assign scheduler_rpush_v_li = ctx_rpush_v_lo & ctx_rpush_resident_v_li;
+  assign scheduler_rpush_fp_v_li = ctx_rpush_fp_v_lo & ctx_rpush_resident_v_li;
+
   assign fe_ctxtsw_v_o = fast_ctxtsw_launch_v_li | ctxtsw_launch_lo;
   assign fe_ctxtsw_npc_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_npc_lo : pending_ctxtsw_npc_r;
   assign fe_ctxtsw_thread_id_o = fast_ctxtsw_launch_v_li ? fast_ctxtsw_thread_id_lo : pending_ctxtsw_thread_id_r;
@@ -241,15 +268,15 @@ module bp_be_top
     end
   end
 
-  // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x801)
+  // Bootstrap: write a target NPC for a logical context (CSR 0x801)
   logic ctx_npc_write_v_lo;
-  logic [thread_id_width_p-1:0] ctx_npc_write_tid_lo;
+  logic [context_id_width_p-1:0] ctx_npc_write_tid_lo;
   logic [vaddr_width_p-1:0] ctx_npc_write_npc_lo;
 
-  // CSR 0x802 remote register write into another hardware thread context
+  // CSR 0x802 remote register write into a logical context
   logic ctx_rpush_v_lo;
   logic ctx_rpush_fp_v_lo;
-  logic [thread_id_width_p-1:0] ctx_rpush_tid_lo;
+  logic [context_id_width_p-1:0] ctx_rpush_tid_lo;
   logic [reg_addr_width_gp-1:0] ctx_rpush_reg_lo;
   logic [dpath_width_gp-1:0] ctx_rpush_data_lo;
 
@@ -327,15 +354,15 @@ module bp_be_top
         context_translation_en_r[i] <= 1'b0;
         context_asid_r[i] <= '0;
       end
-    end else if (commit_pkt.ctxtsw | ctx_npc_write_v_lo) begin
+    end else if (commit_pkt.ctxtsw | ctx_npc_write_resident_v_li) begin
       logic [thread_id_width_p-1:0] commit_thread_id_li;
-      commit_thread_id_li = ctx_npc_write_v_lo
-                            ? ctx_npc_write_tid_lo
+      commit_thread_id_li = ctx_npc_write_resident_v_li
+                            ? ctx_npc_write_thread_id_li
                             : commit_pkt.ctxtsw
                               ? pending_ctxtsw_prev_thread_id_r
                               : current_thread_id_lo;
       if (commit_thread_id_li < num_threads_p) begin
-        context_npc_r[commit_thread_id_li] <= ctx_npc_write_v_lo
+        context_npc_r[commit_thread_id_li] <= ctx_npc_write_resident_v_li
                                               ? ctx_npc_write_npc_lo
                                               : commit_pkt.ctxtsw
                                                 ? pending_ctxtsw_resume_npc_r
@@ -350,10 +377,10 @@ module bp_be_top
   wire [thread_id_width_p-1:0] context_read_thread_id_li =
     commit_pkt.ctxtsw ? pending_ctxtsw_thread_id_r : current_thread_id_lo;
   wire [thread_id_width_p-1:0] context_write_thread_id_li =
-    ctx_npc_write_v_lo ? ctx_npc_write_tid_lo
+    ctx_npc_write_resident_v_li ? ctx_npc_write_thread_id_li
     : commit_pkt.ctxtsw ? pending_ctxtsw_prev_thread_id_r
     : current_thread_id_lo;
-  wire context_fwd_v = (commit_pkt.ctxtsw | ctx_npc_write_v_lo)
+  wire context_fwd_v = (commit_pkt.ctxtsw | ctx_npc_write_resident_v_li)
                        && (context_write_thread_id_li == context_read_thread_id_li)
                        && (context_write_thread_id_li < num_threads_p)
                        && (context_read_thread_id_li < num_threads_p);
@@ -361,14 +388,14 @@ module bp_be_top
   wire [thread_id_width_p-1:0] fast_ctxtsw_target_thread_id_li = fast_ctxtsw_thread_id_lo;
   wire ctxtsw_target_fwd_v =
     ctx_npc_write_v_lo
-    && (ctx_npc_write_tid_lo == ctxtsw_target_thread_id_li)
-    && (ctx_npc_write_tid_lo < num_threads_p)
+    && (ctx_npc_write_tid_lo == ctxtsw_target_context_id_li)
+    && (ctx_npc_write_tid_lo < num_contexts_p)
     && ctxtsw_target_resident_v_li
     && (ctxtsw_target_thread_id_li < num_threads_p);
   wire fast_ctxtsw_target_fwd_v =
     ctx_npc_write_v_lo
-    && (ctx_npc_write_tid_lo == fast_ctxtsw_target_thread_id_li)
-    && (ctx_npc_write_tid_lo < num_threads_p)
+    && (ctx_npc_write_tid_lo == fast_ctxtsw_context_id_lo)
+    && (ctx_npc_write_tid_lo < num_contexts_p)
     && fast_ctxtsw_resident_v_li
     && (fast_ctxtsw_target_thread_id_li < num_threads_p);
 
@@ -668,9 +695,9 @@ module bp_be_top
      ,.current_thread_id_i(scheduler_current_thread_id_li)
      ,.retire_thread_id_i(retire_thread_id_lo)
 
-     ,.rpush_w_v_i(ctx_rpush_v_lo)
-     ,.rpush_fp_w_v_i(ctx_rpush_fp_v_lo)
-     ,.rpush_tid_i(ctx_rpush_tid_lo)
+     ,.rpush_w_v_i(scheduler_rpush_v_li)
+     ,.rpush_fp_w_v_i(scheduler_rpush_fp_v_li)
+     ,.rpush_tid_i(ctx_rpush_thread_id_li)
      ,.rpush_reg_i(ctx_rpush_reg_lo)
      ,.rpush_data_i(ctx_rpush_data_lo)
      ,.context_cache_scan_r_v_i(context_cache_scan_r_v_li)

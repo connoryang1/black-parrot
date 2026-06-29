@@ -48,17 +48,17 @@ module bp_be_csr
    , input [thread_id_width_p-1:0]           current_thread_id_i
    , input [context_id_width_p-1:0]          current_context_id_i
 
-   // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x801)
-   // Write format: upper bits = thread_id, lower vaddr_width_p bits = target NPC
+   // Bootstrap: write a target NPC for a logical context (CSR 0x801)
+   // Write format: upper bits = context_id, lower vaddr_width_p bits = target NPC
    , output logic                            ctx_npc_write_v_o
-   , output logic [thread_id_width_p-1:0]    ctx_npc_write_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_npc_write_tid_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // CSR 0x802 remote register write into another hardware thread context
-   // Write format: bits[38:0]=value, bits[40:39]=thread_id, bits[45:41]=reg_addr, bit[46]=fp_sel
+   // CSR 0x802 remote register write into a logical context
+   // Write format: bits[38:0]=value, context_id, reg_addr, fp_sel
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
-   , output logic [thread_id_width_p-1:0]    ctx_rpush_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_rpush_tid_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
    );
@@ -741,24 +741,24 @@ module bp_be_csr
 
   assign frm_dyn_o = rv64_frm_e'(fcsr_lo.frm);
 
-  // CSR 0x801 write: set the NPC for the thread whose ID is in the upper bits
-  // Write format: csr_data_li[vaddr_width_p +: thread_id_width_p] = thread_id
-  //               csr_data_li[vaddr_width_p-1:0]                  = target NPC
+  // CSR 0x801 write: set the NPC for the logical context whose ID is in the upper bits
+  // Write format: csr_data_li[vaddr_width_p +: context_id_width_p] = context_id
+  //               csr_data_li[vaddr_width_p-1:0]                   = target NPC
   assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801);
-  assign ctx_npc_write_tid_o = csr_data_li[vaddr_width_p +: thread_id_width_p];
+  assign ctx_npc_write_tid_o = csr_data_li[vaddr_width_p +: context_id_width_p];
   assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
 
-  // CSR 0x802 write: remote register write into a target hardware thread context
+  // CSR 0x802 write: remote register write into a target logical context
   // Write format: bits[38:0]                                    = value (39-bit vaddr width)
-  //               bits[38+thread_id_width_p : 39]               = thread_id
-  //               bits[38+thread_id_width_p+reg_addr_width_gp : 39+thread_id_width_p] = reg_addr
-  //               bit[46]                                        = fp_sel (1=FP regfile, 0=INT regfile)
-  localparam fp_sel_bit_lp = vaddr_width_p + thread_id_width_p + reg_addr_width_gp;
+  //               bits[38+context_id_width_p : 39]              = context_id
+  //               bits[38+context_id_width_p+reg_addr_width_gp : 39+context_id_width_p] = reg_addr
+  //               next bit                                      = fp_sel (1=FP regfile, 0=INT regfile)
+  localparam fp_sel_bit_lp = vaddr_width_p + context_id_width_p + reg_addr_width_gp;
   wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h802);
   assign ctx_rpush_v_o    = rpush_v & ~csr_data_li[fp_sel_bit_lp];
   assign ctx_rpush_fp_v_o = rpush_v &  csr_data_li[fp_sel_bit_lp];
-  assign ctx_rpush_tid_o  = csr_data_li[vaddr_width_p +: thread_id_width_p];
-  assign ctx_rpush_reg_o  = csr_data_li[vaddr_width_p + thread_id_width_p +: reg_addr_width_gp];
+  assign ctx_rpush_tid_o  = csr_data_li[vaddr_width_p +: context_id_width_p];
+  assign ctx_rpush_reg_o  = csr_data_li[vaddr_width_p + context_id_width_p +: reg_addr_width_gp];
   assign ctx_rpush_data_o = {{(dpath_width_gp - vaddr_width_p){1'b0}}, csr_data_li[0 +: vaddr_width_p]};
 
   // Debug: trace every CSR write
