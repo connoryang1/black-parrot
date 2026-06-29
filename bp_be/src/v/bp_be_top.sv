@@ -181,6 +181,9 @@ module bp_be_top
   logic fast_ctxtsw_resident_v_li;
   logic context_cache_miss_v_li;
   logic [context_id_width_p-1:0] context_cache_miss_context_id_li;
+  logic context_cache_scheduler_drain_ready_lo;
+  logic context_cache_calculator_drain_ready_lo;
+  logic context_cache_drain_safe_li;
   wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
                                   & fast_ctxtsw_resident_v_li
                                   & ~cfg_bus_cast_i.freeze
@@ -192,6 +195,15 @@ module bp_be_top
   wire fast_ctxtsw_launch_v_li = ctxtsw_token_create_v_li
                                   & fe_ctxtsw_ready_i
                                   & ~pending_ctxtsw_v_r;
+  assign context_cache_drain_safe_li = context_cache_scheduler_drain_ready_lo
+                                       & context_cache_calculator_drain_ready_lo
+                                       & ~dispatch_pkt.v
+                                       & ~late_wb_v_lo
+                                       & ~(iwb_pkt.ird_w_v | fwb_pkt.frd_w_v)
+                                       & ~mem_busy_lo
+                                       & mem_ordered_lo
+                                       & ~idiv_busy_lo
+                                       & ~fdiv_busy_lo;
   assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_thread_id_r : current_thread_id_lo;
   wire [thread_id_width_p-1:0] scheduler_current_thread_id_li =
     (commit_pkt.ctxtsw & pending_ctxtsw_sent_r) ? pending_ctxtsw_thread_id_r : current_thread_id_lo;
@@ -413,7 +425,9 @@ module bp_be_top
 
         e_context_cache_wait_drain: begin
           context_cache_reg_idx_r <= '0;
-          context_cache_state_r <= e_context_cache_save_regs;
+          context_cache_state_r <= context_cache_drain_safe_li
+                                   ? e_context_cache_save_regs
+                                   : context_cache_state_r;
         end
 
         e_context_cache_save_regs: begin
@@ -640,6 +654,7 @@ module bp_be_top
      ,.rpush_tid_i(ctx_rpush_tid_lo)
      ,.rpush_reg_i(ctx_rpush_reg_lo)
      ,.rpush_data_i(ctx_rpush_data_lo)
+     ,.context_cache_drain_ready_o(context_cache_scheduler_drain_ready_lo)
      );
 
   bp_be_calculator_top
@@ -718,6 +733,7 @@ module bp_be_top
      ,.fast_ctxtsw_old_thread_id_o(fast_ctxtsw_old_thread_id_lo)
      ,.fast_ctxtsw_thread_id_o(fast_ctxtsw_context_id_lo)
      ,.fast_ctxtsw_resume_npc_o(fast_ctxtsw_resume_npc_lo)
+     ,.context_cache_drain_ready_o(context_cache_calculator_drain_ready_lo)
      );
 
 endmodule
