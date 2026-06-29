@@ -131,6 +131,7 @@ module bp_be_top
   logic ctxtsw_launch_lo;
   logic [num_contexts_p-1:0] logical_context_resident_v_r;
   logic [num_contexts_p-1:0][thread_id_width_p-1:0] logical_context_slot_r;
+  logic [context_id_width_p-1:0] current_context_id_r;
   logic [thread_id_width_p-1:0] current_thread_id_lo;
   logic fast_ctxtsw_v_lo;
   logic [thread_id_width_p-1:0] fast_ctxtsw_old_thread_id_lo;
@@ -206,12 +207,16 @@ module bp_be_top
 
   // Active hardware thread ID selected by CTXT CSR writes.
   always_ff @(posedge clk_i) begin
-    if (reset_i)
+    if (reset_i) begin
       current_thread_id_lo <= '0;
+      current_context_id_r <= '0;
+    end
     else if (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw & pending_ctxtsw_v_r)
       current_thread_id_lo <= pending_ctxtsw_prev_thread_id_r;
-    else if (commit_pkt.ctxtsw)
+    else if (commit_pkt.ctxtsw) begin
       current_thread_id_lo <= pending_ctxtsw_thread_id_r;
+      current_context_id_r <= pending_ctxtsw_context_id_r;
+    end
   end
 
   // Stage a prepared ctxtsw target bundle when ctxtsw is first classified in the BE.
@@ -340,9 +345,12 @@ module bp_be_top
   // Until the save/restore FSM exists, nonresident switches are unsupported.
   // Failing in simulation is safer than silently truncating logical IDs.
 `ifndef SYNTHESIS
-  always_ff @(posedge clk_i)
+  always_ff @(posedge clk_i) begin
+    if (!reset_i && dispatch_pkt.ctxtsw_v && !ctxtsw_target_resident_v_li)
+      $fatal(1, "Nonresident context switch target %0d is not implemented yet", ctxtsw_target_context_id_li);
     if (!reset_i && fast_ctxtsw_v_lo && !fast_ctxtsw_resident_v_li)
       $fatal(1, "Nonresident context switch target %0d is not implemented yet", fast_ctxtsw_context_id_lo);
+  end
 `endif
 
   always_comb begin
@@ -511,6 +519,7 @@ module bp_be_top
      ,.late_wb_yumi_o(late_wb_yumi_li)
 
      ,.current_thread_id_i(scheduler_current_thread_id_li)
+     ,.current_context_id_i(current_context_id_r)
      ,.retire_thread_id_i(retire_thread_id_lo)
 
      ,.rpush_w_v_i(ctx_rpush_v_lo)
