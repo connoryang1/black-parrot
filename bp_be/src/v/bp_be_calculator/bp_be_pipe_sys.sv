@@ -65,15 +65,15 @@ module bp_be_pipe_sys
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
 
-   // Bootstrap: write target NPC into context_storage for a given thread (CSR 0x801)
+   // Bootstrap: write target NPC for a logical context (CSR 0x801)
    , output logic                            ctx_npc_write_v_o
-   , output logic [thread_id_width_p-1:0]    ctx_npc_write_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_npc_write_tid_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // rpush: write arbitrary register of a disabled thread's register file (CSR 0x802)
+   // rpush: write arbitrary register of a logical context (CSR 0x802)
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
-   , output logic [thread_id_width_p-1:0]    ctx_rpush_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_rpush_tid_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
    );
