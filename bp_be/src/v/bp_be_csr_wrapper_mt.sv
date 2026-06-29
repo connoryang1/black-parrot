@@ -69,15 +69,15 @@ module bp_be_csr_wrapper_mt
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
 
-   // Bootstrap: write target NPC for a thread (CSR 0x801)
+   // Bootstrap: write target NPC for a logical context (CSR 0x801)
    , output logic                            ctx_npc_write_v_o
-   , output logic [thread_id_width_p-1:0]    ctx_npc_write_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_npc_write_tid_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // CSR 0x802 remote register write into another hardware thread context
+   // CSR 0x802 remote register write into a logical context
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
-   , output logic [thread_id_width_p-1:0]    ctx_rpush_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_rpush_tid_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
    );
@@ -92,11 +92,11 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            irq_pending_co;
   logic [num_threads_p-1:0]                            irq_waiting_co;
   logic [num_threads_p-1:0]                            ctx_npc_write_v_co;
-  logic [num_threads_p-1:0][thread_id_width_p-1:0]    ctx_npc_write_tid_co;
+  logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_npc_write_tid_co;
   logic [num_threads_p-1:0][vaddr_width_p-1:0]        ctx_npc_write_npc_co;
   logic [num_threads_p-1:0]                            ctx_rpush_v_co;
   logic [num_threads_p-1:0]                            ctx_rpush_fp_v_co;
-  logic [num_threads_p-1:0][thread_id_width_p-1:0]    ctx_rpush_tid_co;
+  logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_rpush_tid_co;
   logic [num_threads_p-1:0][reg_addr_width_gp-1:0]    ctx_rpush_reg_co;
   logic [num_threads_p-1:0][dpath_width_gp-1:0]       ctx_rpush_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
