@@ -46,6 +46,7 @@ module bp_be_csr
 
    // Context switching control
    , input [thread_id_width_p-1:0]           current_thread_id_i
+   , input [context_id_width_p-1:0]          current_context_id_i
 
    // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
    // Write format: upper bits = thread_id, lower vaddr_width_p bits = target NPC
@@ -95,16 +96,6 @@ module bp_be_csr
   `declare_csr_addr(dpc, vaddr_width_p, paddr_width_p);
   `declare_csr(dscratch0);
   `declare_csr(dscratch1);
-
-  // Register current thread ID to synchronize with the pipeline.
-  // This ensures CSR reads capture the properly updated thread ID.
-  logic [thread_id_width_p-1:0] current_thread_id_r;
-  always @(posedge clk_i) begin
-    if (reset_i)
-      current_thread_id_r <= '0;
-    else
-      current_thread_id_r <= current_thread_id_i;
-  end
 
   // We have no vendorid currently
   wire [dword_width_gp-1:0] mvendorid_lo = 64'h0;
@@ -407,7 +398,7 @@ module bp_be_csr
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
         12'h081:  // CTXT CSR - Current thread/context ID
-          csr_data_lo = current_thread_id_i;
+          csr_data_lo = dword_width_gp'(current_context_id_i);
         12'h082:  // Thread NPC seed - write-only, reads as 0
           csr_data_lo = '0;
         12'h083:  // Thread register seed / remote register write - write-only, reads as 0

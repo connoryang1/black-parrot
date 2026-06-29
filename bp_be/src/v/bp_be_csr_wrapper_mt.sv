@@ -62,6 +62,8 @@ module bp_be_csr_wrapper_mt
 
    // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]           current_thread_id_i
+   // Software-visible logical context ID returned by CSR 0x081.
+   , input [context_id_width_p-1:0]          current_context_id_i
    // CSR reads belong to the instruction in the reservation station.
    , input [thread_id_width_p-1:0]           csr_thread_id_i
    // Retire thread owns the instruction currently committing in the backend.
@@ -147,6 +149,7 @@ module bp_be_csr_wrapper_mt
        ,.frm_dyn_o(frm_dyn_co[i])
 
        ,.current_thread_id_i(current_thread_id_i)
+       ,.current_context_id_i(current_context_id_i)
        ,.ctx_npc_write_v_o(ctx_npc_write_v_co[i])
        ,.ctx_npc_write_tid_o(ctx_npc_write_tid_co[i])
        ,.ctx_npc_write_npc_o(ctx_npc_write_npc_co[i])

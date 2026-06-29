@@ -60,6 +60,8 @@ module bp_be_pipe_sys
 
    // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]           current_thread_id_i
+   // Software-visible logical context ID returned by CSR 0x081.
+   , input [context_id_width_p-1:0]          current_context_id_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
 
@@ -137,6 +139,7 @@ module bp_be_pipe_sys
      // Current selects slow CSR state; reservation thread owns CSR reads
      // and memory translation information.
      ,.current_thread_id_i(current_thread_id_i)
+     ,.current_context_id_i(current_context_id_i)
      ,.csr_thread_id_i(reservation_thread_id)
      ,.retire_thread_id_i(retire_thread_id_i)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
