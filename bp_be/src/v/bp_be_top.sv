@@ -612,6 +612,11 @@ module bp_be_top
         && context_cache_active_li
         && (context_cache_miss_context_id_li != context_cache_target_context_id_r))
       $fatal(1, "Nested nonresident context switch target %0d is not supported", context_cache_miss_context_id_li);
+    if (!reset_i
+        && ctx_rpush_fp_v_lo
+        && !ctx_rpush_resident_v_li
+        && (ctx_rpush_tid_lo < num_contexts_p))
+      $fatal(1, "Nonresident FP context state is not supported for logical context %0d", ctx_rpush_tid_lo);
   end
 `endif
 
