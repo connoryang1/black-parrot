@@ -125,8 +125,10 @@ module bp_be_top
     ,e_context_cache_wait_ctxtsw_commit
     ,e_context_cache_wait_drain
     ,e_context_cache_save_regs
+    ,e_context_cache_save_fp_regs
     ,e_context_cache_save_npc
     ,e_context_cache_restore_regs
+    ,e_context_cache_restore_fp_regs
     ,e_context_cache_restore_npc
     ,e_context_cache_install_slot
     ,e_context_cache_launch_fe
@@ -199,9 +201,17 @@ module bp_be_top
   logic [reg_addr_width_gp-1:0] context_cache_scan_addr_li;
   logic [dpath_width_gp-1:0] context_cache_scan_w_data_li;
   logic [dpath_width_gp-1:0] context_cache_scan_r_data_lo;
+  logic context_cache_fp_scan_r_v_li;
+  logic context_cache_fp_scan_w_v_li;
+  logic [thread_id_width_p-1:0] context_cache_fp_scan_thread_id_li;
+  logic [reg_addr_width_gp-1:0] context_cache_fp_scan_addr_li;
+  logic [dpath_width_gp-1:0] context_cache_fp_scan_w_data_li;
+  logic [dpath_width_gp-1:0] context_cache_fp_scan_r_data_lo;
   logic context_cache_scan_save_v_r;
+  logic context_cache_fp_scan_save_v_r;
   logic [reg_addr_width_gp-1:0] context_cache_scan_save_idx_r;
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_int_shadow_r;
+  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_fp_shadow_r;
   logic ctx_npc_write_resident_v_li;
   logic [thread_id_width_p-1:0] ctx_npc_write_thread_id_li;
   logic ctx_rpush_resident_v_li;
@@ -236,6 +246,12 @@ module bp_be_top
   assign context_cache_scan_addr_li = context_cache_reg_idx_r;
   assign context_cache_scan_w_data_li =
     context_cache_int_shadow_r[context_cache_target_context_id_r][context_cache_reg_idx_r];
+  assign context_cache_fp_scan_r_v_li = context_cache_state_r == e_context_cache_save_fp_regs;
+  assign context_cache_fp_scan_w_v_li = context_cache_state_r == e_context_cache_restore_fp_regs;
+  assign context_cache_fp_scan_thread_id_li = context_cache_victim_thread_id_r;
+  assign context_cache_fp_scan_addr_li = context_cache_reg_idx_r;
+  assign context_cache_fp_scan_w_data_li =
+    context_cache_fp_shadow_r[context_cache_target_context_id_r][context_cache_reg_idx_r];
   assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_thread_id_r : current_thread_id_lo;
   wire [thread_id_width_p-1:0] scheduler_current_thread_id_li =
     (commit_pkt.ctxtsw & pending_ctxtsw_sent_r) ? pending_ctxtsw_thread_id_r : current_thread_id_lo;
@@ -521,21 +537,30 @@ module bp_be_top
       context_cache_state_cycles_r <= '0;
       context_cache_miss_count_r <= '0;
       context_cache_scan_save_v_r <= 1'b0;
+      context_cache_fp_scan_save_v_r <= 1'b0;
       context_cache_scan_save_idx_r <= '0;
       for (int i = 0; i < num_contexts_p; i++)
-        for (int j = 0; j < 2**reg_addr_width_gp; j++)
+        for (int j = 0; j < 2**reg_addr_width_gp; j++) begin
           context_cache_int_shadow_r[i][j] <= '0;
+          context_cache_fp_shadow_r[i][j] <= '0;
+        end
     end else begin
       context_cache_state_cycles_r <= (context_cache_state_r == e_context_cache_idle)
                                       ? '0
                                       : context_cache_state_cycles_r + 16'd1;
       context_cache_scan_save_v_r <= context_cache_scan_r_v_li;
+      context_cache_fp_scan_save_v_r <= context_cache_fp_scan_r_v_li;
       context_cache_scan_save_idx_r <= context_cache_reg_idx_r;
       if (context_cache_scan_save_v_r)
         context_cache_int_shadow_r[context_cache_victim_context_id_r][context_cache_scan_save_idx_r]
           <= context_cache_scan_r_data_lo;
+      if (context_cache_fp_scan_save_v_r)
+        context_cache_fp_shadow_r[context_cache_victim_context_id_r][context_cache_scan_save_idx_r]
+          <= context_cache_fp_scan_r_data_lo;
       if (ctx_rpush_v_lo && !ctx_rpush_resident_v_li && (ctx_rpush_tid_lo < num_contexts_p))
         context_cache_int_shadow_r[ctx_rpush_tid_lo][ctx_rpush_reg_lo] <= ctx_rpush_data_lo;
+      if (ctx_rpush_fp_v_lo && !ctx_rpush_resident_v_li && (ctx_rpush_tid_lo < num_contexts_p))
+        context_cache_fp_shadow_r[ctx_rpush_tid_lo][ctx_rpush_reg_lo] <= ctx_rpush_data_lo;
 
       unique case (context_cache_state_r)
         e_context_cache_idle: begin
@@ -566,6 +591,13 @@ module bp_be_top
         e_context_cache_save_regs: begin
           context_cache_reg_idx_r <= context_cache_reg_idx_r + reg_addr_width_gp'(1);
           context_cache_state_r <= (context_cache_reg_idx_r == reg_addr_width_gp'(31))
+                                   ? e_context_cache_save_fp_regs
+                                   : context_cache_state_r;
+        end
+
+        e_context_cache_save_fp_regs: begin
+          context_cache_reg_idx_r <= context_cache_reg_idx_r + reg_addr_width_gp'(1);
+          context_cache_state_r <= (context_cache_reg_idx_r == reg_addr_width_gp'(31))
                                    ? e_context_cache_save_npc
                                    : context_cache_state_r;
         end
@@ -576,6 +608,13 @@ module bp_be_top
         end
 
         e_context_cache_restore_regs: begin
+          context_cache_reg_idx_r <= context_cache_reg_idx_r + reg_addr_width_gp'(1);
+          context_cache_state_r <= (context_cache_reg_idx_r == reg_addr_width_gp'(31))
+                                   ? e_context_cache_restore_fp_regs
+                                   : context_cache_state_r;
+        end
+
+        e_context_cache_restore_fp_regs: begin
           context_cache_reg_idx_r <= context_cache_reg_idx_r + reg_addr_width_gp'(1);
           context_cache_state_r <= (context_cache_reg_idx_r == reg_addr_width_gp'(31))
                                    ? e_context_cache_restore_npc
@@ -611,11 +650,6 @@ module bp_be_top
         && context_cache_active_li
         && (context_cache_miss_context_id_li != context_cache_target_context_id_r))
       $fatal(1, "Nested nonresident context switch target %0d is not supported", context_cache_miss_context_id_li);
-    if (!reset_i
-        && ctx_rpush_fp_v_lo
-        && !ctx_rpush_resident_v_li
-        && (ctx_rpush_tid_lo < num_contexts_p))
-      $fatal(1, "Nonresident FP context state is not supported for logical context %0d", ctx_rpush_tid_lo);
   end
 `endif
 
@@ -804,6 +838,12 @@ module bp_be_top
      ,.context_cache_scan_addr_i(context_cache_scan_addr_li)
      ,.context_cache_scan_w_data_i(context_cache_scan_w_data_li)
      ,.context_cache_scan_r_data_o(context_cache_scan_r_data_lo)
+     ,.context_cache_fp_scan_r_v_i(context_cache_fp_scan_r_v_li)
+     ,.context_cache_fp_scan_w_v_i(context_cache_fp_scan_w_v_li)
+     ,.context_cache_fp_scan_thread_id_i(context_cache_fp_scan_thread_id_li)
+     ,.context_cache_fp_scan_addr_i(context_cache_fp_scan_addr_li)
+     ,.context_cache_fp_scan_w_data_i(context_cache_fp_scan_w_data_li)
+     ,.context_cache_fp_scan_r_data_o(context_cache_fp_scan_r_data_lo)
      ,.context_cache_drain_ready_o(context_cache_scheduler_drain_ready_lo)
      );
 
