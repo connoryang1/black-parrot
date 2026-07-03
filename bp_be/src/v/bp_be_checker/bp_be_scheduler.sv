@@ -70,13 +70,15 @@ module bp_be_scheduler
    , input                                    context_cache_scan_r_v_i
    , input                                    context_cache_scan_w_v_i
    , input [thread_id_width_p-1:0]            context_cache_scan_thread_id_i
-   , input [reg_addr_width_gp-1:0]            context_cache_scan_addr_i
+   , input [reg_addr_width_gp-1:0]            context_cache_scan_r_addr_i
+   , input [reg_addr_width_gp-1:0]            context_cache_scan_w_addr_i
    , input [dpath_width_gp-1:0]               context_cache_scan_w_data_i
    , output logic [dpath_width_gp-1:0]        context_cache_scan_r_data_o
    , input                                    context_cache_fp_scan_r_v_i
    , input                                    context_cache_fp_scan_w_v_i
    , input [thread_id_width_p-1:0]            context_cache_fp_scan_thread_id_i
-   , input [reg_addr_width_gp-1:0]            context_cache_fp_scan_addr_i
+   , input [reg_addr_width_gp-1:0]            context_cache_fp_scan_r_addr_i
+   , input [reg_addr_width_gp-1:0]            context_cache_fp_scan_w_addr_i
    , input [dpath_width_gp-1:0]               context_cache_fp_scan_w_data_i
    , output logic [dpath_width_gp-1:0]        context_cache_fp_scan_r_data_o
 
@@ -241,12 +243,12 @@ module bp_be_scheduler
                                   : preissue_thread_id_li;
   assign int_rs_thread_id_li[1] = preissue_thread_id_li;
   assign int_rs_addr_li[0] = context_cache_scan_r_v_i
-                             ? context_cache_scan_addr_i
+                             ? context_cache_scan_r_addr_i
                              : preissue_instr.rs1_addr;
   assign int_rs_addr_li[1] = preissue_instr.rs2_addr;
   assign int_rpush_w_v_li = context_cache_scan_w_v_i | rpush_w_v_i;
   assign int_rpush_tid_li = context_cache_scan_w_v_i ? context_cache_scan_thread_id_i : rpush_tid_i;
-  assign int_rpush_reg_li = context_cache_scan_w_v_i ? context_cache_scan_addr_i : rpush_reg_i;
+  assign int_rpush_reg_li = context_cache_scan_w_v_i ? context_cache_scan_w_addr_i : rpush_reg_i;
   assign int_rpush_data_li = context_cache_scan_w_v_i ? context_cache_scan_w_data_i : rpush_data_i;
   assign context_cache_scan_r_data_o = irf_rs1;
 
@@ -287,13 +289,13 @@ module bp_be_scheduler
   assign fp_rs_thread_id_li[1] = preissue_thread_id_li;
   assign fp_rs_thread_id_li[2] = preissue_thread_id_li;
   assign fp_rs_addr_li[0] = context_cache_fp_scan_r_v_i
-                            ? context_cache_fp_scan_addr_i
+                            ? context_cache_fp_scan_r_addr_i
                             : preissue_instr.rs1_addr;
   assign fp_rs_addr_li[1] = preissue_instr.rs2_addr;
   assign fp_rs_addr_li[2] = preissue_instr.rs3_addr;
   assign fp_rpush_w_v_li = context_cache_fp_scan_w_v_i | rpush_fp_w_v_i;
   assign fp_rpush_tid_li = context_cache_fp_scan_w_v_i ? context_cache_fp_scan_thread_id_i : rpush_tid_i;
-  assign fp_rpush_reg_li = context_cache_fp_scan_w_v_i ? context_cache_fp_scan_addr_i : rpush_reg_i;
+  assign fp_rpush_reg_li = context_cache_fp_scan_w_v_i ? context_cache_fp_scan_w_addr_i : rpush_reg_i;
   assign fp_rpush_data_li = context_cache_fp_scan_w_v_i ? context_cache_fp_scan_w_data_i : rpush_data_i;
   assign context_cache_fp_scan_r_data_o = frf_rs1;
   bp_be_regfile_mt
