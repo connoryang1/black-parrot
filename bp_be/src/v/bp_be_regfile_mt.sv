@@ -146,9 +146,9 @@ module bp_be_regfile_mt
          ,.r2_data_o(rs_data_lo[2])
          );
     end
-  else if ((write_ports_p == 2) && (read_ports_p == 2))
+  else if ((write_ports_p == 2) && ((read_ports_p == 2) || (read_ports_p == 3)))
     begin : twoport_twowrite
-      logic [1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_mem_r;
+      logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_mem_r;
       logic [data_width_p-1:0] mem [total_rf_els_lp-1:0];
 
 `ifndef SYNTHESIS
