@@ -711,6 +711,8 @@ module bp_be_csr
   assign commit_pkt_cast_o.itlb_fill_v       = retire_pkt_cast_i.exception.itlb_fill;
   assign commit_pkt_cast_o.dtlb_fill_v       = retire_pkt_cast_i.exception.dtlb_fill;
   assign commit_pkt_cast_o.iscore_v          = retire_pkt_cast_i.iscore;
+  assign commit_pkt_cast_o.fdirty_v          = (csr_w_v_li & csr_fany_li)
+                                               | (retire_pkt_cast_i.instret & instr_fany_li);
   assign commit_pkt_cast_o.fscore_v          = retire_pkt_cast_i.fscore;
 
   wire mprv_mem_v = (~is_debug_mode | dcsr_lo.mprven)

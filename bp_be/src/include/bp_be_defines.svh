@@ -201,6 +201,7 @@
       logic                           itlb_fill_v;                                                 \
       logic                           dtlb_fill_v;                                                 \
       logic                           iscore_v;                                                    \
+      logic                           fdirty_v;                                                    \
       logic                           fscore_v;                                                    \
     }  bp_be_commit_pkt_s;                                                                         \
                                                                                                    \
