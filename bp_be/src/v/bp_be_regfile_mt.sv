@@ -33,11 +33,12 @@
 module bp_be_regfile_mt
  import bp_common_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
-    `declare_bp_proc_params(bp_params_p)
+   `declare_bp_proc_params(bp_params_p)
 
    , parameter `BSG_INV_PARAM(data_width_p)
    , parameter `BSG_INV_PARAM(read_ports_p)
    , parameter `BSG_INV_PARAM(zero_x0_p)
+   , parameter write_ports_p = 1
    )
   (input                                            clk_i
    , input                                          reset_i
@@ -60,6 +61,12 @@ module bp_be_regfile_mt
    , input [thread_id_width_p-1:0]                     rpush_thread_id_i
    , input [reg_addr_width_gp-1:0]                     rpush_addr_i
    , input [data_width_p-1:0]                           rpush_data_i
+
+   // Optional second write port, used only by the nonresident context-cache restore path.
+   , input                                              rd_w_v2_i
+   , input [thread_id_width_p-1:0]                     rd_thread_id2_i
+   , input [reg_addr_width_gp-1:0]                     rd_addr2_i
+   , input [data_width_p-1:0]                           rd_data2_i
    );
 
   // Derived parameters
@@ -70,14 +77,16 @@ module bp_be_regfile_mt
   logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_indexed;
   logic [reg_addr_width_gp+thread_id_width_p-1:0] rd_addr_indexed;
   logic [reg_addr_width_gp+thread_id_width_p-1:0] rpush_addr_indexed;
+  logic [reg_addr_width_gp+thread_id_width_p-1:0] rd_addr2_indexed;
 
   // Construct indexed addresses: {thread_id, reg_addr}
   for (genvar i = 0; i < read_ports_p; i++)
     begin : read_addr_construct
-      assign rs_addr_indexed[i] = {rs_thread_id_i[i], rs_addr_i[i]};
+  assign rs_addr_indexed[i] = {rs_thread_id_i[i], rs_addr_i[i]};
     end
   assign rd_addr_indexed    = {rd_thread_id_i, rd_addr_i};
   assign rpush_addr_indexed = {rpush_thread_id_i, rpush_addr_i};
+  assign rd_addr2_indexed   = {rd_thread_id2_i, rd_addr2_i};
 
   // Mux write port: CSR 0x083 remote write takes priority over normal writeback
   // CSR 0x083 remote writes and normal writeback never happen on the same cycle
@@ -91,7 +100,7 @@ module bp_be_regfile_mt
   logic [read_ports_p-1:0][data_width_p-1:0] rs_data_lo;
 
   // Select appropriate memory based on read ports
-  if (read_ports_p == 2)
+  if ((write_ports_p == 1) && (read_ports_p == 2))
     begin : twoport
       bsg_mem_2r1w_sync
        #(.width_p(data_width_p), .els_p(total_rf_els_lp))
@@ -112,7 +121,7 @@ module bp_be_regfile_mt
          ,.r1_data_o(rs_data_lo[1])
          );
     end
-  else if (read_ports_p == 3)
+  else if ((write_ports_p == 1) && (read_ports_p == 3))
     begin : threeport
       bsg_mem_3r1w_sync
        #(.width_p(data_width_p), .els_p(total_rf_els_lp))
@@ -137,45 +146,80 @@ module bp_be_regfile_mt
          ,.r2_data_o(rs_data_lo[2])
          );
     end
+  else if ((write_ports_p == 2) && (read_ports_p == 2))
+    begin : twoport_twowrite
+      logic [1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_mem_r;
+      logic [data_width_p-1:0] mem [total_rf_els_lp-1:0];
+
+`ifndef SYNTHESIS
+      always_ff @(posedge clk_i)
+        if (w_v_mux & rd_w_v2_i) begin
+          assert (w_addr_mux != rd_addr2_indexed)
+            else $error("%m: concurrent register writes must target different addresses");
+        end
+`endif
+
+      always_ff @(posedge clk_i) begin
+        if (w_v_mux)
+          mem[w_addr_mux] <= w_data_mux;
+        if (rd_w_v2_i)
+          mem[rd_addr2_indexed] <= rd_data2_i;
+
+        for (int i = 0; i < read_ports_p; i++)
+          if (rs_v_li[i])
+            rs_addr_mem_r[i] <= rs_addr_li[i];
+      end
+
+      for (genvar i = 0; i < read_ports_p; i++)
+        assign rs_data_lo[i] = mem[rs_addr_mem_r[i]];
+    end
   else
     begin : error
       $error("Error: unsupported number of read ports");
     end
 
   // Save the written data for forwarding (use muxed write port values to capture remote writes too)
-  logic [data_width_p-1:0] rd_data_r;
+  logic [1:0][data_width_p-1:0] rd_data_r;
   wire [thread_id_width_p-1:0] w_thread_id_mux = rpush_w_v_i ? rpush_thread_id_i : rd_thread_id_i;
   wire [reg_addr_width_gp-1:0] w_reg_addr_mux  = rpush_w_v_i ? rpush_addr_i : rd_addr_i;
   bsg_dff
-   #(.width_p(data_width_p))
+   #(.width_p(2*data_width_p))
    rd_reg
     (.clk_i(clk_i)
-     ,.data_i(w_data_mux)
+     ,.data_i({rd_data2_i, w_data_mux})
      ,.data_o(rd_data_r)
      );
 
   // Forwarding and bypass logic for each read port
   for (genvar i = 0; i < read_ports_p; i++)
     begin : bypass
-      logic zero_rs_r, fwd_rs_r, rs_r_v_r;
+      logic zero_rs_r, fwd0_rs_r, fwd1_rs_r, rs_r_v_r;
       logic [data_width_p-1:0] fwd_data_lo;
 
       // Check for reads from x0 (should always return 0)
       wire zero_rs = rs_r_v_i[i] & (rs_addr_i[i] == '0) & (zero_x0_p == 1);
 
-      // Check for forwarding: write to same thread and same register (covers both wb and remote write)
-      wire same_thread = (w_thread_id_mux == rs_thread_id_i[i]);
-      wire fwd_rs = w_v_mux & same_thread & rs_r_v_i[i] & (w_reg_addr_mux == rs_addr_i[i]);
+      // Check for forwarding: write to same thread and same register.
+      wire same_thread0 = (w_thread_id_mux == rs_thread_id_i[i]);
+      wire same_thread1 = (rd_thread_id2_i == rs_thread_id_i[i]);
+      wire fwd0_rs = w_v_mux & same_thread0 & rs_r_v_i[i] & (w_reg_addr_mux == rs_addr_i[i]);
+      wire fwd1_rs = rd_w_v2_i & same_thread1 & rs_r_v_i[i] & (rd_addr2_i == rs_addr_i[i]);
 
       bsg_dff
-       #(.width_p(3))
+       #(.width_p(4))
        rs_r_v_reg
         (.clk_i(clk_i)
-         ,.data_i({zero_rs, fwd_rs, rs_r_v_i[i]})
-         ,.data_o({zero_rs_r, fwd_rs_r, rs_r_v_r})
+         ,.data_i({zero_rs, fwd1_rs, fwd0_rs, rs_r_v_i[i]})
+         ,.data_o({zero_rs_r, fwd1_rs_r, fwd0_rs_r, rs_r_v_r})
          );
 
-      assign fwd_data_lo = zero_rs_r ? '0 : fwd_rs_r ? rd_data_r : rs_data_lo[i];
+      assign fwd_data_lo = zero_rs_r
+                           ? '0
+                           : fwd0_rs_r
+                           ? rd_data_r[0]
+                           : fwd1_rs_r
+                           ? rd_data_r[1]
+                           : rs_data_lo[i];
 
       logic [reg_addr_width_gp-1:0] rs_addr_r;
       logic [thread_id_width_p-1:0] rs_thread_id_r;
@@ -189,10 +233,13 @@ module bp_be_regfile_mt
          );
 
       logic [data_width_p-1:0] rs_data_n, rs_data_r;
-      // Check for replacement: write to same thread and same register (delayed, covers both wb and remote write)
-      wire same_thread_r = (w_thread_id_mux == rs_thread_id_r);
-      wire replace_rs = w_v_mux & same_thread_r & (rs_addr_r == w_reg_addr_mux);
-      assign rs_data_n = replace_rs ? w_data_mux : fwd_data_lo;
+      // Check for replacement: write to same thread and same register (delayed, covers both wb and restore writes)
+      wire same_thread0_r = (w_thread_id_mux == rs_thread_id_r);
+      wire same_thread1_r = (rd_thread_id2_i == rs_thread_id_r);
+      wire replace0_rs = w_v_mux & same_thread0_r & (rs_addr_r == w_reg_addr_mux);
+      wire replace1_rs = rd_w_v2_i & same_thread1_r & (rs_addr_r == rd_addr2_i);
+      wire replace_rs = replace0_rs | replace1_rs;
+      assign rs_data_n = replace0_rs ? w_data_mux : replace1_rs ? rd_data2_i : fwd_data_lo;
 
       bsg_dff_en
        #(.width_p(data_width_p))
@@ -204,7 +251,7 @@ module bp_be_regfile_mt
          );
 
       // Control signals
-      assign rs_v_li[i] = rs_r_v_i[i] & ~fwd_rs;
+      assign rs_v_li[i] = rs_r_v_i[i] & ~(fwd0_rs | fwd1_rs);
       assign rs_addr_li[i] = rs_addr_indexed[i];
 
       // Output: forward if we had forwarding, else use saved register data
