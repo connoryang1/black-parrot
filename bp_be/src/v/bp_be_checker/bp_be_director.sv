@@ -55,7 +55,7 @@ module bp_be_director
    , input [vaddr_width_p-1:0]           context_npc_i
 
    // Current thread ID for normal FE metadata generation
-   , input [thread_id_width_p-1:0]       current_thread_id_i
+   , input [thread_id_width_p-1:0]       current_physical_thread_id_i
 
    // Current thread ASID for embedding in ctxtsw fe_cmd (for FE shadow_asid)
    , input [asid_width_p-1:0]            context_asid_i
@@ -69,7 +69,7 @@ module bp_be_director
    // Early-classified target context bundle for future first-class ctxtsw restart
    , input                               dispatch_ctxtsw_v_i
    , input [vaddr_width_p-1:0]           dispatch_ctxtsw_target_npc_i
-   , input [thread_id_width_p-1:0]       dispatch_ctxtsw_target_thread_id_i
+   , input [thread_id_width_p-1:0]       dispatch_ctxtsw_target_physical_thread_id_i
    , input [asid_width_p-1:0]            dispatch_ctxtsw_target_asid_i
    , input [1:0]                         dispatch_ctxtsw_target_priv_i
    , input                               dispatch_ctxtsw_target_translation_en_i
@@ -77,7 +77,7 @@ module bp_be_director
    , input                               pending_ctxtsw_sent_i
    , input                               ctxtsw_launch_pending_i
    , input [vaddr_width_p-1:0]           ctxtsw_target_npc_i
-   , input [thread_id_width_p-1:0]       ctxtsw_target_thread_id_i
+   , input [thread_id_width_p-1:0]       ctxtsw_target_physical_thread_id_i
    , input [asid_width_p-1:0]            ctxtsw_target_asid_i
    , input [1:0]                         ctxtsw_target_priv_i
    , input                               ctxtsw_target_translation_en_i
@@ -97,7 +97,7 @@ module bp_be_director
   bp_fe_cmd_s fe_cmd_li;
   bp_fe_cmd_pc_redirect_operands_s fe_cmd_pc_redirect_operands;
   wire [branch_metadata_fwd_width_p-1:0] current_thread_metadata_li =
-    branch_metadata_fwd_width_p'({current_thread_id_i, {(branch_metadata_fwd_width_p-thread_id_width_p){1'b0}}});
+    branch_metadata_fwd_width_p'({current_physical_thread_id_i, {(branch_metadata_fwd_width_p-thread_id_width_p){1'b0}}});
   logic fe_cmd_v_li;
   logic cmd_empty_n_lo, cmd_empty_r_lo;
   logic cmd_full_n_lo, cmd_full_r_lo;
@@ -263,7 +263,7 @@ module bp_be_director
           fe_cmd_pc_redirect_operands.priv            = ctxtsw_target_priv_i;
           fe_cmd_pc_redirect_operands.translation_en  = ctxtsw_target_translation_en_i;
           fe_cmd_pc_redirect_operands.asid            = ctxtsw_target_asid_i;
-          fe_cmd_pc_redirect_operands.context_switch_thread_id = ctxtsw_target_thread_id_i;
+          fe_cmd_pc_redirect_operands.context_switch_thread_id = ctxtsw_target_physical_thread_id_i;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
           fe_cmd_v_li = switch_commit_fe_control_v;

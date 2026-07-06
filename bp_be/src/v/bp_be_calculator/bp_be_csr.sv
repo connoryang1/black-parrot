@@ -47,8 +47,8 @@ module bp_be_csr
    , output rv64_frm_e                       frm_dyn_o
 
    // Context switching control
-   , input [thread_id_width_p-1:0]           current_thread_id_i
-   , input [context_id_width_p-1:0]          current_context_id_i
+   , input [thread_id_width_p-1:0]           current_physical_thread_id_i
+   , input [context_id_width_p-1:0]          current_virtual_context_id_i
 
    // Physical CSR bank save/restore for nonresident virtual contexts.
    , input                                   csr_context_restore_v_i
@@ -56,17 +56,17 @@ module bp_be_csr
    , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
    , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
 
-   // Bootstrap: write a target NPC for a logical context (CSR 0x801)
+   // Bootstrap: write a target NPC for a virtual context (CSR 0x801)
    // Write format: upper bits = context_id, lower vaddr_width_p bits = target NPC
    , output logic                            ctx_npc_write_v_o
-   , output logic [context_id_width_p-1:0]   ctx_npc_write_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // CSR 0x802 remote register write into a logical context
+   // CSR 0x802 remote register write into a virtual context
    // Write format: bits[38:0]=value, context_id, reg_addr, fp_sel
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
-   , output logic [context_id_width_p-1:0]   ctx_rpush_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
    );
@@ -470,9 +470,9 @@ module bp_be_csr
         {`CSR_ADDR_DPC          }: csr_data_lo = dpc_lo;
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
-        12'h800:  // CTXT CSR - Current thread/context ID
-          csr_data_lo = dword_width_gp'(current_context_id_i);
-        12'h801:  // Thread NPC seed - write-only, reads as 0
+        12'h081:  // CTXT CSR - Current thread/context ID
+          csr_data_lo = dword_width_gp'(current_virtual_context_id_i);
+        12'h082:  // Thread NPC seed - write-only, reads as 0
           csr_data_lo = '0;
         12'h802:  // Thread register seed / remote register write - write-only, reads as 0
           csr_data_lo = '0;
@@ -882,14 +882,14 @@ module bp_be_csr
 
   assign frm_dyn_o = rv64_frm_e'(fcsr_lo.frm);
 
-  // CSR 0x801 write: set the NPC for the logical context whose ID is in the upper bits
+  // CSR 0x801 write: set the NPC for the virtual context whose ID is in the upper bits
   // Write format: csr_data_li[vaddr_width_p +: context_id_width_p] = context_id
   //               csr_data_li[vaddr_width_p-1:0]                   = target NPC
-  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801);
-  assign ctx_npc_write_tid_o = csr_data_li[vaddr_width_p +: context_id_width_p];
+  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h082);
+  assign ctx_npc_write_virtual_context_id_o = csr_data_li[vaddr_width_p +: context_id_width_p];
   assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
 
-  // CSR 0x802 write: remote register write into a target logical context
+  // CSR 0x802 write: remote register write into a target virtual context
   // Write format: bits[38:0]                                    = value (39-bit vaddr width)
   //               bits[38+context_id_width_p : 39]              = context_id
   //               bits[38+context_id_width_p+reg_addr_width_gp : 39+context_id_width_p] = reg_addr
@@ -898,7 +898,7 @@ module bp_be_csr
   wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h802);
   assign ctx_rpush_v_o    = rpush_v & ~csr_data_li[fp_sel_bit_lp];
   assign ctx_rpush_fp_v_o = rpush_v &  csr_data_li[fp_sel_bit_lp];
-  assign ctx_rpush_tid_o  = csr_data_li[vaddr_width_p +: context_id_width_p];
+  assign ctx_rpush_virtual_context_id_o  = csr_data_li[vaddr_width_p +: context_id_width_p];
   assign ctx_rpush_reg_o  = csr_data_li[vaddr_width_p + context_id_width_p +: reg_addr_width_gp];
   assign ctx_rpush_data_o = {{(dpath_width_gp - vaddr_width_p){1'b0}}, csr_data_li[0 +: vaddr_width_p]};
 
@@ -907,9 +907,9 @@ module bp_be_csr
   //   if (!reset_i && csr_w_v_li) begin
   //     $display("[CSR @%0t] csrw: addr=0x%03x data=0x%016x csr_ctxt_write_v=%0b ctx_npc_write_v=%0b",
   //              $time, csr_addr_li, csr_data_li, csr_ctxt_write_v_o, ctx_npc_write_v_o);
-  //     if (csr_addr_li == 12'h801)
+  //     if (csr_addr_li == 12'h082)
   //       $display("[CSR @%0t] CSR0x801 write: raw_data=0x%016x -> tid=%0d npc=0x%08x",
-  //                $time, csr_data_li, ctx_npc_write_tid_o, ctx_npc_write_npc_o);
+  //                $time, csr_data_li, ctx_npc_write_virtual_context_id_o, ctx_npc_write_npc_o);
   //   end
   // end
 
