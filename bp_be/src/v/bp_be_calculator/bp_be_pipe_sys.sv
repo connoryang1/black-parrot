@@ -86,6 +86,15 @@ module bp_be_pipe_sys
    , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
+
+   // Context-cache L1 D$ service CSR path.
+   , input                                   ctx_l1_ready_i
+   , input                                   ctx_l1_resp_v_i
+   , input [dword_width_gp-1:0]              ctx_l1_resp_data_i
+   , output logic                            ctx_l1_cmd_v_o
+   , output logic                            ctx_l1_cmd_w_o
+   , output logic [paddr_width_p-1:0]        ctx_l1_cmd_paddr_o
+   , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
    );
 
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
@@ -166,6 +175,13 @@ module bp_be_pipe_sys
      ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_o)
      ,.ctx_rpush_reg_o(ctx_rpush_reg_o)
      ,.ctx_rpush_data_o(ctx_rpush_data_o)
+     ,.ctx_l1_ready_i(ctx_l1_ready_i)
+     ,.ctx_l1_resp_v_i(ctx_l1_resp_v_i)
+     ,.ctx_l1_resp_data_i(ctx_l1_resp_data_i)
+     ,.ctx_l1_cmd_v_o(ctx_l1_cmd_v_o)
+     ,.ctx_l1_cmd_w_o(ctx_l1_cmd_w_o)
+     ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_o)
+     ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_o)
      );
 
   logic [vaddr_width_p-1:0] retire_npc_r;

@@ -158,6 +158,46 @@ module bp_be_calculator_top
 
   rv64_frm_e frm_dyn_lo;
   bp_be_trans_info_s reservation_trans_info_lo;
+  logic ctx_l1_cmd_v_lo, ctx_l1_cmd_w_lo;
+  logic [paddr_width_p-1:0] ctx_l1_cmd_paddr_lo;
+  logic [dword_width_gp-1:0] ctx_l1_cmd_data_lo;
+  logic ctx_l1_cmd_pending_r;
+  logic pipe_mem_context_cache_dcache_v_li;
+  logic pipe_mem_context_cache_dcache_w_li;
+  logic [paddr_width_p-1:0] pipe_mem_context_cache_dcache_paddr_li;
+  logic [dword_width_gp-1:0] pipe_mem_context_cache_dcache_data_li;
+  logic pipe_mem_context_cache_dcache_yumi_lo;
+  logic pipe_mem_context_cache_dcache_ready_lo;
+  logic pipe_mem_context_cache_dcache_resp_v_lo;
+  logic [dword_width_gp-1:0] pipe_mem_context_cache_dcache_resp_data_lo;
+  wire ctx_l1_ready_li = pipe_mem_context_cache_dcache_ready_lo & ~context_cache_dcache_v_i;
+  wire ctx_l1_cmd_fire_li = ctx_l1_cmd_v_lo & pipe_mem_context_cache_dcache_yumi_lo;
+  wire ctx_l1_resp_v_li = ctx_l1_cmd_pending_r & pipe_mem_context_cache_dcache_resp_v_lo;
+  assign pipe_mem_context_cache_dcache_v_li = context_cache_dcache_v_i
+                                              | (ctx_l1_cmd_v_lo & ctx_l1_ready_li);
+  assign pipe_mem_context_cache_dcache_w_li = context_cache_dcache_v_i
+                                              ? context_cache_dcache_w_i
+                                              : ctx_l1_cmd_w_lo;
+  assign pipe_mem_context_cache_dcache_paddr_li = context_cache_dcache_v_i
+                                                  ? context_cache_dcache_paddr_i
+                                                  : ctx_l1_cmd_paddr_lo;
+  assign pipe_mem_context_cache_dcache_data_li = context_cache_dcache_v_i
+                                                 ? context_cache_dcache_data_i
+                                                 : ctx_l1_cmd_data_lo;
+  assign context_cache_dcache_yumi_o = context_cache_dcache_v_i
+                                       & pipe_mem_context_cache_dcache_yumi_lo;
+  assign context_cache_dcache_ready_o = pipe_mem_context_cache_dcache_ready_lo;
+  assign context_cache_dcache_resp_v_o = pipe_mem_context_cache_dcache_resp_v_lo
+                                         & ~ctx_l1_cmd_pending_r;
+  assign context_cache_dcache_resp_data_o = pipe_mem_context_cache_dcache_resp_data_lo;
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ctx_l1_cmd_pending_r <= 1'b0;
+    else if (ctx_l1_cmd_fire_li)
+      ctx_l1_cmd_pending_r <= 1'b1;
+    else if (ctx_l1_resp_v_li)
+      ctx_l1_cmd_pending_r <= 1'b0;
 
   bp_be_wb_pkt_s pipe_long_iwb_pkt, pipe_long_fwb_pkt;
 
@@ -295,6 +335,13 @@ module bp_be_calculator_top
      ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_o)
      ,.ctx_rpush_reg_o(ctx_rpush_reg_o)
      ,.ctx_rpush_data_o(ctx_rpush_data_o)
+     ,.ctx_l1_ready_i(ctx_l1_ready_li)
+     ,.ctx_l1_resp_v_i(ctx_l1_resp_v_li)
+     ,.ctx_l1_resp_data_i(pipe_mem_context_cache_dcache_resp_data_lo)
+     ,.ctx_l1_cmd_v_o(ctx_l1_cmd_v_lo)
+     ,.ctx_l1_cmd_w_o(ctx_l1_cmd_w_lo)
+     ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_lo)
+     ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_lo)
      );
 
   // Integer pipe: 1 cycle latency
@@ -496,14 +543,14 @@ module bp_be_calculator_top
 
      ,.trans_info_i(reservation_trans_info_lo)
 
-     ,.context_cache_dcache_v_i(context_cache_dcache_v_i)
-     ,.context_cache_dcache_w_i(context_cache_dcache_w_i)
-     ,.context_cache_dcache_paddr_i(context_cache_dcache_paddr_i)
-     ,.context_cache_dcache_data_i(context_cache_dcache_data_i)
-     ,.context_cache_dcache_yumi_o(context_cache_dcache_yumi_o)
-     ,.context_cache_dcache_ready_o(context_cache_dcache_ready_o)
-     ,.context_cache_dcache_resp_v_o(context_cache_dcache_resp_v_o)
-     ,.context_cache_dcache_resp_data_o(context_cache_dcache_resp_data_o)
+     ,.context_cache_dcache_v_i(pipe_mem_context_cache_dcache_v_li)
+     ,.context_cache_dcache_w_i(pipe_mem_context_cache_dcache_w_li)
+     ,.context_cache_dcache_paddr_i(pipe_mem_context_cache_dcache_paddr_li)
+     ,.context_cache_dcache_data_i(pipe_mem_context_cache_dcache_data_li)
+     ,.context_cache_dcache_yumi_o(pipe_mem_context_cache_dcache_yumi_lo)
+     ,.context_cache_dcache_ready_o(pipe_mem_context_cache_dcache_ready_lo)
+     ,.context_cache_dcache_resp_v_o(pipe_mem_context_cache_dcache_resp_v_lo)
+     ,.context_cache_dcache_resp_data_o(pipe_mem_context_cache_dcache_resp_data_lo)
      );
 
   // Floating point pipe: 3/4 cycle latency

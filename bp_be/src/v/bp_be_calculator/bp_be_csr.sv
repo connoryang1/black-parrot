@@ -69,6 +69,16 @@ module bp_be_csr
    , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
+
+   // Context-cache L1 D$ service CSRs:
+   //   0x084 data/result, 0x085 command/status.
+   , input                                   ctx_l1_ready_i
+   , input                                   ctx_l1_resp_v_i
+   , input [dword_width_gp-1:0]              ctx_l1_resp_data_i
+   , output logic                            ctx_l1_cmd_v_o
+   , output logic                            ctx_l1_cmd_w_o
+   , output logic [paddr_width_p-1:0]        ctx_l1_cmd_paddr_o
+   , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
    );
 
   // Declare parameterizable structs
@@ -118,6 +128,7 @@ module bp_be_csr
 
   // The muxed and demuxed CSR outputs
   logic [dword_width_gp-1:0] csr_data_lo;
+  logic [dword_width_gp-1:0] ctx_l1_data_r;
   logic exception_v_lo, interrupt_v_lo;
 
   rv64_mstatus_s sstatus_wmask_li, sstatus_rmask_li;
@@ -476,6 +487,10 @@ module bp_be_csr
           csr_data_lo = '0;
         12'h083:  // Thread register seed / remote register write - write-only, reads as 0
           csr_data_lo = '0;
+        12'h084:  // Context-cache L1 service data/result
+          csr_data_lo = ctx_l1_data_r;
+        12'h085:  // Context-cache L1 service status
+          csr_data_lo = {{(dword_width_gp-2){1'b0}}, ctx_l1_resp_v_i, ctx_l1_ready_i};
         default:
           begin
             csr_data_lo = '0;
@@ -807,7 +822,9 @@ module bp_be_csr
 
   wire ctxt_csr_addr_li = (csr_addr_li == 12'h081)
                            | (csr_addr_li == 12'h082)
-                           | (csr_addr_li == 12'h083);
+                           | (csr_addr_li == 12'h083)
+                           | (csr_addr_li == 12'h084)
+                           | (csr_addr_li == 12'h085);
 
   assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special.dcache_miss
                                                  ,retire_pkt_cast_i.special.fencei
@@ -901,6 +918,21 @@ module bp_be_csr
   assign ctx_rpush_virtual_context_id_o  = csr_data_li[vaddr_width_p +: context_id_width_p];
   assign ctx_rpush_reg_o  = csr_data_li[vaddr_width_p + context_id_width_p +: reg_addr_width_gp];
   assign ctx_rpush_data_o = {{(dpath_width_gp - vaddr_width_p){1'b0}}, csr_data_li[0 +: vaddr_width_p]};
+
+  wire ctx_l1_data_write_v_li = csr_w_v_li & (csr_addr_li == 12'h084);
+  wire ctx_l1_cmd_write_v_li = csr_w_v_li & (csr_addr_li == 12'h085);
+  assign ctx_l1_cmd_v_o = ctx_l1_cmd_write_v_li & ctx_l1_ready_i;
+  assign ctx_l1_cmd_w_o = csr_data_li[dword_width_gp-1];
+  assign ctx_l1_cmd_paddr_o = csr_data_li[0+:paddr_width_p];
+  assign ctx_l1_cmd_data_o = ctx_l1_data_r;
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ctx_l1_data_r <= '0;
+    else if (ctx_l1_resp_v_i)
+      ctx_l1_data_r <= ctx_l1_resp_data_i;
+    else if (ctx_l1_data_write_v_li)
+      ctx_l1_data_r <= csr_data_li;
 
   // Debug: trace every CSR write
   // always @(posedge clk_i) begin
