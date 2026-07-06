@@ -35,7 +35,7 @@ module bp_be_detector
    , input                             fdiv_busy_i
    , input                             mem_busy_i
    , input                             mem_ordered_i
-   , input [thread_id_width_p-1:0]     current_thread_id_i
+   , input [thread_id_width_p-1:0]     current_physical_thread_id_i
    , input [thread_id_width_p-1:0]     retire_thread_id_i
 
    // Pipeline control signals from the checker to the calculator
@@ -256,7 +256,7 @@ module bp_be_detector
        * Register-form CSR writes consume rs1 outside the normal integer
        * forwarding path. In particular, the early context-switch classifier
        * reads the target thread id from the scheduler regfile output, so a
-       * csrw 0x081 immediately after a produced rs1 value must wait until the
+       * csrw 0x800 immediately after a produced rs1 value must wait until the
        * value is architectural.
        */
 	      csr_rs1_haz_v = issue_pkt_cast_i.csrw

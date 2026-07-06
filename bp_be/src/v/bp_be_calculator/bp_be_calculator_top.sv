@@ -91,37 +91,37 @@ module bp_be_calculator_top
    , output logic [dcache_stat_info_width_lp-1:0]    stat_mem_o
 
    // Current thread selects the active per-thread CSR instance.
-   , input [thread_id_width_p-1:0]                   current_thread_id_i
-   // Software-visible logical context ID returned by CSR 0x081.
-   , input [context_id_width_p-1:0]                  current_context_id_i
+   , input [thread_id_width_p-1:0]                   current_physical_thread_id_i
+   // Software-visible virtual context ID returned by CSR 0x800.
+   , input [context_id_width_p-1:0]                  current_virtual_context_id_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]                   retire_thread_id_i
 
    // Save/restore physical CSR state for nonresident virtual contexts.
    , input                                           csr_context_restore_v_i
    , input                                           csr_context_restore_reset_i
-   , input [thread_id_width_p-1:0]                   csr_context_restore_thread_id_i
+   , input [thread_id_width_p-1:0]                   csr_context_restore_physical_thread_id_i
    , input [csr_context_width_lp-1:0]                csr_context_restore_data_i
-   , input [thread_id_width_p-1:0]                   csr_context_save_thread_id_i
+   , input [thread_id_width_p-1:0]                   csr_context_save_physical_thread_id_i
    , output logic [csr_context_width_lp-1:0]         csr_context_save_data_o
 
-   // Bootstrap: write target NPC for a logical context (CSR 0x801)
+   // Bootstrap: write target NPC for a virtual context (CSR 0x801)
    , output logic                                    ctx_npc_write_v_o
-   , output logic [context_id_width_p-1:0]           ctx_npc_write_tid_o
+   , output logic [context_id_width_p-1:0]           ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]                ctx_npc_write_npc_o
 
-   // CSR 0x802 remote register write into a logical context
+   // CSR 0x802 remote register write into a virtual context
    , output logic                                    ctx_rpush_v_o
    , output logic                                    ctx_rpush_fp_v_o
-   , output logic [context_id_width_p-1:0]           ctx_rpush_tid_o
+   , output logic [context_id_width_p-1:0]           ctx_rpush_virtual_context_id_o
    , output logic [reg_addr_width_gp-1:0]            ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]               ctx_rpush_data_o
 
    // Early classified ctxtsw event. Observable only until BE context state
    // consumes it as an architectural mini-commit.
    , output logic                                    fast_ctxtsw_v_o
-   , output logic [thread_id_width_p-1:0]            fast_ctxtsw_old_thread_id_o
-   , output logic [context_id_width_p-1:0]           fast_ctxtsw_thread_id_o
+   , output logic [thread_id_width_p-1:0]            fast_ctxtsw_old_physical_thread_id_o
+   , output logic [context_id_width_p-1:0]           fast_ctxtsw_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]                fast_ctxtsw_resume_npc_o
 
    , output logic                                    context_cache_drain_ready_o
@@ -268,21 +268,21 @@ module bp_be_calculator_top
      ,.frm_dyn_o(frm_dyn_lo)
 
      // Context switching
-     ,.current_thread_id_i(current_thread_id_i)
-     ,.current_context_id_i(current_context_id_i)
+     ,.current_physical_thread_id_i(current_physical_thread_id_i)
+     ,.current_virtual_context_id_i(current_virtual_context_id_i)
      ,.retire_thread_id_i(retire_thread_id_i)
      ,.csr_context_restore_v_i(csr_context_restore_v_i)
      ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
-     ,.csr_context_restore_thread_id_i(csr_context_restore_thread_id_i)
+     ,.csr_context_restore_physical_thread_id_i(csr_context_restore_physical_thread_id_i)
      ,.csr_context_restore_data_i(csr_context_restore_data_i)
-     ,.csr_context_save_thread_id_i(csr_context_save_thread_id_i)
+     ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_i)
      ,.csr_context_save_data_o(csr_context_save_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
-     ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
+     ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
      ,.ctx_rpush_v_o(ctx_rpush_v_o)
      ,.ctx_rpush_fp_v_o(ctx_rpush_fp_v_o)
-     ,.ctx_rpush_tid_o(ctx_rpush_tid_o)
+     ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_o)
      ,.ctx_rpush_reg_o(ctx_rpush_reg_o)
      ,.ctx_rpush_data_o(ctx_rpush_data_o)
      );
@@ -315,8 +315,8 @@ module bp_be_calculator_top
   assign fast_ctxtsw_v_o = reservation_r.v
                             & reservation_r.ctxtsw_v
                             & ~pipe_flush_v;
-  assign fast_ctxtsw_old_thread_id_o = reservation_r.thread_id[0 +: thread_id_width_p];
-  assign fast_ctxtsw_thread_id_o = reservation_r.ctxtsw_target_tid;
+  assign fast_ctxtsw_old_physical_thread_id_o = reservation_r.thread_id[0 +: thread_id_width_p];
+  assign fast_ctxtsw_virtual_context_id_o = reservation_r.ctxtsw_target_tid;
   assign fast_ctxtsw_resume_npc_o = reservation_r.pc + (reservation_r.size << 1'b1);
 
   logic [dword_width_gp-1:0] rs2_val_r;

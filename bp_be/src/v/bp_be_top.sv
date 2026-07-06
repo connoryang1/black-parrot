@@ -136,33 +136,33 @@ module bp_be_top
     ,e_context_cache_launch_fe
     ,e_context_cache_done
   } context_cache_state_r;
-  logic [thread_id_width_p-1:0] pending_ctxtsw_prev_thread_id_r;
-  logic [context_id_width_p-1:0] pending_ctxtsw_context_id_r;
-  logic [thread_id_width_p-1:0] pending_ctxtsw_thread_id_r;
+  logic [thread_id_width_p-1:0] pending_ctxtsw_prev_physical_thread_id_r;
+  logic [context_id_width_p-1:0] pending_ctxtsw_virtual_context_id_r;
+  logic [thread_id_width_p-1:0] pending_ctxtsw_physical_thread_id_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_resume_npc_r;
   logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
   logic [1:0] pending_ctxtsw_priv_mode_r;
   logic pending_ctxtsw_translation_en_r;
   logic [asid_width_p-1:0] pending_ctxtsw_asid_r;
   logic ctxtsw_launch_lo;
-  logic [num_contexts_p-1:0] logical_context_resident_v_r;
-  logic [num_contexts_p-1:0][thread_id_width_p-1:0] logical_context_slot_r;
-  logic [num_threads_p-1:0][context_id_width_p-1:0] resident_thread_context_id_r;
-  logic [context_id_width_p-1:0] current_context_id_r;
-  logic [thread_id_width_p-1:0] current_thread_id_lo;
+  logic [num_contexts_p-1:0] virtual_context_resident_v_r;
+  logic [num_contexts_p-1:0][thread_id_width_p-1:0] virtual_context_slot_r;
+  logic [num_threads_p-1:0][context_id_width_p-1:0] physical_thread_context_id_r;
+  logic [context_id_width_p-1:0] current_virtual_context_id_r;
+  logic [thread_id_width_p-1:0] current_physical_thread_id_lo;
   logic fast_ctxtsw_v_lo;
-  logic [thread_id_width_p-1:0] fast_ctxtsw_old_thread_id_lo;
-  logic [context_id_width_p-1:0] fast_ctxtsw_context_id_lo;
-  logic [thread_id_width_p-1:0] fast_ctxtsw_thread_id_lo;
+  logic [thread_id_width_p-1:0] fast_ctxtsw_old_physical_thread_id_lo;
+  logic [context_id_width_p-1:0] fast_ctxtsw_virtual_context_id_lo;
+  logic [thread_id_width_p-1:0] fast_ctxtsw_physical_thread_id_lo;
   logic [vaddr_width_p-1:0] fast_ctxtsw_resume_npc_lo;
   logic [vaddr_width_p-1:0] fast_ctxtsw_target_npc_lo;
   logic [1:0] fast_ctxtsw_target_priv_mode_lo;
   logic fast_ctxtsw_target_translation_en_lo;
   logic [asid_width_p-1:0] fast_ctxtsw_target_asid_lo;
   logic context_cache_miss_pending_r;
-  logic [context_id_width_p-1:0] context_cache_target_context_id_r;
-  logic [context_id_width_p-1:0] context_cache_victim_context_id_r;
-  logic [thread_id_width_p-1:0] context_cache_victim_thread_id_r;
+  logic [context_id_width_p-1:0] context_cache_target_virtual_context_id_r;
+  logic [context_id_width_p-1:0] context_cache_victim_virtual_context_id_r;
+  logic [thread_id_width_p-1:0] context_cache_victim_physical_thread_id_r;
   logic [vaddr_width_p-1:0] context_cache_resume_npc_r;
   logic [15:0] context_cache_state_cycles_r;
   logic [dword_width_gp-1:0] context_cache_miss_count_r;
@@ -172,16 +172,16 @@ module bp_be_top
   logic [num_threads_p-1:0][1:0] context_priv_mode_r;
   logic [num_threads_p-1:0] context_translation_en_r;
   logic [num_threads_p-1:0][asid_width_p-1:0] context_asid_r;
-  logic [num_contexts_p-1:0][vaddr_width_p-1:0] logical_context_npc_r;
-  logic [num_contexts_p-1:0][1:0] logical_context_priv_mode_r;
-  logic [num_contexts_p-1:0] logical_context_translation_en_r;
-  logic [num_contexts_p-1:0][asid_width_p-1:0] logical_context_asid_r;
-  logic [num_contexts_p-1:0] logical_context_csr_valid_r;
-  logic [num_contexts_p-1:0][csr_context_width_lp-1:0] logical_context_csr_state_r;
-  logic [num_threads_p-1:0][(2**reg_addr_width_gp)-1:0] resident_thread_fp_dirty_r;
-  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0] logical_context_fp_dirty_r;
-  logic [num_threads_p-1:0][(2**reg_addr_width_gp)-1:0] resident_thread_int_dirty_r;
-  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0] logical_context_int_dirty_r;
+  logic [num_contexts_p-1:0][vaddr_width_p-1:0] virtual_context_npc_r;
+  logic [num_contexts_p-1:0][1:0] virtual_context_priv_mode_r;
+  logic [num_contexts_p-1:0] virtual_context_translation_en_r;
+  logic [num_contexts_p-1:0][asid_width_p-1:0] virtual_context_asid_r;
+  logic [num_contexts_p-1:0] virtual_context_csr_valid_r;
+  logic [num_contexts_p-1:0][csr_context_width_lp-1:0] virtual_context_csr_state_r;
+  logic [num_threads_p-1:0][(2**reg_addr_width_gp)-1:0] physical_thread_fp_dirty_r;
+  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0] virtual_context_fp_dirty_r;
+  logic [num_threads_p-1:0][(2**reg_addr_width_gp)-1:0] physical_thread_int_dirty_r;
+  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0] virtual_context_int_dirty_r;
   logic [(2**reg_addr_width_gp)-1:0] context_cache_int_save_mask_r, context_cache_int_restore_mask_r;
   logic [(2**reg_addr_width_gp)-1:0] context_cache_fp_save_mask_r, context_cache_fp_restore_mask_r;
   logic [thread_id_width_p-1:0] retire_thread_id_lo;
@@ -196,10 +196,10 @@ module bp_be_top
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
   logic ctxtsw_target_resident_v_li;
-  logic [thread_id_width_p-1:0] ctxtsw_target_thread_id_li;
+  logic [thread_id_width_p-1:0] ctxtsw_target_physical_thread_id_li;
   logic fast_ctxtsw_resident_v_li;
   logic context_cache_miss_v_li;
-  logic [context_id_width_p-1:0] context_cache_miss_context_id_li;
+  logic [context_id_width_p-1:0] context_cache_miss_virtual_context_id_li;
   logic [vaddr_width_p-1:0] context_cache_miss_resume_npc_li;
   logic context_cache_commit_v_li;
   logic context_cache_launch_v_li;
@@ -209,14 +209,14 @@ module bp_be_top
   logic context_cache_drain_safe_li;
   logic [1:0] context_cache_scan_r_v_li;
   logic [1:0] context_cache_scan_w_v_li;
-  logic [thread_id_width_p-1:0] context_cache_scan_thread_id_li;
+  logic [thread_id_width_p-1:0] context_cache_scan_physical_thread_id_li;
   logic [1:0][reg_addr_width_gp-1:0] context_cache_scan_r_addr_li;
   logic [1:0][reg_addr_width_gp-1:0] context_cache_scan_w_addr_li;
   logic [1:0][dpath_width_gp-1:0] context_cache_scan_w_data_li;
   logic [1:0][dpath_width_gp-1:0] context_cache_scan_r_data_lo;
   logic [1:0] context_cache_fp_scan_r_v_li;
   logic [1:0] context_cache_fp_scan_w_v_li;
-  logic [thread_id_width_p-1:0] context_cache_fp_scan_thread_id_li;
+  logic [thread_id_width_p-1:0] context_cache_fp_scan_physical_thread_id_li;
   logic [1:0][reg_addr_width_gp-1:0] context_cache_fp_scan_r_addr_li;
   logic [1:0][reg_addr_width_gp-1:0] context_cache_fp_scan_w_addr_li;
   logic [1:0][dpath_width_gp-1:0] context_cache_fp_scan_w_data_li;
@@ -228,9 +228,9 @@ module bp_be_top
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_int_shadow_r;
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_fp_shadow_r;
   logic ctx_npc_write_resident_v_li;
-  logic [thread_id_width_p-1:0] ctx_npc_write_thread_id_li;
+  logic [thread_id_width_p-1:0] ctx_npc_write_physical_thread_id_li;
   logic ctx_rpush_resident_v_li;
-  logic [thread_id_width_p-1:0] ctx_rpush_thread_id_li;
+  logic [thread_id_width_p-1:0] ctx_rpush_physical_thread_id_li;
   logic scheduler_rpush_v_li;
   logic scheduler_rpush_fp_v_li;
   logic [(2**reg_addr_width_gp)-1:0] context_cache_victim_fp_dirty_li, context_cache_target_fp_dirty_li;
@@ -244,15 +244,15 @@ module bp_be_top
   logic context_cache_int_save_done_n_li, context_cache_int_restore_done_n_li;
   logic context_cache_fp_save_done_n_li, context_cache_fp_restore_done_n_li;
   logic [csr_context_width_lp-1:0] csr_context_save_data_lo;
-  wire [thread_id_width_p-1:0] csr_context_save_thread_id_li =
+  wire [thread_id_width_p-1:0] csr_context_save_physical_thread_id_li =
     context_cache_commit_v_li
-    ? context_cache_victim_thread_id_r
-    : pending_ctxtsw_sent_r ? pending_ctxtsw_prev_thread_id_r : current_thread_id_lo;
+    ? context_cache_victim_physical_thread_id_r
+    : pending_ctxtsw_sent_r ? pending_ctxtsw_prev_physical_thread_id_r : current_physical_thread_id_lo;
   wire csr_context_restore_v_li = context_cache_state_r == e_context_cache_launch_fe;
   wire csr_context_restore_reset_li =
-    ~logical_context_csr_valid_r[context_cache_target_context_id_r];
+    ~virtual_context_csr_valid_r[context_cache_target_virtual_context_id_r];
   wire [csr_context_width_lp-1:0] csr_context_restore_data_li =
-    logical_context_csr_state_r[context_cache_target_context_id_r];
+    virtual_context_csr_state_r[context_cache_target_virtual_context_id_r];
   localparam int reg_count_lp = 2**reg_addr_width_gp;
   wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
                                   & fast_ctxtsw_resident_v_li
@@ -357,16 +357,16 @@ module bp_be_top
   assign context_cache_scan_w_v_li = context_cache_int_restore_pick_v_li
                                      & {2{context_cache_state_r == e_context_cache_save_restore_regs}}
                                      & {2{context_cache_int_restore_phase_r}};
-  assign context_cache_scan_thread_id_li = context_cache_victim_thread_id_r;
+  assign context_cache_scan_physical_thread_id_li = context_cache_victim_physical_thread_id_r;
   assign context_cache_scan_r_addr_li = context_cache_int_save_pick_addr_li;
   assign context_cache_scan_w_addr_li = context_cache_int_restore_pick_addr_li;
   assign context_cache_scan_w_data_li[0] =
-    logical_context_int_dirty_r[context_cache_target_context_id_r][context_cache_scan_w_addr_li[0]]
-    ? context_cache_int_shadow_r[context_cache_target_context_id_r][context_cache_scan_w_addr_li[0]]
+    virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r][context_cache_scan_w_addr_li[0]]
+    ? context_cache_int_shadow_r[context_cache_target_virtual_context_id_r][context_cache_scan_w_addr_li[0]]
     : '0;
   assign context_cache_scan_w_data_li[1] =
-    logical_context_int_dirty_r[context_cache_target_context_id_r][context_cache_scan_w_addr_li[1]]
-    ? context_cache_int_shadow_r[context_cache_target_context_id_r][context_cache_scan_w_addr_li[1]]
+    virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r][context_cache_scan_w_addr_li[1]]
+    ? context_cache_int_shadow_r[context_cache_target_virtual_context_id_r][context_cache_scan_w_addr_li[1]]
     : '0;
   assign context_cache_fp_scan_r_v_li = context_cache_fp_save_pick_v_li
                                         & {2{context_cache_state_r == e_context_cache_save_restore_fp_regs}}
@@ -374,36 +374,36 @@ module bp_be_top
   assign context_cache_fp_scan_w_v_li = context_cache_fp_restore_pick_v_li
                                         & {2{context_cache_state_r == e_context_cache_save_restore_fp_regs}}
                                         & {2{context_cache_fp_restore_phase_r}};
-  assign context_cache_fp_scan_thread_id_li = context_cache_victim_thread_id_r;
+  assign context_cache_fp_scan_physical_thread_id_li = context_cache_victim_physical_thread_id_r;
   assign context_cache_fp_scan_r_addr_li = context_cache_fp_save_pick_addr_li;
   assign context_cache_fp_scan_w_addr_li = context_cache_fp_restore_pick_addr_li;
   assign context_cache_fp_scan_w_data_li[0] =
-    logical_context_fp_dirty_r[context_cache_target_context_id_r][context_cache_fp_scan_w_addr_li[0]]
-    ? context_cache_fp_shadow_r[context_cache_target_context_id_r][context_cache_fp_scan_w_addr_li[0]]
+    virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[0]]
+    ? context_cache_fp_shadow_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[0]]
     : '0;
   assign context_cache_fp_scan_w_data_li[1] =
-    logical_context_fp_dirty_r[context_cache_target_context_id_r][context_cache_fp_scan_w_addr_li[1]]
-    ? context_cache_fp_shadow_r[context_cache_target_context_id_r][context_cache_fp_scan_w_addr_li[1]]
+    virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[1]]
+    ? context_cache_fp_shadow_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[1]]
     : '0;
-  assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_thread_id_r : current_thread_id_lo;
-  wire [thread_id_width_p-1:0] scheduler_current_thread_id_li =
-    (commit_pkt.ctxtsw & pending_ctxtsw_sent_r) ? pending_ctxtsw_thread_id_r : current_thread_id_lo;
+  assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_physical_thread_id_r : current_physical_thread_id_lo;
+  wire [thread_id_width_p-1:0] scheduler_current_physical_thread_id_li =
+    (commit_pkt.ctxtsw & pending_ctxtsw_sent_r) ? pending_ctxtsw_physical_thread_id_r : current_physical_thread_id_lo;
 
   always_comb begin
     ctx_npc_write_resident_v_li = 1'b0;
-    ctx_npc_write_thread_id_li = '0;
-    if (ctx_npc_write_v_lo && (ctx_npc_write_tid_lo < num_contexts_p)) begin
-      ctx_npc_write_resident_v_li = logical_context_resident_v_r[ctx_npc_write_tid_lo];
-      ctx_npc_write_thread_id_li = logical_context_slot_r[ctx_npc_write_tid_lo];
+    ctx_npc_write_physical_thread_id_li = '0;
+    if (ctx_npc_write_v_lo && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)) begin
+      ctx_npc_write_resident_v_li = virtual_context_resident_v_r[ctx_npc_write_virtual_context_id_lo];
+      ctx_npc_write_physical_thread_id_li = virtual_context_slot_r[ctx_npc_write_virtual_context_id_lo];
     end
   end
 
   always_comb begin
     ctx_rpush_resident_v_li = 1'b0;
-    ctx_rpush_thread_id_li = '0;
-    if ((ctx_rpush_v_lo | ctx_rpush_fp_v_lo) && (ctx_rpush_tid_lo < num_contexts_p)) begin
-      ctx_rpush_resident_v_li = logical_context_resident_v_r[ctx_rpush_tid_lo];
-      ctx_rpush_thread_id_li = logical_context_slot_r[ctx_rpush_tid_lo];
+    ctx_rpush_physical_thread_id_li = '0;
+    if ((ctx_rpush_v_lo | ctx_rpush_fp_v_lo) && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
+      ctx_rpush_resident_v_li = virtual_context_resident_v_r[ctx_rpush_virtual_context_id_lo];
+      ctx_rpush_physical_thread_id_li = virtual_context_slot_r[ctx_rpush_virtual_context_id_lo];
     end
   end
 
@@ -412,66 +412,66 @@ module bp_be_top
 
   assign fe_ctxtsw_v_o = context_cache_launch_v_li | fast_ctxtsw_launch_v_li | ctxtsw_launch_lo;
   assign fe_ctxtsw_npc_o = context_cache_launch_v_li
-                            ? logical_context_npc_r[context_cache_target_context_id_r]
+                            ? virtual_context_npc_r[context_cache_target_virtual_context_id_r]
                             : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_npc_lo : pending_ctxtsw_npc_r;
   assign fe_ctxtsw_thread_id_o = context_cache_launch_v_li
-                                  ? context_cache_victim_thread_id_r
-                                  : fast_ctxtsw_launch_v_li ? fast_ctxtsw_thread_id_lo : pending_ctxtsw_thread_id_r;
+                                  ? context_cache_victim_physical_thread_id_r
+                                  : fast_ctxtsw_launch_v_li ? fast_ctxtsw_physical_thread_id_lo : pending_ctxtsw_physical_thread_id_r;
   assign fe_ctxtsw_priv_o = context_cache_launch_v_li
-                             ? logical_context_priv_mode_r[context_cache_target_context_id_r]
+                             ? virtual_context_priv_mode_r[context_cache_target_virtual_context_id_r]
                              : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_priv_mode_lo : pending_ctxtsw_priv_mode_r;
   assign fe_ctxtsw_translation_en_o = context_cache_launch_v_li
-                                      ? logical_context_translation_en_r[context_cache_target_context_id_r]
+                                      ? virtual_context_translation_en_r[context_cache_target_virtual_context_id_r]
                                       : fast_ctxtsw_launch_v_li
                                       ? fast_ctxtsw_target_translation_en_lo
                                       : pending_ctxtsw_translation_en_r;
   assign fe_ctxtsw_asid_o = context_cache_launch_v_li
-                             ? logical_context_asid_r[context_cache_target_context_id_r]
+                             ? virtual_context_asid_r[context_cache_target_virtual_context_id_r]
                              : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_asid_lo : pending_ctxtsw_asid_r;
 
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
       for (int i = 0; i < num_contexts_p; i++) begin
-        logical_context_resident_v_r[i] <= (i < num_threads_p);
-        logical_context_slot_r[i] <= thread_id_width_p'(i);
+        virtual_context_resident_v_r[i] <= (i < num_threads_p);
+        virtual_context_slot_r[i] <= thread_id_width_p'(i);
       end
       for (int i = 0; i < num_threads_p; i++)
-        resident_thread_context_id_r[i] <= context_id_width_p'(i);
+        physical_thread_context_id_r[i] <= context_id_width_p'(i);
     end else if (context_cache_state_r == e_context_cache_launch_fe) begin
-      logical_context_resident_v_r[context_cache_victim_context_id_r] <= 1'b0;
-      logical_context_resident_v_r[context_cache_target_context_id_r] <= 1'b1;
-      logical_context_slot_r[context_cache_target_context_id_r] <= context_cache_victim_thread_id_r;
-      resident_thread_context_id_r[context_cache_victim_thread_id_r] <= context_cache_target_context_id_r;
+      virtual_context_resident_v_r[context_cache_victim_virtual_context_id_r] <= 1'b0;
+      virtual_context_resident_v_r[context_cache_target_virtual_context_id_r] <= 1'b1;
+      virtual_context_slot_r[context_cache_target_virtual_context_id_r] <= context_cache_victim_physical_thread_id_r;
+      physical_thread_context_id_r[context_cache_victim_physical_thread_id_r] <= context_cache_target_virtual_context_id_r;
     end
   end
 
-  // Bootstrap: write a target NPC for a logical context (CSR 0x801)
+  // Bootstrap: write a target NPC for a virtual context (CSR 0x801)
   logic ctx_npc_write_v_lo;
-  logic [context_id_width_p-1:0] ctx_npc_write_tid_lo;
+  logic [context_id_width_p-1:0] ctx_npc_write_virtual_context_id_lo;
   logic [vaddr_width_p-1:0] ctx_npc_write_npc_lo;
 
-  // CSR 0x802 remote register write into a logical context
+  // CSR 0x802 remote register write into a virtual context
   logic ctx_rpush_v_lo;
   logic ctx_rpush_fp_v_lo;
-  logic [context_id_width_p-1:0] ctx_rpush_tid_lo;
+  logic [context_id_width_p-1:0] ctx_rpush_virtual_context_id_lo;
   logic [reg_addr_width_gp-1:0] ctx_rpush_reg_lo;
   logic [dpath_width_gp-1:0] ctx_rpush_data_lo;
 
   // Active hardware thread ID selected by CTXT CSR writes.
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
-      current_thread_id_lo <= '0;
-      current_context_id_r <= '0;
+      current_physical_thread_id_lo <= '0;
+      current_virtual_context_id_r <= '0;
     end
     else if (context_cache_state_r == e_context_cache_launch_fe) begin
-      current_thread_id_lo <= context_cache_victim_thread_id_r;
-      current_context_id_r <= context_cache_target_context_id_r;
+      current_physical_thread_id_lo <= context_cache_victim_physical_thread_id_r;
+      current_virtual_context_id_r <= context_cache_target_virtual_context_id_r;
     end
     else if (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw & pending_ctxtsw_v_r)
-      current_thread_id_lo <= pending_ctxtsw_prev_thread_id_r;
+      current_physical_thread_id_lo <= pending_ctxtsw_prev_physical_thread_id_r;
     else if (commit_pkt.ctxtsw & pending_ctxtsw_v_r) begin
-      current_thread_id_lo <= pending_ctxtsw_thread_id_r;
-      current_context_id_r <= pending_ctxtsw_context_id_r;
+      current_physical_thread_id_lo <= pending_ctxtsw_physical_thread_id_r;
+      current_virtual_context_id_r <= pending_ctxtsw_virtual_context_id_r;
     end
   end
 
@@ -484,9 +484,9 @@ module bp_be_top
       pending_ctxtsw_sent_r <= 1'b0;
       ctxtsw_launch_pending_r <= 1'b0;
       spec_ctxtsw_state_r <= e_ctxtsw_idle;
-      pending_ctxtsw_prev_thread_id_r <= '0;
-      pending_ctxtsw_context_id_r <= '0;
-      pending_ctxtsw_thread_id_r <= '0;
+      pending_ctxtsw_prev_physical_thread_id_r <= '0;
+      pending_ctxtsw_virtual_context_id_r <= '0;
+      pending_ctxtsw_physical_thread_id_r <= '0;
       pending_ctxtsw_resume_npc_r <= '0;
       pending_ctxtsw_npc_r <= '0;
       pending_ctxtsw_priv_mode_r <= 2'b11;
@@ -505,9 +505,9 @@ module bp_be_top
         pending_ctxtsw_sent_r <= 1'b0;
         ctxtsw_launch_pending_r <= 1'b1;
         spec_ctxtsw_state_r <= e_ctxtsw_prepared;
-        pending_ctxtsw_prev_thread_id_r <= fast_ctxtsw_old_thread_id_lo;
-        pending_ctxtsw_context_id_r <= fast_ctxtsw_context_id_lo;
-        pending_ctxtsw_thread_id_r <= fast_ctxtsw_thread_id_lo;
+        pending_ctxtsw_prev_physical_thread_id_r <= fast_ctxtsw_old_physical_thread_id_lo;
+        pending_ctxtsw_virtual_context_id_r <= fast_ctxtsw_virtual_context_id_lo;
+        pending_ctxtsw_physical_thread_id_r <= fast_ctxtsw_physical_thread_id_lo;
         pending_ctxtsw_resume_npc_r <= fast_ctxtsw_resume_npc_lo;
         pending_ctxtsw_npc_r <= fast_ctxtsw_target_npc_lo;
         pending_ctxtsw_priv_mode_r <= fast_ctxtsw_target_priv_mode_lo;
@@ -536,134 +536,134 @@ module bp_be_top
         context_asid_r[i] <= '0;
       end
       for (int i = 0; i < num_contexts_p; i++) begin
-        logical_context_npc_r[i] <= '0;
-        logical_context_priv_mode_r[i] <= 2'b11;
-        logical_context_translation_en_r[i] <= 1'b0;
-        logical_context_asid_r[i] <= '0;
-        logical_context_csr_valid_r[i] <= 1'b0;
-        logical_context_csr_state_r[i] <= '0;
+        virtual_context_npc_r[i] <= '0;
+        virtual_context_priv_mode_r[i] <= 2'b11;
+        virtual_context_translation_en_r[i] <= 1'b0;
+        virtual_context_asid_r[i] <= '0;
+        virtual_context_csr_valid_r[i] <= 1'b0;
+        virtual_context_csr_state_r[i] <= '0;
       end
     end else begin
       if (commit_pkt.ctxtsw) begin
-        logic [thread_id_width_p-1:0] save_thread_id_li;
-        logic [context_id_width_p-1:0] save_context_id_li;
+        logic [thread_id_width_p-1:0] save_physical_thread_id_li;
+        logic [context_id_width_p-1:0] save_virtual_context_id_li;
         logic [vaddr_width_p-1:0] save_resume_npc_li;
-        save_thread_id_li = context_cache_commit_v_li
-                            ? context_cache_victim_thread_id_r
-                            : pending_ctxtsw_prev_thread_id_r;
-        save_context_id_li = context_cache_commit_v_li
-                             ? context_cache_victim_context_id_r
-                             : current_context_id_r;
+        save_physical_thread_id_li = context_cache_commit_v_li
+                            ? context_cache_victim_physical_thread_id_r
+                            : pending_ctxtsw_prev_physical_thread_id_r;
+        save_virtual_context_id_li = context_cache_commit_v_li
+                             ? context_cache_victim_virtual_context_id_r
+                             : current_virtual_context_id_r;
         save_resume_npc_li = context_cache_commit_v_li
                              ? context_cache_resume_npc_r
                              : pending_ctxtsw_resume_npc_r;
 
-        if (save_thread_id_li < num_threads_p) begin
-          context_npc_r[save_thread_id_li] <= save_resume_npc_li;
-          context_priv_mode_r[save_thread_id_li] <= commit_pkt.priv_n;
-          context_translation_en_r[save_thread_id_li] <= commit_pkt.translation_en_n;
-          context_asid_r[save_thread_id_li] <= trans_info_lo.asid;
+        if (save_physical_thread_id_li < num_threads_p) begin
+          context_npc_r[save_physical_thread_id_li] <= save_resume_npc_li;
+          context_priv_mode_r[save_physical_thread_id_li] <= commit_pkt.priv_n;
+          context_translation_en_r[save_physical_thread_id_li] <= commit_pkt.translation_en_n;
+          context_asid_r[save_physical_thread_id_li] <= trans_info_lo.asid;
         end
 
-        if (save_context_id_li < num_contexts_p) begin
-          logical_context_npc_r[save_context_id_li] <= save_resume_npc_li;
-          logical_context_priv_mode_r[save_context_id_li] <= commit_pkt.priv_n;
-          logical_context_translation_en_r[save_context_id_li] <= commit_pkt.translation_en_n;
-          logical_context_asid_r[save_context_id_li] <= trans_info_lo.asid;
-          logical_context_csr_state_r[save_context_id_li] <= csr_context_save_data_lo;
-          logical_context_csr_valid_r[save_context_id_li] <= 1'b1;
+        if (save_virtual_context_id_li < num_contexts_p) begin
+          virtual_context_npc_r[save_virtual_context_id_li] <= save_resume_npc_li;
+          virtual_context_priv_mode_r[save_virtual_context_id_li] <= commit_pkt.priv_n;
+          virtual_context_translation_en_r[save_virtual_context_id_li] <= commit_pkt.translation_en_n;
+          virtual_context_asid_r[save_virtual_context_id_li] <= trans_info_lo.asid;
+          virtual_context_csr_state_r[save_virtual_context_id_li] <= csr_context_save_data_lo;
+          virtual_context_csr_valid_r[save_virtual_context_id_li] <= 1'b1;
         end
       end
 
-      if (ctx_npc_write_v_lo && (ctx_npc_write_tid_lo < num_contexts_p)) begin
-        logical_context_npc_r[ctx_npc_write_tid_lo] <= ctx_npc_write_npc_lo;
-        logical_context_priv_mode_r[ctx_npc_write_tid_lo] <= commit_pkt.priv_n;
-        logical_context_translation_en_r[ctx_npc_write_tid_lo] <= commit_pkt.translation_en_n;
-        logical_context_asid_r[ctx_npc_write_tid_lo] <= trans_info_lo.asid;
+      if (ctx_npc_write_v_lo && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)) begin
+        virtual_context_npc_r[ctx_npc_write_virtual_context_id_lo] <= ctx_npc_write_npc_lo;
+        virtual_context_priv_mode_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.priv_n;
+        virtual_context_translation_en_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.translation_en_n;
+        virtual_context_asid_r[ctx_npc_write_virtual_context_id_lo] <= trans_info_lo.asid;
 
-        if (ctx_npc_write_resident_v_li && (ctx_npc_write_thread_id_li < num_threads_p)) begin
-          context_npc_r[ctx_npc_write_thread_id_li] <= ctx_npc_write_npc_lo;
-          context_priv_mode_r[ctx_npc_write_thread_id_li] <= commit_pkt.priv_n;
-          context_translation_en_r[ctx_npc_write_thread_id_li] <= commit_pkt.translation_en_n;
-          context_asid_r[ctx_npc_write_thread_id_li] <= trans_info_lo.asid;
+        if (ctx_npc_write_resident_v_li && (ctx_npc_write_physical_thread_id_li < num_threads_p)) begin
+          context_npc_r[ctx_npc_write_physical_thread_id_li] <= ctx_npc_write_npc_lo;
+          context_priv_mode_r[ctx_npc_write_physical_thread_id_li] <= commit_pkt.priv_n;
+          context_translation_en_r[ctx_npc_write_physical_thread_id_li] <= commit_pkt.translation_en_n;
+          context_asid_r[ctx_npc_write_physical_thread_id_li] <= trans_info_lo.asid;
         end
       end
 
       if (context_cache_state_r == e_context_cache_launch_fe) begin
-        context_npc_r[context_cache_victim_thread_id_r]
-          <= logical_context_npc_r[context_cache_target_context_id_r];
-        context_priv_mode_r[context_cache_victim_thread_id_r]
-          <= logical_context_priv_mode_r[context_cache_target_context_id_r];
-        context_translation_en_r[context_cache_victim_thread_id_r]
-          <= logical_context_translation_en_r[context_cache_target_context_id_r];
-        context_asid_r[context_cache_victim_thread_id_r]
-          <= logical_context_asid_r[context_cache_target_context_id_r];
+        context_npc_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_npc_r[context_cache_target_virtual_context_id_r];
+        context_priv_mode_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_priv_mode_r[context_cache_target_virtual_context_id_r];
+        context_translation_en_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_translation_en_r[context_cache_target_virtual_context_id_r];
+        context_asid_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_asid_r[context_cache_target_virtual_context_id_r];
       end
     end
   end
 
-  wire [thread_id_width_p-1:0] context_read_thread_id_li =
+  wire [thread_id_width_p-1:0] context_read_physical_thread_id_li =
     commit_pkt.ctxtsw
-    ? (context_cache_commit_v_li ? current_thread_id_lo : pending_ctxtsw_thread_id_r)
-    : current_thread_id_lo;
-  wire [thread_id_width_p-1:0] context_write_thread_id_li =
-    ctx_npc_write_resident_v_li ? ctx_npc_write_thread_id_li
-    : commit_pkt.ctxtsw ? pending_ctxtsw_prev_thread_id_r
-    : current_thread_id_lo;
+    ? (context_cache_commit_v_li ? current_physical_thread_id_lo : pending_ctxtsw_physical_thread_id_r)
+    : current_physical_thread_id_lo;
+  wire [thread_id_width_p-1:0] context_write_physical_thread_id_li =
+    ctx_npc_write_resident_v_li ? ctx_npc_write_physical_thread_id_li
+    : commit_pkt.ctxtsw ? pending_ctxtsw_prev_physical_thread_id_r
+    : current_physical_thread_id_lo;
   wire context_fwd_v = (commit_pkt.ctxtsw | ctx_npc_write_resident_v_li)
-                       && (context_write_thread_id_li == context_read_thread_id_li)
-                       && (context_write_thread_id_li < num_threads_p)
-                       && (context_read_thread_id_li < num_threads_p);
-  wire [context_id_width_p-1:0] ctxtsw_target_context_id_li = dispatch_pkt.ctxtsw_target_tid;
-  wire [thread_id_width_p-1:0] fast_ctxtsw_target_thread_id_li = fast_ctxtsw_thread_id_lo;
+                       && (context_write_physical_thread_id_li == context_read_physical_thread_id_li)
+                       && (context_write_physical_thread_id_li < num_threads_p)
+                       && (context_read_physical_thread_id_li < num_threads_p);
+  wire [context_id_width_p-1:0] ctxtsw_target_virtual_context_id_li = dispatch_pkt.ctxtsw_target_tid;
+  wire [thread_id_width_p-1:0] fast_ctxtsw_target_physical_thread_id_li = fast_ctxtsw_physical_thread_id_lo;
   wire ctxtsw_target_fwd_v =
     ctx_npc_write_v_lo
-    && (ctx_npc_write_tid_lo == ctxtsw_target_context_id_li)
-    && (ctx_npc_write_tid_lo < num_contexts_p)
+    && (ctx_npc_write_virtual_context_id_lo == ctxtsw_target_virtual_context_id_li)
+    && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
     && ctxtsw_target_resident_v_li
-    && (ctxtsw_target_thread_id_li < num_threads_p);
+    && (ctxtsw_target_physical_thread_id_li < num_threads_p);
   wire fast_ctxtsw_target_fwd_v =
     ctx_npc_write_v_lo
-    && (ctx_npc_write_tid_lo == fast_ctxtsw_context_id_lo)
-    && (ctx_npc_write_tid_lo < num_contexts_p)
+    && (ctx_npc_write_virtual_context_id_lo == fast_ctxtsw_virtual_context_id_lo)
+    && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
     && fast_ctxtsw_resident_v_li
-    && (fast_ctxtsw_target_thread_id_li < num_threads_p);
+    && (fast_ctxtsw_target_physical_thread_id_li < num_threads_p);
 
   always_comb begin
     ctxtsw_target_resident_v_li = 1'b0;
-    ctxtsw_target_thread_id_li = '0;
-    if (ctxtsw_target_context_id_li < num_contexts_p) begin
-      ctxtsw_target_resident_v_li = logical_context_resident_v_r[ctxtsw_target_context_id_li];
-      ctxtsw_target_thread_id_li = logical_context_slot_r[ctxtsw_target_context_id_li];
+    ctxtsw_target_physical_thread_id_li = '0;
+    if (ctxtsw_target_virtual_context_id_li < num_contexts_p) begin
+      ctxtsw_target_resident_v_li = virtual_context_resident_v_r[ctxtsw_target_virtual_context_id_li];
+      ctxtsw_target_physical_thread_id_li = virtual_context_slot_r[ctxtsw_target_virtual_context_id_li];
     end
   end
 
   always_comb begin
     fast_ctxtsw_resident_v_li = 1'b0;
-    fast_ctxtsw_thread_id_lo = '0;
-    if (fast_ctxtsw_context_id_lo < num_contexts_p) begin
-      fast_ctxtsw_resident_v_li = logical_context_resident_v_r[fast_ctxtsw_context_id_lo];
-      fast_ctxtsw_thread_id_lo = logical_context_slot_r[fast_ctxtsw_context_id_lo];
+    fast_ctxtsw_physical_thread_id_lo = '0;
+    if (fast_ctxtsw_virtual_context_id_lo < num_contexts_p) begin
+      fast_ctxtsw_resident_v_li = virtual_context_resident_v_r[fast_ctxtsw_virtual_context_id_lo];
+      fast_ctxtsw_physical_thread_id_lo = virtual_context_slot_r[fast_ctxtsw_virtual_context_id_lo];
     end
   end
 
-  assign context_cache_victim_fp_dirty_li = resident_thread_fp_dirty_r[context_cache_victim_thread_id_r];
-  assign context_cache_target_fp_dirty_li = logical_context_fp_dirty_r[context_cache_target_context_id_r];
+  assign context_cache_victim_fp_dirty_li = physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r];
+  assign context_cache_target_fp_dirty_li = virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r];
   assign context_cache_fp_copy_v_li = (|context_cache_victim_fp_dirty_li)
                                       | (|context_cache_target_fp_dirty_li);
 
   always_comb begin
     context_cache_miss_v_li = 1'b0;
-    context_cache_miss_context_id_li = '0;
+    context_cache_miss_virtual_context_id_li = '0;
     context_cache_miss_resume_npc_li = '0;
 
     if (fast_ctxtsw_v_lo && !fast_ctxtsw_resident_v_li) begin
       context_cache_miss_v_li = 1'b1;
-      context_cache_miss_context_id_li = fast_ctxtsw_context_id_lo;
+      context_cache_miss_virtual_context_id_li = fast_ctxtsw_virtual_context_id_lo;
       context_cache_miss_resume_npc_li = fast_ctxtsw_resume_npc_lo;
     end else if (dispatch_pkt.ctxtsw_v && !ctxtsw_target_resident_v_li) begin
       context_cache_miss_v_li = 1'b1;
-      context_cache_miss_context_id_li = ctxtsw_target_context_id_li;
+      context_cache_miss_virtual_context_id_li = ctxtsw_target_virtual_context_id_li;
       context_cache_miss_resume_npc_li = dispatch_pkt.pc + (dispatch_pkt.size << 1'b1);
     end
   end
@@ -674,9 +674,9 @@ module bp_be_top
     if (reset_i) begin
       context_cache_state_r <= e_context_cache_idle;
       context_cache_miss_pending_r <= 1'b0;
-      context_cache_target_context_id_r <= '0;
-      context_cache_victim_context_id_r <= '0;
-      context_cache_victim_thread_id_r <= '0;
+      context_cache_target_virtual_context_id_r <= '0;
+      context_cache_victim_virtual_context_id_r <= '0;
+      context_cache_victim_physical_thread_id_r <= '0;
       context_cache_resume_npc_r <= '0;
       context_cache_state_cycles_r <= '0;
       context_cache_miss_count_r <= '0;
@@ -690,10 +690,10 @@ module bp_be_top
       context_cache_int_restore_mask_r <= '0;
       context_cache_fp_save_mask_r <= '0;
       context_cache_fp_restore_mask_r <= '0;
-      resident_thread_fp_dirty_r <= '0;
-      logical_context_fp_dirty_r <= '0;
-      resident_thread_int_dirty_r <= '0;
-      logical_context_int_dirty_r <= '0;
+      physical_thread_fp_dirty_r <= '0;
+      virtual_context_fp_dirty_r <= '0;
+      physical_thread_int_dirty_r <= '0;
+      virtual_context_int_dirty_r <= '0;
       for (int i = 0; i < num_contexts_p; i++)
         for (int j = 0; j < 2**reg_addr_width_gp; j++) begin
           context_cache_int_shadow_r[i][j] <= '0;
@@ -710,51 +710,51 @@ module bp_be_top
       context_cache_fp_scan_save_idx_r[0] <= context_cache_fp_scan_r_addr_li[0];
       context_cache_fp_scan_save_idx_r[1] <= context_cache_fp_scan_r_addr_li[1];
       if (context_cache_scan_save_v_r[0])
-        context_cache_int_shadow_r[context_cache_victim_context_id_r][context_cache_scan_save_idx_r[0]]
+        context_cache_int_shadow_r[context_cache_victim_virtual_context_id_r][context_cache_scan_save_idx_r[0]]
           <= context_cache_scan_r_data_lo[0];
       if (context_cache_scan_save_v_r[1])
-        context_cache_int_shadow_r[context_cache_victim_context_id_r][context_cache_scan_save_idx_r[1]]
+        context_cache_int_shadow_r[context_cache_victim_virtual_context_id_r][context_cache_scan_save_idx_r[1]]
           <= context_cache_scan_r_data_lo[1];
       if (context_cache_fp_scan_save_v_r[0])
-        context_cache_fp_shadow_r[context_cache_victim_context_id_r][context_cache_fp_scan_save_idx_r[0]]
+        context_cache_fp_shadow_r[context_cache_victim_virtual_context_id_r][context_cache_fp_scan_save_idx_r[0]]
           <= context_cache_fp_scan_r_data_lo[0];
       if (context_cache_fp_scan_save_v_r[1])
-        context_cache_fp_shadow_r[context_cache_victim_context_id_r][context_cache_fp_scan_save_idx_r[1]]
+        context_cache_fp_shadow_r[context_cache_victim_virtual_context_id_r][context_cache_fp_scan_save_idx_r[1]]
           <= context_cache_fp_scan_r_data_lo[1];
-      if (ctx_rpush_v_lo && !ctx_rpush_resident_v_li && (ctx_rpush_tid_lo < num_contexts_p)) begin
-        context_cache_int_shadow_r[ctx_rpush_tid_lo][ctx_rpush_reg_lo] <= ctx_rpush_data_lo;
+      if (ctx_rpush_v_lo && !ctx_rpush_resident_v_li && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
+        context_cache_int_shadow_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= ctx_rpush_data_lo;
         if (ctx_rpush_reg_lo != '0)
-          logical_context_int_dirty_r[ctx_rpush_tid_lo][ctx_rpush_reg_lo] <= 1'b1;
+          virtual_context_int_dirty_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= 1'b1;
       end
-      if (ctx_rpush_v_lo && ctx_rpush_resident_v_li && (ctx_rpush_tid_lo < num_contexts_p)) begin
+      if (ctx_rpush_v_lo && ctx_rpush_resident_v_li && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
         if (ctx_rpush_reg_lo != '0) begin
-          logical_context_int_dirty_r[ctx_rpush_tid_lo][ctx_rpush_reg_lo] <= 1'b1;
-          resident_thread_int_dirty_r[ctx_rpush_thread_id_li][ctx_rpush_reg_lo] <= 1'b1;
+          virtual_context_int_dirty_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= 1'b1;
+          physical_thread_int_dirty_r[ctx_rpush_physical_thread_id_li][ctx_rpush_reg_lo] <= 1'b1;
         end
       end
-      if (ctx_rpush_fp_v_lo && !ctx_rpush_resident_v_li && (ctx_rpush_tid_lo < num_contexts_p)) begin
-        context_cache_fp_shadow_r[ctx_rpush_tid_lo][ctx_rpush_reg_lo] <= ctx_rpush_data_lo;
-        logical_context_fp_dirty_r[ctx_rpush_tid_lo][ctx_rpush_reg_lo] <= 1'b1;
+      if (ctx_rpush_fp_v_lo && !ctx_rpush_resident_v_li && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
+        context_cache_fp_shadow_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= ctx_rpush_data_lo;
+        virtual_context_fp_dirty_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= 1'b1;
       end
-      if (ctx_rpush_fp_v_lo && ctx_rpush_resident_v_li && (ctx_rpush_tid_lo < num_contexts_p)) begin
-        logical_context_fp_dirty_r[ctx_rpush_tid_lo][ctx_rpush_reg_lo] <= 1'b1;
-        resident_thread_fp_dirty_r[ctx_rpush_thread_id_li][ctx_rpush_reg_lo] <= 1'b1;
+      if (ctx_rpush_fp_v_lo && ctx_rpush_resident_v_li && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
+        virtual_context_fp_dirty_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= 1'b1;
+        physical_thread_fp_dirty_r[ctx_rpush_physical_thread_id_li][ctx_rpush_reg_lo] <= 1'b1;
       end
       if (fwb_pkt.frd_w_v && (fwb_pkt.thread_id < num_threads_p)) begin
-        resident_thread_fp_dirty_r[fwb_pkt.thread_id][fwb_pkt.rd_addr] <= 1'b1;
-        if (resident_thread_context_id_r[fwb_pkt.thread_id] < num_contexts_p)
-          logical_context_fp_dirty_r[resident_thread_context_id_r[fwb_pkt.thread_id]][fwb_pkt.rd_addr] <= 1'b1;
+        physical_thread_fp_dirty_r[fwb_pkt.thread_id][fwb_pkt.rd_addr] <= 1'b1;
+        if (physical_thread_context_id_r[fwb_pkt.thread_id] < num_contexts_p)
+          virtual_context_fp_dirty_r[physical_thread_context_id_r[fwb_pkt.thread_id]][fwb_pkt.rd_addr] <= 1'b1;
       end
       if (iwb_pkt.ird_w_v && (iwb_pkt.thread_id < num_threads_p) && (iwb_pkt.rd_addr != '0)) begin
-        resident_thread_int_dirty_r[iwb_pkt.thread_id][iwb_pkt.rd_addr] <= 1'b1;
-        if (resident_thread_context_id_r[iwb_pkt.thread_id] < num_contexts_p)
-          logical_context_int_dirty_r[resident_thread_context_id_r[iwb_pkt.thread_id]][iwb_pkt.rd_addr] <= 1'b1;
+        physical_thread_int_dirty_r[iwb_pkt.thread_id][iwb_pkt.rd_addr] <= 1'b1;
+        if (physical_thread_context_id_r[iwb_pkt.thread_id] < num_contexts_p)
+          virtual_context_int_dirty_r[physical_thread_context_id_r[iwb_pkt.thread_id]][iwb_pkt.rd_addr] <= 1'b1;
       end
       if (context_cache_state_r == e_context_cache_launch_fe) begin
-        resident_thread_fp_dirty_r[context_cache_victim_thread_id_r]
-          <= logical_context_fp_dirty_r[context_cache_target_context_id_r];
-        resident_thread_int_dirty_r[context_cache_victim_thread_id_r]
-          <= logical_context_int_dirty_r[context_cache_target_context_id_r];
+        physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r];
+        physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r];
       end
 
       unique case (context_cache_state_r)
@@ -768,9 +768,9 @@ module bp_be_top
           if (context_cache_miss_v_li) begin
             context_cache_state_r <= e_context_cache_wait_ctxtsw_commit;
             context_cache_miss_pending_r <= 1'b1;
-            context_cache_target_context_id_r <= context_cache_miss_context_id_li;
-            context_cache_victim_context_id_r <= current_context_id_r;
-            context_cache_victim_thread_id_r <= current_thread_id_lo;
+            context_cache_target_virtual_context_id_r <= context_cache_miss_virtual_context_id_li;
+            context_cache_victim_virtual_context_id_r <= current_virtual_context_id_r;
+            context_cache_victim_physical_thread_id_r <= current_physical_thread_id_lo;
             context_cache_resume_npc_r <= context_cache_miss_resume_npc_li;
             context_cache_miss_count_r <= context_cache_miss_count_r + dword_width_gp'(1);
           end
@@ -784,18 +784,18 @@ module bp_be_top
         e_context_cache_wait_drain: begin
           context_cache_int_restore_phase_r <= 1'b0;
           context_cache_fp_restore_phase_r <= 1'b0;
-          context_cache_int_save_mask_r <= resident_thread_int_dirty_r[context_cache_victim_thread_id_r];
-          context_cache_int_restore_mask_r <= resident_thread_int_dirty_r[context_cache_victim_thread_id_r]
-                                              | logical_context_int_dirty_r[context_cache_target_context_id_r];
-          context_cache_fp_save_mask_r <= resident_thread_fp_dirty_r[context_cache_victim_thread_id_r];
-          context_cache_fp_restore_mask_r <= resident_thread_fp_dirty_r[context_cache_victim_thread_id_r]
-                                             | logical_context_fp_dirty_r[context_cache_target_context_id_r];
+          context_cache_int_save_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r];
+          context_cache_int_restore_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
+                                              | virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r];
+          context_cache_fp_save_mask_r <= physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r];
+          context_cache_fp_restore_mask_r <= physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
+                                             | virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r];
           context_cache_state_r <= context_cache_drain_safe_li
                                    ? ((!context_cache_fp_copy_v_li)
-                                      && !((|resident_thread_int_dirty_r[context_cache_victim_thread_id_r])
-                                           || (|logical_context_int_dirty_r[context_cache_target_context_id_r])
-                                           || (|resident_thread_fp_dirty_r[context_cache_victim_thread_id_r])
-                                           || (|logical_context_fp_dirty_r[context_cache_target_context_id_r]))
+                                      && !((|physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r])
+                                           || (|virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r])
+                                           || (|physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r])
+                                           || (|virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r]))
                                       ? e_context_cache_launch_fe
                                       : e_context_cache_save_restore_regs)
                                    : context_cache_state_r;
@@ -878,27 +878,27 @@ module bp_be_top
     if (!reset_i
         && context_cache_miss_v_li
         && context_cache_active_li
-        && (context_cache_miss_context_id_li != context_cache_target_context_id_r))
-      $fatal(1, "Nested nonresident context switch target %0d is not supported", context_cache_miss_context_id_li);
+        && (context_cache_miss_virtual_context_id_li != context_cache_target_virtual_context_id_r))
+      $fatal(1, "Nested nonresident context switch target %0d is not supported", context_cache_miss_virtual_context_id_li);
   end
 `endif
 
   always_comb begin
     if (context_cache_commit_v_li) begin
-      context_npc_lo = logical_context_npc_r[context_cache_target_context_id_r];
-      context_priv_mode_lo = logical_context_priv_mode_r[context_cache_target_context_id_r];
-      context_translation_en_lo = logical_context_translation_en_r[context_cache_target_context_id_r];
-      context_asid_lo = logical_context_asid_r[context_cache_target_context_id_r];
+      context_npc_lo = virtual_context_npc_r[context_cache_target_virtual_context_id_r];
+      context_priv_mode_lo = virtual_context_priv_mode_r[context_cache_target_virtual_context_id_r];
+      context_translation_en_lo = virtual_context_translation_en_r[context_cache_target_virtual_context_id_r];
+      context_asid_lo = virtual_context_asid_r[context_cache_target_virtual_context_id_r];
     end else if (context_fwd_v) begin
       context_npc_lo = ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc;
       context_priv_mode_lo = commit_pkt.priv_n;
       context_translation_en_lo = commit_pkt.translation_en_n;
       context_asid_lo = trans_info_lo.asid;
-    end else if (context_read_thread_id_li < num_threads_p) begin
-      context_npc_lo = context_npc_r[context_read_thread_id_li];
-      context_priv_mode_lo = context_priv_mode_r[context_read_thread_id_li];
-      context_translation_en_lo = context_translation_en_r[context_read_thread_id_li];
-      context_asid_lo = context_asid_r[context_read_thread_id_li];
+    end else if (context_read_physical_thread_id_li < num_threads_p) begin
+      context_npc_lo = context_npc_r[context_read_physical_thread_id_li];
+      context_priv_mode_lo = context_priv_mode_r[context_read_physical_thread_id_li];
+      context_translation_en_lo = context_translation_en_r[context_read_physical_thread_id_li];
+      context_asid_lo = context_asid_r[context_read_physical_thread_id_li];
     end else begin
       context_npc_lo = '0;
       context_priv_mode_lo = 2'b11;
@@ -913,11 +913,11 @@ module bp_be_top
       ctxtsw_target_priv_mode_lo = commit_pkt.priv_n;
       ctxtsw_target_translation_en_lo = commit_pkt.translation_en_n;
       ctxtsw_target_asid_lo = trans_info_lo.asid;
-    end else if (ctxtsw_target_resident_v_li && (ctxtsw_target_thread_id_li < num_threads_p)) begin
-      ctxtsw_target_npc_lo = context_npc_r[ctxtsw_target_thread_id_li];
-      ctxtsw_target_priv_mode_lo = context_priv_mode_r[ctxtsw_target_thread_id_li];
-      ctxtsw_target_translation_en_lo = context_translation_en_r[ctxtsw_target_thread_id_li];
-      ctxtsw_target_asid_lo = context_asid_r[ctxtsw_target_thread_id_li];
+    end else if (ctxtsw_target_resident_v_li && (ctxtsw_target_physical_thread_id_li < num_threads_p)) begin
+      ctxtsw_target_npc_lo = context_npc_r[ctxtsw_target_physical_thread_id_li];
+      ctxtsw_target_priv_mode_lo = context_priv_mode_r[ctxtsw_target_physical_thread_id_li];
+      ctxtsw_target_translation_en_lo = context_translation_en_r[ctxtsw_target_physical_thread_id_li];
+      ctxtsw_target_asid_lo = context_asid_r[ctxtsw_target_physical_thread_id_li];
     end else begin
       ctxtsw_target_npc_lo = '0;
       ctxtsw_target_priv_mode_lo = 2'b11;
@@ -932,11 +932,11 @@ module bp_be_top
       fast_ctxtsw_target_priv_mode_lo = commit_pkt.priv_n;
       fast_ctxtsw_target_translation_en_lo = commit_pkt.translation_en_n;
       fast_ctxtsw_target_asid_lo = trans_info_lo.asid;
-    end else if (fast_ctxtsw_resident_v_li && (fast_ctxtsw_target_thread_id_li < num_threads_p)) begin
-      fast_ctxtsw_target_npc_lo = context_npc_r[fast_ctxtsw_target_thread_id_li];
-      fast_ctxtsw_target_priv_mode_lo = context_priv_mode_r[fast_ctxtsw_target_thread_id_li];
-      fast_ctxtsw_target_translation_en_lo = context_translation_en_r[fast_ctxtsw_target_thread_id_li];
-      fast_ctxtsw_target_asid_lo = context_asid_r[fast_ctxtsw_target_thread_id_li];
+    end else if (fast_ctxtsw_resident_v_li && (fast_ctxtsw_target_physical_thread_id_li < num_threads_p)) begin
+      fast_ctxtsw_target_npc_lo = context_npc_r[fast_ctxtsw_target_physical_thread_id_li];
+      fast_ctxtsw_target_priv_mode_lo = context_priv_mode_r[fast_ctxtsw_target_physical_thread_id_li];
+      fast_ctxtsw_target_translation_en_lo = context_translation_en_r[fast_ctxtsw_target_physical_thread_id_li];
+      fast_ctxtsw_target_asid_lo = context_asid_r[fast_ctxtsw_target_physical_thread_id_li];
     end else begin
       fast_ctxtsw_target_npc_lo = '0;
       fast_ctxtsw_target_priv_mode_lo = 2'b11;
@@ -952,13 +952,13 @@ module bp_be_top
      ,.reset_i(reset_i)
      ,.cfg_bus_i(cfg_bus_i)
      ,.context_npc_i(context_npc_lo)
-     ,.current_thread_id_i(current_thread_id_lo)
+     ,.current_physical_thread_id_i(current_physical_thread_id_lo)
      ,.context_asid_i(context_asid_lo)
      ,.context_priv_i(context_priv_mode_lo)
      ,.context_translation_en_i(context_translation_en_lo)
      ,.dispatch_ctxtsw_v_i(dispatch_pkt.ctxtsw_v)
      ,.dispatch_ctxtsw_target_npc_i(ctxtsw_target_npc_lo)
-     ,.dispatch_ctxtsw_target_thread_id_i(ctxtsw_target_thread_id_li)
+     ,.dispatch_ctxtsw_target_physical_thread_id_i(ctxtsw_target_physical_thread_id_li)
      ,.dispatch_ctxtsw_target_asid_i(ctxtsw_target_asid_lo)
      ,.dispatch_ctxtsw_target_priv_i(ctxtsw_target_priv_mode_lo)
      ,.dispatch_ctxtsw_target_translation_en_i(ctxtsw_target_translation_en_lo)
@@ -966,7 +966,7 @@ module bp_be_top
      ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r | context_cache_miss_pending_r)
      ,.ctxtsw_launch_pending_i(ctxtsw_launch_pending_r)
      ,.ctxtsw_target_npc_i(pending_ctxtsw_npc_r)
-     ,.ctxtsw_target_thread_id_i(pending_ctxtsw_thread_id_r)
+     ,.ctxtsw_target_physical_thread_id_i(pending_ctxtsw_physical_thread_id_r)
      ,.ctxtsw_target_asid_i(pending_ctxtsw_asid_r)
      ,.ctxtsw_target_priv_i(pending_ctxtsw_priv_mode_r)
      ,.ctxtsw_target_translation_en_i(pending_ctxtsw_translation_en_r)
@@ -1007,7 +1007,7 @@ module bp_be_top
      ,.mem_ordered_i(mem_ordered_lo)
      ,.fdiv_busy_i(fdiv_busy_lo)
      ,.idiv_busy_i(idiv_busy_lo)
-     ,.current_thread_id_i(scheduler_current_thread_id_li)
+     ,.current_physical_thread_id_i(scheduler_current_physical_thread_id_li)
      ,.retire_thread_id_i(retire_thread_id_lo)
      ,.ispec_v_o(ispec_v)
      ,.hazard_v_o(hazard_v)
@@ -1053,25 +1053,25 @@ module bp_be_top
      ,.late_wb_force_i(late_wb_force_lo)
      ,.late_wb_yumi_o(late_wb_yumi_li)
 
-     ,.current_thread_id_i(scheduler_current_thread_id_li)
-     ,.current_context_id_i(current_context_id_r)
+     ,.current_physical_thread_id_i(scheduler_current_physical_thread_id_li)
+     ,.current_virtual_context_id_i(current_virtual_context_id_r)
      ,.retire_thread_id_i(retire_thread_id_lo)
 
      ,.rpush_w_v_i(scheduler_rpush_v_li)
      ,.rpush_fp_w_v_i(scheduler_rpush_fp_v_li)
-     ,.rpush_tid_i(ctx_rpush_thread_id_li)
+     ,.rpush_tid_i(ctx_rpush_physical_thread_id_li)
      ,.rpush_reg_i(ctx_rpush_reg_lo)
      ,.rpush_data_i(ctx_rpush_data_lo)
      ,.context_cache_scan_r_v_i(context_cache_scan_r_v_li)
      ,.context_cache_scan_w_v_i(context_cache_scan_w_v_li)
-     ,.context_cache_scan_thread_id_i(context_cache_scan_thread_id_li)
+     ,.context_cache_scan_physical_thread_id_i(context_cache_scan_physical_thread_id_li)
      ,.context_cache_scan_r_addr_i(context_cache_scan_r_addr_li)
      ,.context_cache_scan_w_addr_i(context_cache_scan_w_addr_li)
      ,.context_cache_scan_w_data_i(context_cache_scan_w_data_li)
      ,.context_cache_scan_r_data_o(context_cache_scan_r_data_lo)
      ,.context_cache_fp_scan_r_v_i(context_cache_fp_scan_r_v_li)
      ,.context_cache_fp_scan_w_v_i(context_cache_fp_scan_w_v_li)
-     ,.context_cache_fp_scan_thread_id_i(context_cache_fp_scan_thread_id_li)
+     ,.context_cache_fp_scan_physical_thread_id_i(context_cache_fp_scan_physical_thread_id_li)
      ,.context_cache_fp_scan_r_addr_i(context_cache_fp_scan_r_addr_li)
      ,.context_cache_fp_scan_w_addr_i(context_cache_fp_scan_w_addr_li)
      ,.context_cache_fp_scan_w_data_i(context_cache_fp_scan_w_data_li)
@@ -1140,26 +1140,26 @@ module bp_be_top
      ,.irq_waiting_o(irq_waiting_lo)
      ,.cmd_full_n_i(cmd_full_n_lo)
      // Context switching
-     ,.current_thread_id_i(current_thread_id_lo)
-     ,.current_context_id_i(current_context_id_r)
+     ,.current_physical_thread_id_i(current_physical_thread_id_lo)
+     ,.current_virtual_context_id_i(current_virtual_context_id_r)
      ,.retire_thread_id_i(retire_thread_id_lo)
      ,.csr_context_restore_v_i(csr_context_restore_v_li)
      ,.csr_context_restore_reset_i(csr_context_restore_reset_li)
-     ,.csr_context_restore_thread_id_i(context_cache_victim_thread_id_r)
+     ,.csr_context_restore_physical_thread_id_i(context_cache_victim_physical_thread_id_r)
      ,.csr_context_restore_data_i(csr_context_restore_data_li)
-     ,.csr_context_save_thread_id_i(csr_context_save_thread_id_li)
+     ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_li)
      ,.csr_context_save_data_o(csr_context_save_data_lo)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_lo)
-     ,.ctx_npc_write_tid_o(ctx_npc_write_tid_lo)
+     ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_lo)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_lo)
      ,.ctx_rpush_v_o(ctx_rpush_v_lo)
      ,.ctx_rpush_fp_v_o(ctx_rpush_fp_v_lo)
-     ,.ctx_rpush_tid_o(ctx_rpush_tid_lo)
+     ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_lo)
      ,.ctx_rpush_reg_o(ctx_rpush_reg_lo)
      ,.ctx_rpush_data_o(ctx_rpush_data_lo)
      ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
-     ,.fast_ctxtsw_old_thread_id_o(fast_ctxtsw_old_thread_id_lo)
-     ,.fast_ctxtsw_thread_id_o(fast_ctxtsw_context_id_lo)
+     ,.fast_ctxtsw_old_physical_thread_id_o(fast_ctxtsw_old_physical_thread_id_lo)
+     ,.fast_ctxtsw_virtual_context_id_o(fast_ctxtsw_virtual_context_id_lo)
      ,.fast_ctxtsw_resume_npc_o(fast_ctxtsw_resume_npc_lo)
      ,.context_cache_drain_ready_o(context_cache_calculator_drain_ready_lo)
      );

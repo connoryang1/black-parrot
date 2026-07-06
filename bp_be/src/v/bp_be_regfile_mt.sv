@@ -55,7 +55,7 @@ module bp_be_regfile_mt
    , input [reg_addr_width_gp-1:0]                     rd_addr_i
    , input [data_width_p-1:0]                           rd_data_i
 
-   // CSR 0x083 remote-write bus: software-initiated write into another thread's register state
+   // CSR 0x802 remote-write bus: software-initiated write into another thread's register state
    // Encoding: {thread_id, reg_addr} selects the destination register; rpush_data_i is the value
    , input                                              rpush_w_v_i
    , input [thread_id_width_p-1:0]                     rpush_thread_id_i
