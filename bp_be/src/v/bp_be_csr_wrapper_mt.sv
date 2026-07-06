@@ -24,6 +24,8 @@ module bp_be_csr_wrapper_mt
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_be_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p)
    , localparam cfg_bus_width_lp = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
+   , localparam csr_context_csrs_lp = 26
+   , localparam csr_context_width_lp = csr_context_csrs_lp*dword_width_gp + rv64_priv_width_gp
    )
   (input                                     clk_i
    , input                                   reset_i
@@ -69,6 +71,14 @@ module bp_be_csr_wrapper_mt
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
 
+   // Save/restore the active physical CSR bank for nonresident virtual contexts.
+   , input                                   csr_context_restore_v_i
+   , input                                   csr_context_restore_reset_i
+   , input [thread_id_width_p-1:0]           csr_context_restore_thread_id_i
+   , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
+   , input [thread_id_width_p-1:0]           csr_context_save_thread_id_i
+   , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
+
    // Bootstrap: write target NPC for a logical context (CSR 0x801)
    , output logic                            ctx_npc_write_v_o
    , output logic [context_id_width_p-1:0]   ctx_npc_write_tid_o
@@ -99,6 +109,7 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_rpush_tid_co;
   logic [num_threads_p-1:0][reg_addr_width_gp-1:0]    ctx_rpush_reg_co;
   logic [num_threads_p-1:0][dpath_width_gp-1:0]       ctx_rpush_data_co;
+  logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
   // Per-thread gated inputs
@@ -150,6 +161,11 @@ module bp_be_csr_wrapper_mt
 
        ,.current_thread_id_i(current_thread_id_i)
        ,.current_context_id_i(current_context_id_i)
+       ,.csr_context_restore_v_i(csr_context_restore_v_i
+                                 & (csr_context_restore_thread_id_i == thread_id_width_p'(i)))
+       ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
+       ,.csr_context_restore_data_i(csr_context_restore_data_i)
+       ,.csr_context_save_data_o(csr_context_save_data_co[i])
        ,.ctx_npc_write_v_o(ctx_npc_write_v_co[i])
        ,.ctx_npc_write_tid_o(ctx_npc_write_tid_co[i])
        ,.ctx_npc_write_npc_o(ctx_npc_write_npc_co[i])
@@ -180,6 +196,7 @@ module bp_be_csr_wrapper_mt
   assign ctx_rpush_tid_o       = ctx_rpush_tid_co[current_thread_id_i];
   assign ctx_rpush_reg_o       = ctx_rpush_reg_co[current_thread_id_i];
   assign ctx_rpush_data_o      = ctx_rpush_data_co[current_thread_id_i];
+  assign csr_context_save_data_o = csr_context_save_data_co[csr_context_save_thread_id_i];
 
 endmodule
 

@@ -9,6 +9,8 @@ module bp_be_csr
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_be_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p)
    , localparam cfg_bus_width_lp = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
+   , localparam csr_context_csrs_lp = 26
+   , localparam csr_context_width_lp = csr_context_csrs_lp*dword_width_gp + rv64_priv_width_gp
    )
   (input                                     clk_i
    , input                                   reset_i
@@ -48,6 +50,12 @@ module bp_be_csr
    , input [thread_id_width_p-1:0]           current_thread_id_i
    , input [context_id_width_p-1:0]          current_context_id_i
 
+   // Physical CSR bank save/restore for nonresident virtual contexts.
+   , input                                   csr_context_restore_v_i
+   , input                                   csr_context_restore_reset_i
+   , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
+   , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
+
    // Bootstrap: write a target NPC for a logical context (CSR 0x801)
    // Write format: upper bits = context_id, lower vaddr_width_p bits = target NPC
    , output logic                            ctx_npc_write_v_o
@@ -73,6 +81,40 @@ module bp_be_csr
   `bp_cast_o(bp_be_commit_pkt_s, commit_pkt);
   `bp_cast_o(bp_be_decode_info_s, decode_info);
   `bp_cast_o(bp_be_trans_info_s, trans_info);
+
+  typedef struct packed {
+    logic [dword_width_gp-1:0] dcsr;
+    logic [dword_width_gp-1:0] dpc;
+    logic [dword_width_gp-1:0] dscratch0;
+    logic [dword_width_gp-1:0] dscratch1;
+    logic [dword_width_gp-1:0] mstatus;
+    logic [dword_width_gp-1:0] medeleg;
+    logic [dword_width_gp-1:0] mideleg;
+    logic [dword_width_gp-1:0] mie;
+    logic [dword_width_gp-1:0] mtvec;
+    logic [dword_width_gp-1:0] mcounteren;
+    logic [dword_width_gp-1:0] mscratch;
+    logic [dword_width_gp-1:0] mepc;
+    logic [dword_width_gp-1:0] mcause;
+    logic [dword_width_gp-1:0] mtval;
+    logic [dword_width_gp-1:0] mip;
+    logic [dword_width_gp-1:0] mcycle;
+    logic [dword_width_gp-1:0] minstret;
+    logic [dword_width_gp-1:0] mcountinhibit;
+    logic [dword_width_gp-1:0] stvec;
+    logic [dword_width_gp-1:0] scounteren;
+    logic [dword_width_gp-1:0] sscratch;
+    logic [dword_width_gp-1:0] sepc;
+    logic [dword_width_gp-1:0] scause;
+    logic [dword_width_gp-1:0] stval;
+    logic [dword_width_gp-1:0] satp;
+    logic [dword_width_gp-1:0] fcsr;
+    logic [rv64_priv_width_gp-1:0] priv_mode;
+  } bp_be_csr_context_s;
+
+  bp_be_csr_context_s csr_context_restore;
+  bp_be_csr_context_s csr_context_save;
+  assign csr_context_restore = csr_context_restore_data_i;
 
   // The muxed and demuxed CSR outputs
   logic [dword_width_gp-1:0] csr_data_lo;
@@ -155,6 +197,37 @@ module bp_be_csr
   `declare_csr(fcsr);
   wire [dword_width_gp-1:0] fflags_lo = fcsr_lo.fflags;
   wire [dword_width_gp-1:0] frm_lo    = fcsr_lo.frm;
+
+  assign csr_context_save =
+    '{dcsr: dword_width_gp'(dcsr_lo)
+      ,dpc: dword_width_gp'(dpc_lo)
+      ,dscratch0: dword_width_gp'(dscratch0_lo)
+      ,dscratch1: dword_width_gp'(dscratch1_lo)
+      ,mstatus: dword_width_gp'(mstatus_lo)
+      ,medeleg: dword_width_gp'(medeleg_lo)
+      ,mideleg: dword_width_gp'(mideleg_lo)
+      ,mie: dword_width_gp'(mie_lo)
+      ,mtvec: dword_width_gp'(mtvec_lo)
+      ,mcounteren: dword_width_gp'(mcounteren_lo)
+      ,mscratch: dword_width_gp'(mscratch_lo)
+      ,mepc: dword_width_gp'(mepc_lo)
+      ,mcause: dword_width_gp'(mcause_lo)
+      ,mtval: dword_width_gp'(mtval_lo)
+      ,mip: dword_width_gp'(mip_lo)
+      ,mcycle: dword_width_gp'(mcycle_lo)
+      ,minstret: dword_width_gp'(minstret_lo)
+      ,mcountinhibit: dword_width_gp'(mcountinhibit_lo)
+      ,stvec: dword_width_gp'(stvec_lo)
+      ,scounteren: dword_width_gp'(scounteren_lo)
+      ,sscratch: dword_width_gp'(sscratch_lo)
+      ,sepc: dword_width_gp'(sepc_lo)
+      ,scause: dword_width_gp'(scause_lo)
+      ,stval: dword_width_gp'(stval_lo)
+      ,satp: dword_width_gp'(satp_lo)
+      ,fcsr: dword_width_gp'(fcsr_lo)
+      ,priv_mode: priv_mode_r
+      };
+  assign csr_context_save_data_o = csr_context_save;
 
   wire dgie = ~is_debug_mode;
   wire mgie = ~is_debug_mode & (mstatus_r.mie & is_m_mode) | is_s_mode | is_u_mode;
@@ -650,6 +723,72 @@ module bp_be_csr
       // Set FS to dirty if: fflags set, frf written, fcsr written
       mstatus_li.fs |= {2{csr_w_v_li & csr_fany_li}};
       mstatus_li.fs |= {2{retire_pkt_cast_i.instret & instr_fany_li}};
+
+      if (csr_context_restore_v_i) begin
+        if (csr_context_restore_reset_i) begin
+          priv_mode_n = `PRIV_MODE_M;
+          fcsr_li = '0;
+
+          stvec_li = '0;
+          scounteren_li = '0;
+          sscratch_li = '0;
+          sepc_li = '0;
+          scause_li = '0;
+          stval_li = '0;
+          satp_li = '0;
+
+          mstatus_li = '0;
+          medeleg_li = '0;
+          mideleg_li = '0;
+          mie_li = '0;
+          mtvec_li = '0;
+          mcounteren_li = '0;
+          mscratch_li = '0;
+          mepc_li = '0;
+          mcause_li = '0;
+          mtval_li = '0;
+          mip_li = '0;
+          mcycle_li = '0;
+          minstret_li = '0;
+          mcountinhibit_li = '0;
+
+          dcsr_li = '0;
+          dpc_li = '0;
+          dscratch0_li = '0;
+          dscratch1_li = '0;
+        end else begin
+          priv_mode_n = csr_context_restore.priv_mode;
+          fcsr_li = csr_context_restore.fcsr;
+
+          stvec_li = csr_context_restore.stvec;
+          scounteren_li = csr_context_restore.scounteren;
+          sscratch_li = csr_context_restore.sscratch;
+          sepc_li = csr_context_restore.sepc;
+          scause_li = csr_context_restore.scause;
+          stval_li = csr_context_restore.stval;
+          satp_li = csr_context_restore.satp;
+
+          mstatus_li = csr_context_restore.mstatus;
+          medeleg_li = csr_context_restore.medeleg;
+          mideleg_li = csr_context_restore.mideleg;
+          mie_li = csr_context_restore.mie;
+          mtvec_li = csr_context_restore.mtvec;
+          mcounteren_li = csr_context_restore.mcounteren;
+          mscratch_li = csr_context_restore.mscratch;
+          mepc_li = csr_context_restore.mepc;
+          mcause_li = csr_context_restore.mcause;
+          mtval_li = csr_context_restore.mtval;
+          mip_li = csr_context_restore.mip;
+          mcycle_li = csr_context_restore.mcycle;
+          minstret_li = csr_context_restore.minstret;
+          mcountinhibit_li = csr_context_restore.mcountinhibit;
+
+          dcsr_li = csr_context_restore.dcsr;
+          dpc_li = csr_context_restore.dpc;
+          dscratch0_li = csr_context_restore.dscratch0;
+          dscratch1_li = csr_context_restore.dscratch1;
+        end
+      end
     end
 
   assign irq_pending_o = (~dcsr_lo.step | dcsr_lo.stepie)
