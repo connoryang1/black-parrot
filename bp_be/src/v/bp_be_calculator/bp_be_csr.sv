@@ -69,6 +69,16 @@ module bp_be_csr
    , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
+
+   // Context-cache L1 D$ service CSRs:
+   //   0x803 data/result, 0x804 command/status.
+   , input                                   ctx_l1_ready_i
+   , input                                   ctx_l1_resp_v_i
+   , input [dword_width_gp-1:0]              ctx_l1_resp_data_i
+   , output logic                            ctx_l1_cmd_v_o
+   , output logic                            ctx_l1_cmd_w_o
+   , output logic [paddr_width_p-1:0]        ctx_l1_cmd_paddr_o
+   , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
    );
 
   // Declare parameterizable structs
@@ -118,6 +128,7 @@ module bp_be_csr
 
   // The muxed and demuxed CSR outputs
   logic [dword_width_gp-1:0] csr_data_lo;
+  logic [dword_width_gp-1:0] ctx_l1_data_r;
   logic exception_v_lo, interrupt_v_lo;
 
   rv64_mstatus_s sstatus_wmask_li, sstatus_rmask_li;
@@ -470,12 +481,16 @@ module bp_be_csr
         {`CSR_ADDR_DPC          }: csr_data_lo = dpc_lo;
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
-        12'h081:  // CTXT CSR - Current thread/context ID
+        12'h800:  // CTXT CSR - Current thread/context ID
           csr_data_lo = dword_width_gp'(current_virtual_context_id_i);
-        12'h082:  // Thread NPC seed - write-only, reads as 0
+        12'h801:  // Thread NPC seed - write-only, reads as 0
           csr_data_lo = '0;
         12'h802:  // Thread register seed / remote register write - write-only, reads as 0
           csr_data_lo = '0;
+        12'h803:  // Context-cache L1 service data/result
+          csr_data_lo = ctx_l1_data_r;
+        12'h804:  // Context-cache L1 service status
+          csr_data_lo = {{(dword_width_gp-2){1'b0}}, ctx_l1_resp_v_i, ctx_l1_ready_i};
         default:
           begin
             csr_data_lo = '0;
@@ -807,7 +822,9 @@ module bp_be_csr
 
   wire ctxt_csr_addr_li = (csr_addr_li == 12'h800)
                            | (csr_addr_li == 12'h801)
-                           | (csr_addr_li == 12'h802);
+                           | (csr_addr_li == 12'h802)
+                           | (csr_addr_li == 12'h803)
+                           | (csr_addr_li == 12'h804);
 
   assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special.dcache_miss
                                                  ,retire_pkt_cast_i.special.fencei
@@ -885,7 +902,7 @@ module bp_be_csr
   // CSR 0x801 write: set the NPC for the virtual context whose ID is in the upper bits
   // Write format: csr_data_li[vaddr_width_p +: context_id_width_p] = context_id
   //               csr_data_li[vaddr_width_p-1:0]                   = target NPC
-  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h082);
+  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801);
   assign ctx_npc_write_virtual_context_id_o = csr_data_li[vaddr_width_p +: context_id_width_p];
   assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
 
@@ -902,12 +919,27 @@ module bp_be_csr
   assign ctx_rpush_reg_o  = csr_data_li[vaddr_width_p + context_id_width_p +: reg_addr_width_gp];
   assign ctx_rpush_data_o = {{(dpath_width_gp - vaddr_width_p){1'b0}}, csr_data_li[0 +: vaddr_width_p]};
 
+  wire ctx_l1_data_write_v_li = csr_w_v_li & (csr_addr_li == 12'h803);
+  wire ctx_l1_cmd_write_v_li = csr_w_v_li & (csr_addr_li == 12'h804);
+  assign ctx_l1_cmd_v_o = ctx_l1_cmd_write_v_li & ctx_l1_ready_i;
+  assign ctx_l1_cmd_w_o = csr_data_li[dword_width_gp-1];
+  assign ctx_l1_cmd_paddr_o = csr_data_li[0+:paddr_width_p];
+  assign ctx_l1_cmd_data_o = ctx_l1_data_r;
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ctx_l1_data_r <= '0;
+    else if (ctx_l1_resp_v_i)
+      ctx_l1_data_r <= ctx_l1_resp_data_i;
+    else if (ctx_l1_data_write_v_li)
+      ctx_l1_data_r <= csr_data_li;
+
   // Debug: trace every CSR write
   // always @(posedge clk_i) begin
   //   if (!reset_i && csr_w_v_li) begin
   //     $display("[CSR @%0t] csrw: addr=0x%03x data=0x%016x csr_ctxt_write_v=%0b ctx_npc_write_v=%0b",
   //              $time, csr_addr_li, csr_data_li, csr_ctxt_write_v_o, ctx_npc_write_v_o);
-  //     if (csr_addr_li == 12'h082)
+  //     if (csr_addr_li == 12'h801)
   //       $display("[CSR @%0t] CSR0x801 write: raw_data=0x%016x -> tid=%0d npc=0x%08x",
   //                $time, csr_data_li, ctx_npc_write_virtual_context_id_o, ctx_npc_write_npc_o);
   //   end

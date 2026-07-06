@@ -90,6 +90,15 @@ module bp_be_csr_wrapper_mt
    , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
+
+   // Context-cache L1 D$ service CSR path.
+   , input                                   ctx_l1_ready_i
+   , input                                   ctx_l1_resp_v_i
+   , input [dword_width_gp-1:0]              ctx_l1_resp_data_i
+   , output logic                            ctx_l1_cmd_v_o
+   , output logic                            ctx_l1_cmd_w_o
+   , output logic [paddr_width_p-1:0]        ctx_l1_cmd_paddr_o
+   , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
    );
 
   // Per-thread output arrays
@@ -109,6 +118,10 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_rpush_virtual_context_id_co;
   logic [num_threads_p-1:0][reg_addr_width_gp-1:0]    ctx_rpush_reg_co;
   logic [num_threads_p-1:0][dpath_width_gp-1:0]       ctx_rpush_data_co;
+  logic [num_threads_p-1:0]                            ctx_l1_cmd_v_co;
+  logic [num_threads_p-1:0]                            ctx_l1_cmd_w_co;
+  logic [num_threads_p-1:0][paddr_width_p-1:0]         ctx_l1_cmd_paddr_co;
+  logic [num_threads_p-1:0][dword_width_gp-1:0]        ctx_l1_cmd_data_co;
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
@@ -175,6 +188,13 @@ module bp_be_csr_wrapper_mt
        ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_co[i])
        ,.ctx_rpush_reg_o(ctx_rpush_reg_co[i])
        ,.ctx_rpush_data_o(ctx_rpush_data_co[i])
+       ,.ctx_l1_ready_i(ctx_l1_ready_i)
+       ,.ctx_l1_resp_v_i(ctx_l1_resp_v_i & (current_physical_thread_id_i == thread_id_width_p'(i)))
+       ,.ctx_l1_resp_data_i(ctx_l1_resp_data_i)
+       ,.ctx_l1_cmd_v_o(ctx_l1_cmd_v_co[i])
+       ,.ctx_l1_cmd_w_o(ctx_l1_cmd_w_co[i])
+       ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_co[i])
+       ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_co[i])
        );
   end
 
@@ -196,6 +216,10 @@ module bp_be_csr_wrapper_mt
   assign ctx_rpush_virtual_context_id_o       = ctx_rpush_virtual_context_id_co[current_physical_thread_id_i];
   assign ctx_rpush_reg_o       = ctx_rpush_reg_co[current_physical_thread_id_i];
   assign ctx_rpush_data_o      = ctx_rpush_data_co[current_physical_thread_id_i];
+  assign ctx_l1_cmd_v_o        = ctx_l1_cmd_v_co[current_physical_thread_id_i];
+  assign ctx_l1_cmd_w_o        = ctx_l1_cmd_w_co[current_physical_thread_id_i];
+  assign ctx_l1_cmd_paddr_o    = ctx_l1_cmd_paddr_co[current_physical_thread_id_i];
+  assign ctx_l1_cmd_data_o     = ctx_l1_cmd_data_co[current_physical_thread_id_i];
   assign csr_context_save_data_o = csr_context_save_data_co[csr_context_save_physical_thread_id_i];
 
 endmodule
