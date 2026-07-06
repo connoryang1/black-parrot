@@ -26,6 +26,8 @@ module bp_be_calculator_top
 
    // Generated parameters
    , localparam cfg_bus_width_lp        = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
+   , localparam csr_context_csrs_lp     = 26
+   , localparam csr_context_width_lp    = csr_context_csrs_lp*dword_width_gp + rv64_priv_width_gp
    )
   (input                                            clk_i
    , input                                           reset_i
@@ -94,6 +96,14 @@ module bp_be_calculator_top
    , input [context_id_width_p-1:0]                  current_context_id_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]                   retire_thread_id_i
+
+   // Save/restore physical CSR state for nonresident virtual contexts.
+   , input                                           csr_context_restore_v_i
+   , input                                           csr_context_restore_reset_i
+   , input [thread_id_width_p-1:0]                   csr_context_restore_thread_id_i
+   , input [csr_context_width_lp-1:0]                csr_context_restore_data_i
+   , input [thread_id_width_p-1:0]                   csr_context_save_thread_id_i
+   , output logic [csr_context_width_lp-1:0]         csr_context_save_data_o
 
    // Bootstrap: write target NPC for a logical context (CSR 0x082)
    , output logic                                    ctx_npc_write_v_o
@@ -261,6 +271,12 @@ module bp_be_calculator_top
      ,.current_thread_id_i(current_thread_id_i)
      ,.current_context_id_i(current_context_id_i)
      ,.retire_thread_id_i(retire_thread_id_i)
+     ,.csr_context_restore_v_i(csr_context_restore_v_i)
+     ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
+     ,.csr_context_restore_thread_id_i(csr_context_restore_thread_id_i)
+     ,.csr_context_restore_data_i(csr_context_restore_data_i)
+     ,.csr_context_save_thread_id_i(csr_context_save_thread_id_i)
+     ,.csr_context_save_data_o(csr_context_save_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
