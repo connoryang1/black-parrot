@@ -61,29 +61,29 @@ module bp_be_pipe_sys
    , output rv64_frm_e                       frm_dyn_o
 
    // Current thread selects the active per-thread CSR instance.
-   , input [thread_id_width_p-1:0]           current_thread_id_i
-   // Software-visible logical context ID returned by CSR 0x081.
-   , input [context_id_width_p-1:0]          current_context_id_i
+   , input [thread_id_width_p-1:0]           current_physical_thread_id_i
+   // Software-visible virtual context ID returned by CSR 0x081.
+   , input [context_id_width_p-1:0]          current_virtual_context_id_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
 
    // Save/restore physical CSR state for nonresident virtual contexts.
    , input                                   csr_context_restore_v_i
    , input                                   csr_context_restore_reset_i
-   , input [thread_id_width_p-1:0]           csr_context_restore_thread_id_i
+   , input [thread_id_width_p-1:0]           csr_context_restore_physical_thread_id_i
    , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
-   , input [thread_id_width_p-1:0]           csr_context_save_thread_id_i
+   , input [thread_id_width_p-1:0]           csr_context_save_physical_thread_id_i
    , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
 
-   // Bootstrap: write target NPC for a logical context (CSR 0x082)
+   // Bootstrap: write target NPC for a virtual context (CSR 0x082)
    , output logic                            ctx_npc_write_v_o
-   , output logic [context_id_width_p-1:0]   ctx_npc_write_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // rpush: write arbitrary register of a logical context (CSR 0x083)
+   // rpush: write arbitrary register of a virtual context (CSR 0x083)
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
-   , output logic [context_id_width_p-1:0]   ctx_rpush_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
    );
@@ -103,7 +103,7 @@ module bp_be_pipe_sys
   assign reservation = reservation_i;
   assign decode = reservation.decode;
   assign instr  = reservation.instr;
-  wire [thread_id_width_p-1:0] reservation_thread_id = reservation.thread_id[0 +: thread_id_width_p];
+  wire [thread_id_width_p-1:0] reservation_physical_thread_id = reservation.thread_id[0 +: thread_id_width_p];
   wire [vaddr_width_p-1:0] pc  = reservation.pc;
   wire [dword_width_gp-1:0] rs1 = reservation.isrc1;
   wire [dword_width_gp-1:0] rs2 = reservation.isrc2;
@@ -148,22 +148,22 @@ module bp_be_pipe_sys
      ,.frm_dyn_o(frm_dyn_o)
      // Current selects slow CSR state; reservation thread owns CSR reads
      // and memory translation information.
-     ,.current_thread_id_i(current_thread_id_i)
-     ,.current_context_id_i(current_context_id_i)
-     ,.csr_thread_id_i(reservation_thread_id)
+     ,.current_physical_thread_id_i(current_physical_thread_id_i)
+     ,.current_virtual_context_id_i(current_virtual_context_id_i)
+     ,.csr_thread_id_i(reservation_physical_thread_id)
      ,.retire_thread_id_i(retire_thread_id_i)
      ,.csr_context_restore_v_i(csr_context_restore_v_i)
      ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
-     ,.csr_context_restore_thread_id_i(csr_context_restore_thread_id_i)
+     ,.csr_context_restore_physical_thread_id_i(csr_context_restore_physical_thread_id_i)
      ,.csr_context_restore_data_i(csr_context_restore_data_i)
-     ,.csr_context_save_thread_id_i(csr_context_save_thread_id_i)
+     ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_i)
      ,.csr_context_save_data_o(csr_context_save_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
-     ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
+     ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
      ,.ctx_rpush_v_o(ctx_rpush_v_o)
      ,.ctx_rpush_fp_v_o(ctx_rpush_fp_v_o)
-     ,.ctx_rpush_tid_o(ctx_rpush_tid_o)
+     ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_o)
      ,.ctx_rpush_reg_o(ctx_rpush_reg_o)
      ,.ctx_rpush_data_o(ctx_rpush_data_o)
      );

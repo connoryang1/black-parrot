@@ -11,7 +11,7 @@
  *   retire_pkt, fflags_acc, frf_w_v, csr_r_v  → only active thread
  *   IRQ signals (debug/timer/software/external) → all threads (keeps mip current)
  *
- * Output muxing: all outputs come from current_thread_id_i's instance.
+ * Output muxing: all outputs come from current_physical_thread_id_i's instance.
  */
 
 `include "bp_common_defines.svh"
@@ -63,9 +63,9 @@ module bp_be_csr_wrapper_mt
    , output rv64_frm_e                       frm_dyn_o
 
    // Current thread selects the active per-thread CSR instance.
-   , input [thread_id_width_p-1:0]           current_thread_id_i
-   // Software-visible logical context ID returned by CSR 0x081.
-   , input [context_id_width_p-1:0]          current_context_id_i
+   , input [thread_id_width_p-1:0]           current_physical_thread_id_i
+   // Software-visible virtual context ID returned by CSR 0x081.
+   , input [context_id_width_p-1:0]          current_virtual_context_id_i
    // CSR reads belong to the instruction in the reservation station.
    , input [thread_id_width_p-1:0]           csr_thread_id_i
    // Retire thread owns the instruction currently committing in the backend.
@@ -74,20 +74,20 @@ module bp_be_csr_wrapper_mt
    // Save/restore the active physical CSR bank for nonresident virtual contexts.
    , input                                   csr_context_restore_v_i
    , input                                   csr_context_restore_reset_i
-   , input [thread_id_width_p-1:0]           csr_context_restore_thread_id_i
+   , input [thread_id_width_p-1:0]           csr_context_restore_physical_thread_id_i
    , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
-   , input [thread_id_width_p-1:0]           csr_context_save_thread_id_i
+   , input [thread_id_width_p-1:0]           csr_context_save_physical_thread_id_i
    , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
 
-   // Bootstrap: write target NPC for a logical context (CSR 0x082)
+   // Bootstrap: write target NPC for a virtual context (CSR 0x082)
    , output logic                            ctx_npc_write_v_o
-   , output logic [context_id_width_p-1:0]   ctx_npc_write_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // CSR 0x083 remote register write into a logical context
+   // CSR 0x083 remote register write into a virtual context
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
-   , output logic [context_id_width_p-1:0]   ctx_rpush_tid_o
+   , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
    );
@@ -102,11 +102,11 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            irq_pending_co;
   logic [num_threads_p-1:0]                            irq_waiting_co;
   logic [num_threads_p-1:0]                            ctx_npc_write_v_co;
-  logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_npc_write_tid_co;
+  logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_co;
   logic [num_threads_p-1:0][vaddr_width_p-1:0]        ctx_npc_write_npc_co;
   logic [num_threads_p-1:0]                            ctx_rpush_v_co;
   logic [num_threads_p-1:0]                            ctx_rpush_fp_v_co;
-  logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_rpush_tid_co;
+  logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_rpush_virtual_context_id_co;
   logic [num_threads_p-1:0][reg_addr_width_gp-1:0]    ctx_rpush_reg_co;
   logic [num_threads_p-1:0][dpath_width_gp-1:0]       ctx_rpush_data_co;
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
@@ -159,20 +159,20 @@ module bp_be_csr_wrapper_mt
        ,.trans_info_o(trans_info_co[i])
        ,.frm_dyn_o(frm_dyn_co[i])
 
-       ,.current_thread_id_i(current_thread_id_i)
-       ,.current_context_id_i(current_context_id_i)
+       ,.current_physical_thread_id_i(current_physical_thread_id_i)
+       ,.current_virtual_context_id_i(current_virtual_context_id_i)
        ,.csr_context_restore_v_i(csr_context_restore_v_i
-                                 & (csr_context_restore_thread_id_i == thread_id_width_p'(i)))
+                                 & (csr_context_restore_physical_thread_id_i == thread_id_width_p'(i)))
        ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
        ,.csr_context_restore_data_i(csr_context_restore_data_i)
        ,.csr_context_save_data_o(csr_context_save_data_co[i])
        ,.ctx_npc_write_v_o(ctx_npc_write_v_co[i])
-       ,.ctx_npc_write_tid_o(ctx_npc_write_tid_co[i])
+       ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_co[i])
        ,.ctx_npc_write_npc_o(ctx_npc_write_npc_co[i])
 
        ,.ctx_rpush_v_o(ctx_rpush_v_co[i])
        ,.ctx_rpush_fp_v_o(ctx_rpush_fp_v_co[i])
-       ,.ctx_rpush_tid_o(ctx_rpush_tid_co[i])
+       ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_co[i])
        ,.ctx_rpush_reg_o(ctx_rpush_reg_co[i])
        ,.ctx_rpush_data_o(ctx_rpush_data_co[i])
        );
@@ -181,22 +181,22 @@ module bp_be_csr_wrapper_mt
   // Mux all outputs from the active thread
   assign csr_r_data_o          = csr_r_data_co[csr_thread_id_i];
   assign csr_r_illegal_o       = csr_r_illegal_co[csr_thread_id_i];
-  assign commit_pkt_o          = commit_pkt_co[current_thread_id_i];
-  assign decode_info_o         = decode_info_co[current_thread_id_i];
-  assign trans_info_o          = trans_info_co[current_thread_id_i];
+  assign commit_pkt_o          = commit_pkt_co[current_physical_thread_id_i];
+  assign decode_info_o         = decode_info_co[current_physical_thread_id_i];
+  assign trans_info_o          = trans_info_co[current_physical_thread_id_i];
   assign reservation_trans_info_o = trans_info_co[csr_thread_id_i];
-  assign frm_dyn_o             = frm_dyn_co[current_thread_id_i];
-  assign irq_pending_o         = irq_pending_co[current_thread_id_i];
-  assign irq_waiting_o         = irq_waiting_co[current_thread_id_i];
-  assign ctx_npc_write_v_o     = ctx_npc_write_v_co[current_thread_id_i];
-  assign ctx_npc_write_tid_o   = ctx_npc_write_tid_co[current_thread_id_i];
-  assign ctx_npc_write_npc_o   = ctx_npc_write_npc_co[current_thread_id_i];
-  assign ctx_rpush_v_o         = ctx_rpush_v_co[current_thread_id_i];
-  assign ctx_rpush_fp_v_o      = ctx_rpush_fp_v_co[current_thread_id_i];
-  assign ctx_rpush_tid_o       = ctx_rpush_tid_co[current_thread_id_i];
-  assign ctx_rpush_reg_o       = ctx_rpush_reg_co[current_thread_id_i];
-  assign ctx_rpush_data_o      = ctx_rpush_data_co[current_thread_id_i];
-  assign csr_context_save_data_o = csr_context_save_data_co[csr_context_save_thread_id_i];
+  assign frm_dyn_o             = frm_dyn_co[current_physical_thread_id_i];
+  assign irq_pending_o         = irq_pending_co[current_physical_thread_id_i];
+  assign irq_waiting_o         = irq_waiting_co[current_physical_thread_id_i];
+  assign ctx_npc_write_v_o     = ctx_npc_write_v_co[current_physical_thread_id_i];
+  assign ctx_npc_write_virtual_context_id_o   = ctx_npc_write_virtual_context_id_co[current_physical_thread_id_i];
+  assign ctx_npc_write_npc_o   = ctx_npc_write_npc_co[current_physical_thread_id_i];
+  assign ctx_rpush_v_o         = ctx_rpush_v_co[current_physical_thread_id_i];
+  assign ctx_rpush_fp_v_o      = ctx_rpush_fp_v_co[current_physical_thread_id_i];
+  assign ctx_rpush_virtual_context_id_o       = ctx_rpush_virtual_context_id_co[current_physical_thread_id_i];
+  assign ctx_rpush_reg_o       = ctx_rpush_reg_co[current_physical_thread_id_i];
+  assign ctx_rpush_data_o      = ctx_rpush_data_co[current_physical_thread_id_i];
+  assign csr_context_save_data_o = csr_context_save_data_co[csr_context_save_physical_thread_id_i];
 
 endmodule
 

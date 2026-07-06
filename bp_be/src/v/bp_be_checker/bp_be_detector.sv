@@ -35,7 +35,7 @@ module bp_be_detector
    , input                             fdiv_busy_i
    , input                             mem_busy_i
    , input                             mem_ordered_i
-   , input [thread_id_width_p-1:0]     current_thread_id_i
+   , input [thread_id_width_p-1:0]     current_physical_thread_id_i
    , input [thread_id_width_p-1:0]     retire_thread_id_i
 
    // Pipeline control signals from the checker to the calculator

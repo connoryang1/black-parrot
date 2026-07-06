@@ -56,8 +56,8 @@ module bp_be_scheduler
    , output logic                             late_wb_yumi_o
 
    // Current thread ID for register file reads/writes
-   , input [thread_id_width_p-1:0]            current_thread_id_i
-   , input [context_id_width_p-1:0]           current_context_id_i
+   , input [thread_id_width_p-1:0]            current_physical_thread_id_i
+   , input [context_id_width_p-1:0]           current_virtual_context_id_i
    , input [thread_id_width_p-1:0]            retire_thread_id_i
 
    // CSR 0x083 remote register write into another hardware thread context
@@ -69,14 +69,14 @@ module bp_be_scheduler
 
    , input [1:0]                              context_cache_scan_r_v_i
    , input [1:0]                              context_cache_scan_w_v_i
-   , input [thread_id_width_p-1:0]            context_cache_scan_thread_id_i
+   , input [thread_id_width_p-1:0]            context_cache_scan_physical_thread_id_i
    , input [1:0][reg_addr_width_gp-1:0]       context_cache_scan_r_addr_i
    , input [1:0][reg_addr_width_gp-1:0]       context_cache_scan_w_addr_i
    , input [1:0][dpath_width_gp-1:0]          context_cache_scan_w_data_i
    , output logic [1:0][dpath_width_gp-1:0]   context_cache_scan_r_data_o
    , input [1:0]                              context_cache_fp_scan_r_v_i
    , input [1:0]                              context_cache_fp_scan_w_v_i
-   , input [thread_id_width_p-1:0]            context_cache_fp_scan_thread_id_i
+   , input [thread_id_width_p-1:0]            context_cache_fp_scan_physical_thread_id_i
    , input [1:0][reg_addr_width_gp-1:0]       context_cache_fp_scan_r_addr_i
    , input [1:0][reg_addr_width_gp-1:0]       context_cache_fp_scan_w_addr_i
    , input [1:0][dpath_width_gp-1:0]          context_cache_fp_scan_w_data_i
@@ -240,8 +240,8 @@ module bp_be_scheduler
   always_comb begin
     if (|context_cache_scan_r_v_i) begin
       int_rs_r_v_li = context_cache_scan_r_v_i;
-      int_rs_thread_id_li[0] = context_cache_scan_thread_id_i;
-      int_rs_thread_id_li[1] = context_cache_scan_thread_id_i;
+      int_rs_thread_id_li[0] = context_cache_scan_physical_thread_id_i;
+      int_rs_thread_id_li[1] = context_cache_scan_physical_thread_id_i;
       int_rs_addr_li[0] = context_cache_scan_r_addr_i[0];
       int_rs_addr_li[1] = context_cache_scan_r_addr_i[1];
     end else begin
@@ -254,7 +254,7 @@ module bp_be_scheduler
   end
 
   assign int_rpush_w_v_li = context_cache_scan_w_v_i[0] | rpush_w_v_i;
-  assign int_rpush_tid_li = context_cache_scan_w_v_i[0] ? context_cache_scan_thread_id_i : rpush_tid_i;
+  assign int_rpush_tid_li = context_cache_scan_w_v_i[0] ? context_cache_scan_physical_thread_id_i : rpush_tid_i;
   assign int_rpush_reg_li = context_cache_scan_w_v_i[0] ? context_cache_scan_w_addr_i[0] : rpush_reg_i;
   assign int_rpush_data_li = context_cache_scan_w_v_i[0] ? context_cache_scan_w_data_i[0] : rpush_data_i;
   assign context_cache_scan_r_data_o = {irf_rs2, irf_rs1};
@@ -276,7 +276,7 @@ module bp_be_scheduler
      ,.rpush_data_i(int_rpush_data_li)
 
      ,.rd_w_v2_i(context_cache_scan_w_v_i[1])
-     ,.rd_thread_id2_i(context_cache_scan_thread_id_i)
+     ,.rd_thread_id2_i(context_cache_scan_physical_thread_id_i)
      ,.rd_addr2_i(context_cache_scan_w_addr_i[1])
      ,.rd_data2_i(context_cache_scan_w_data_i[1])
 
@@ -299,8 +299,8 @@ module bp_be_scheduler
       fp_rs_r_v_li[0] = context_cache_fp_scan_r_v_i[0];
       fp_rs_r_v_li[1] = context_cache_fp_scan_r_v_i[1];
       fp_rs_r_v_li[2] = 1'b0;
-      fp_rs_thread_id_li[0] = context_cache_fp_scan_thread_id_i;
-      fp_rs_thread_id_li[1] = context_cache_fp_scan_thread_id_i;
+      fp_rs_thread_id_li[0] = context_cache_fp_scan_physical_thread_id_i;
+      fp_rs_thread_id_li[1] = context_cache_fp_scan_physical_thread_id_i;
       fp_rs_thread_id_li[2] = '0;
       fp_rs_addr_li[0] = context_cache_fp_scan_r_addr_i[0];
       fp_rs_addr_li[1] = context_cache_fp_scan_r_addr_i[1];
@@ -317,7 +317,7 @@ module bp_be_scheduler
   end
 
   assign fp_rpush_w_v_li = context_cache_fp_scan_w_v_i[0] | rpush_fp_w_v_i;
-  assign fp_rpush_tid_li = context_cache_fp_scan_w_v_i[0] ? context_cache_fp_scan_thread_id_i : rpush_tid_i;
+  assign fp_rpush_tid_li = context_cache_fp_scan_w_v_i[0] ? context_cache_fp_scan_physical_thread_id_i : rpush_tid_i;
   assign fp_rpush_reg_li = context_cache_fp_scan_w_v_i[0] ? context_cache_fp_scan_w_addr_i[0] : rpush_reg_i;
   assign fp_rpush_data_li = context_cache_fp_scan_w_v_i[0] ? context_cache_fp_scan_w_data_i[0] : rpush_data_i;
   assign context_cache_fp_scan_r_data_o = {frf_rs2, frf_rs1};
@@ -338,7 +338,7 @@ module bp_be_scheduler
      ,.rpush_data_i(fp_rpush_data_li)
 
      ,.rd_w_v2_i(context_cache_fp_scan_w_v_i[1])
-     ,.rd_thread_id2_i(context_cache_fp_scan_thread_id_i)
+     ,.rd_thread_id2_i(context_cache_fp_scan_physical_thread_id_i)
      ,.rd_addr2_i(context_cache_fp_scan_w_addr_i[1])
      ,.rd_data2_i(context_cache_fp_scan_w_data_i[1])
 
@@ -385,7 +385,7 @@ module bp_be_scheduler
       ? context_id_width_p'(issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
       : context_id_width_p'(irf_rs1[0 +: context_id_width_p]);
 
-  wire issue_ctxtsw_switch_v = issue_ctxtsw_v & (issue_ctxtsw_target_tid != current_context_id_i);
+  wire issue_ctxtsw_switch_v = issue_ctxtsw_v & (issue_ctxtsw_target_tid != current_virtual_context_id_i);
   wire issue_ctxtsw_dispatch_v = fe_queue_read_li
                                   & ~hazard_v_i
                                   & ~poison_isd_i
@@ -395,7 +395,8 @@ module bp_be_scheduler
                               | issue_ctxtsw_dispatch_v
                               | (fe_queue_clr_li & ~ctxtsw_commit_accept_li);
 
-  assign fe_queue_ready_and_o = (issue_queue_ready_and_lo | ctxtsw_commit_accept_li) & ~ctxtsw_queue_hold_li;
+  assign fe_queue_ready_and_o = (issue_queue_ready_and_lo | ctxtsw_commit_accept_li)
+                                & ~ctxtsw_queue_hold_li;
   assign context_cache_drain_ready_o = issue_queue_empty_lo
                                         & ~issue_pkt_cast_o.v
                                         & ~dispatch_pkt_cast_o.v
