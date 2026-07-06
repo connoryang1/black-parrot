@@ -22,6 +22,8 @@ module bp_be_pipe_sys
    // Generated parameters
    , localparam exception_width_lp    = $bits(bp_be_exception_s)
    , localparam special_width_lp      = $bits(bp_be_special_s)
+   , localparam csr_context_csrs_lp   = 26
+   , localparam csr_context_width_lp  = csr_context_csrs_lp*dword_width_gp + rv64_priv_width_gp
    )
   (input                                    clk_i
    , input                                   reset_i
@@ -64,6 +66,14 @@ module bp_be_pipe_sys
    , input [context_id_width_p-1:0]          current_context_id_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
+
+   // Save/restore physical CSR state for nonresident virtual contexts.
+   , input                                   csr_context_restore_v_i
+   , input                                   csr_context_restore_reset_i
+   , input [thread_id_width_p-1:0]           csr_context_restore_thread_id_i
+   , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
+   , input [thread_id_width_p-1:0]           csr_context_save_thread_id_i
+   , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
 
    // Bootstrap: write target NPC for a logical context (CSR 0x801)
    , output logic                            ctx_npc_write_v_o
@@ -142,6 +152,12 @@ module bp_be_pipe_sys
      ,.current_context_id_i(current_context_id_i)
      ,.csr_thread_id_i(reservation_thread_id)
      ,.retire_thread_id_i(retire_thread_id_i)
+     ,.csr_context_restore_v_i(csr_context_restore_v_i)
+     ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
+     ,.csr_context_restore_thread_id_i(csr_context_restore_thread_id_i)
+     ,.csr_context_restore_data_i(csr_context_restore_data_i)
+     ,.csr_context_save_thread_id_i(csr_context_save_thread_id_i)
+     ,.csr_context_save_data_o(csr_context_save_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
