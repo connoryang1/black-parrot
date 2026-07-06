@@ -207,6 +207,14 @@ module bp_be_top
   logic context_cache_scheduler_drain_ready_lo;
   logic context_cache_calculator_drain_ready_lo;
   logic context_cache_drain_safe_li;
+  logic context_cache_dcache_v_li;
+  logic context_cache_dcache_w_li;
+  logic [paddr_width_p-1:0] context_cache_dcache_paddr_li;
+  logic [dword_width_gp-1:0] context_cache_dcache_data_li;
+  logic context_cache_dcache_yumi_lo;
+  logic context_cache_dcache_ready_lo;
+  logic context_cache_dcache_resp_v_lo;
+  logic [dword_width_gp-1:0] context_cache_dcache_resp_data_lo;
   logic [1:0] context_cache_scan_r_v_li;
   logic [1:0] context_cache_scan_w_v_li;
   logic [thread_id_width_p-1:0] context_cache_scan_physical_thread_id_li;
@@ -268,6 +276,10 @@ module bp_be_top
   assign context_cache_commit_v_li = commit_pkt.ctxtsw & context_cache_miss_pending_r;
   assign context_cache_launch_v_li = context_cache_state_r == e_context_cache_launch_fe;
   assign context_cache_active_li = context_cache_state_r != e_context_cache_idle;
+  assign context_cache_dcache_v_li = 1'b0;
+  assign context_cache_dcache_w_li = 1'b0;
+  assign context_cache_dcache_paddr_li = '0;
+  assign context_cache_dcache_data_li = '0;
   assign context_cache_drain_safe_li = context_cache_calculator_drain_ready_lo
                                        & ~dispatch_pkt.v
                                        & ~late_wb_v_lo
@@ -1157,6 +1169,14 @@ module bp_be_top
      ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_lo)
      ,.ctx_rpush_reg_o(ctx_rpush_reg_lo)
      ,.ctx_rpush_data_o(ctx_rpush_data_lo)
+     ,.context_cache_dcache_v_i(context_cache_dcache_v_li)
+     ,.context_cache_dcache_w_i(context_cache_dcache_w_li)
+     ,.context_cache_dcache_paddr_i(context_cache_dcache_paddr_li)
+     ,.context_cache_dcache_data_i(context_cache_dcache_data_li)
+     ,.context_cache_dcache_yumi_o(context_cache_dcache_yumi_lo)
+     ,.context_cache_dcache_ready_o(context_cache_dcache_ready_lo)
+     ,.context_cache_dcache_resp_v_o(context_cache_dcache_resp_v_lo)
+     ,.context_cache_dcache_resp_data_o(context_cache_dcache_resp_data_lo)
      ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
      ,.fast_ctxtsw_old_physical_thread_id_o(fast_ctxtsw_old_physical_thread_id_lo)
      ,.fast_ctxtsw_virtual_context_id_o(fast_ctxtsw_virtual_context_id_lo)

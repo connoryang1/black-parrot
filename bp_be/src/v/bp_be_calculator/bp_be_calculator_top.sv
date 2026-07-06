@@ -117,6 +117,16 @@ module bp_be_calculator_top
    , output logic [reg_addr_width_gp-1:0]            ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]               ctx_rpush_data_o
 
+   // Serialized context-cache L1 D$ service path.
+   , input                                           context_cache_dcache_v_i
+   , input                                           context_cache_dcache_w_i
+   , input [paddr_width_p-1:0]                       context_cache_dcache_paddr_i
+   , input [dword_width_gp-1:0]                      context_cache_dcache_data_i
+   , output logic                                    context_cache_dcache_yumi_o
+   , output logic                                    context_cache_dcache_ready_o
+   , output logic                                    context_cache_dcache_resp_v_o
+   , output logic [dword_width_gp-1:0]               context_cache_dcache_resp_data_o
+
    // Early classified ctxtsw event. Observable only until BE context state
    // consumes it as an architectural mini-commit.
    , output logic                                    fast_ctxtsw_v_o
@@ -485,6 +495,15 @@ module bp_be_calculator_top
      ,.late_wb_v_o(pipe_mem_late_wb_v)
 
      ,.trans_info_i(reservation_trans_info_lo)
+
+     ,.context_cache_dcache_v_i(context_cache_dcache_v_i)
+     ,.context_cache_dcache_w_i(context_cache_dcache_w_i)
+     ,.context_cache_dcache_paddr_i(context_cache_dcache_paddr_i)
+     ,.context_cache_dcache_data_i(context_cache_dcache_data_i)
+     ,.context_cache_dcache_yumi_o(context_cache_dcache_yumi_o)
+     ,.context_cache_dcache_ready_o(context_cache_dcache_ready_o)
+     ,.context_cache_dcache_resp_v_o(context_cache_dcache_resp_v_o)
+     ,.context_cache_dcache_resp_data_o(context_cache_dcache_resp_data_o)
      );
 
   // Floating point pipe: 3/4 cycle latency
