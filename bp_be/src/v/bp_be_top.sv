@@ -381,9 +381,9 @@ module bp_be_top
     context_cache_fp_save_mask_n_li = context_cache_fp_save_mask_r;
     context_cache_fp_restore_mask_n_li = context_cache_fp_restore_mask_r;
     for (int i = 0; i < 2; i++) begin
-      if (context_cache_fp_save_pick_v_li[i])
+      if (context_cache_fp_scan_r_v_li[i])
         context_cache_fp_save_mask_n_li[context_cache_fp_save_pick_addr_li[i]] = 1'b0;
-      if (context_cache_fp_restore_pick_v_li[i])
+      if (context_cache_fp_scan_w_v_li[i])
         context_cache_fp_restore_mask_n_li[context_cache_fp_restore_pick_addr_li[i]] = 1'b0;
     end
   end
