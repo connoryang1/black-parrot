@@ -227,6 +227,7 @@ module bp_be_top
   logic context_cache_int_l1_phase_active_li;
   logic context_cache_int_l1_restore_from_l1_li;
   logic [reg_addr_width_gp-1:0] context_cache_int_l1_reg_r;
+  logic [reg_addr_width_gp-1:0] context_cache_int_l1_resp_id_r;
   logic [reg_addr_width_gp-1:0] context_cache_int_l1_restore_complete_addr_li;
   logic [dword_width_gp-1:0] context_cache_int_l1_data_r;
   logic [paddr_width_p-1:0] context_cache_int_l1_paddr_r;
@@ -416,7 +417,7 @@ module bp_be_top
   assign context_cache_scan_physical_thread_id_li = context_cache_victim_physical_thread_id_r;
   assign context_cache_scan_r_addr_li = context_cache_int_save_pick_addr_li;
   assign context_cache_scan_w_addr_li[0] = context_cache_int_l1_restore_w_v_r
-                                           ? context_cache_int_l1_reg_r
+                                           ? context_cache_int_l1_resp_id_r
                                            : context_cache_int_restore_pick_addr_li[0];
   assign context_cache_scan_w_addr_li[1] = '0;
   assign context_cache_scan_w_data_li[0] =
@@ -433,7 +434,7 @@ module bp_be_top
                                                       | context_cache_int_l1_restore_w_v_r;
   assign context_cache_int_l1_restore_complete_addr_li =
     context_cache_int_l1_restore_w_v_r
-    ? context_cache_int_l1_reg_r
+    ? context_cache_int_l1_resp_id_r
     : context_cache_int_restore_pick_addr_li[0];
   assign context_cache_fp_scan_r_v_li = context_cache_fp_save_pick_v_li
                                         & {2{context_cache_state_r == e_context_cache_save_restore_fp_regs}}
@@ -762,6 +763,7 @@ module bp_be_top
       context_cache_int_l1_wait_resp_r <= 1'b0;
       context_cache_int_l1_restore_w_v_r <= 1'b0;
       context_cache_int_l1_reg_r <= '0;
+      context_cache_int_l1_resp_id_r <= '0;
       context_cache_int_l1_data_r <= '0;
       context_cache_int_l1_paddr_r <= '0;
       physical_thread_fp_dirty_r <= '0;
@@ -809,6 +811,7 @@ module bp_be_top
             <= 1'b1;
         end else begin
           context_cache_int_l1_data_r <= context_cache_dcache_resp_data_lo;
+          context_cache_int_l1_resp_id_r <= context_cache_dcache_resp_id_lo;
           context_cache_int_l1_restore_w_v_r <= 1'b1;
         end
       end
