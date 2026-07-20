@@ -209,11 +209,13 @@ module bp_be_top
   logic context_cache_drain_safe_li;
   logic context_cache_dcache_v_li;
   logic context_cache_dcache_w_li;
+  logic [reg_addr_width_gp-1:0] context_cache_dcache_id_li;
   logic [paddr_width_p-1:0] context_cache_dcache_paddr_li;
   logic [dword_width_gp-1:0] context_cache_dcache_data_li;
   logic context_cache_dcache_yumi_lo;
   logic context_cache_dcache_ready_lo;
   logic context_cache_dcache_resp_v_lo;
+  logic [reg_addr_width_gp-1:0] context_cache_dcache_resp_id_lo;
   logic [dword_width_gp-1:0] context_cache_dcache_resp_data_lo;
   logic context_cache_int_l1_req_v_r;
   logic context_cache_int_l1_req_w_r;
@@ -306,6 +308,7 @@ module bp_be_top
   assign context_cache_active_li = context_cache_state_r != e_context_cache_idle;
   assign context_cache_dcache_v_li = context_cache_int_l1_req_v_r;
   assign context_cache_dcache_w_li = context_cache_int_l1_req_w_r;
+  assign context_cache_dcache_id_li = context_cache_int_l1_reg_r;
   assign context_cache_dcache_paddr_li = context_cache_int_l1_paddr_r;
   assign context_cache_dcache_data_li = context_cache_int_l1_data_r;
   assign context_cache_int_l1_phase_active_li = context_cache_int_l1_req_v_r
@@ -1273,11 +1276,13 @@ module bp_be_top
      ,.ctx_rpush_data_o(ctx_rpush_data_lo)
      ,.context_cache_dcache_v_i(context_cache_dcache_v_li)
      ,.context_cache_dcache_w_i(context_cache_dcache_w_li)
+     ,.context_cache_dcache_id_i(context_cache_dcache_id_li)
      ,.context_cache_dcache_paddr_i(context_cache_dcache_paddr_li)
      ,.context_cache_dcache_data_i(context_cache_dcache_data_li)
      ,.context_cache_dcache_yumi_o(context_cache_dcache_yumi_lo)
      ,.context_cache_dcache_ready_o(context_cache_dcache_ready_lo)
      ,.context_cache_dcache_resp_v_o(context_cache_dcache_resp_v_lo)
+     ,.context_cache_dcache_resp_id_o(context_cache_dcache_resp_id_lo)
      ,.context_cache_dcache_resp_data_o(context_cache_dcache_resp_data_lo)
      ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
      ,.fast_ctxtsw_old_physical_thread_id_o(fast_ctxtsw_old_physical_thread_id_lo)
