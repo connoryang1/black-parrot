@@ -63,11 +63,13 @@ module bp_be_pipe_mem
    // and cacheable, so this bypasses the DMMU while still using the L1 D$.
    , input                                           context_cache_dcache_v_i
    , input                                           context_cache_dcache_w_i
+   , input [reg_addr_width_gp-1:0]                   context_cache_dcache_id_i
    , input [paddr_width_p-1:0]                       context_cache_dcache_paddr_i
    , input [dword_width_gp-1:0]                      context_cache_dcache_data_i
    , output logic                                    context_cache_dcache_yumi_o
    , output logic                                    context_cache_dcache_ready_o
    , output logic                                    context_cache_dcache_resp_v_o
+   , output logic [reg_addr_width_gp-1:0]            context_cache_dcache_resp_id_o
    , output logic [dword_width_gp-1:0]               context_cache_dcache_resp_data_o
 
    // D$-LCE Interface
@@ -244,8 +246,8 @@ module bp_be_pipe_mem
   bp_be_dcache_pkt_s dcache_pkt;
   wire dcache_pkt_v = context_cache_dcache_accept_li | is_req;
   assign dcache_pkt = context_cache_dcache_accept_li
-                      ? '{thread_id : '0
-                          ,rd_addr : '0
+                          ? '{thread_id : '0
+                          ,rd_addr : context_cache_dcache_id_i
                           ,opcode : context_cache_dcache_w_i ? e_dcache_op_sd : e_dcache_op_ld
                           ,vaddr  : context_cache_dcache_paddr_i[0+:vaddr_width_p]
                           }
@@ -438,6 +440,7 @@ module bp_be_pipe_mem
                                             ? dcache_ordered_lo
                                             : dcache_v);
   assign context_cache_dcache_resp_data_o = dcache_data;
+  assign context_cache_dcache_resp_id_o = dcache_rd_addr;
 
   always_ff @(posedge posedge_clk)
     if (reset_i) begin

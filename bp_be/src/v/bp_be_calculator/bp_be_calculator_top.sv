@@ -120,11 +120,13 @@ module bp_be_calculator_top
    // Serialized context-cache L1 D$ service path.
    , input                                           context_cache_dcache_v_i
    , input                                           context_cache_dcache_w_i
+   , input [reg_addr_width_gp-1:0]                   context_cache_dcache_id_i
    , input [paddr_width_p-1:0]                       context_cache_dcache_paddr_i
    , input [dword_width_gp-1:0]                      context_cache_dcache_data_i
    , output logic                                    context_cache_dcache_yumi_o
    , output logic                                    context_cache_dcache_ready_o
    , output logic                                    context_cache_dcache_resp_v_o
+   , output logic [reg_addr_width_gp-1:0]            context_cache_dcache_resp_id_o
    , output logic [dword_width_gp-1:0]               context_cache_dcache_resp_data_o
 
    // Early classified ctxtsw event. Observable only until BE context state
@@ -164,11 +166,13 @@ module bp_be_calculator_top
   logic ctx_l1_cmd_pending_r;
   logic pipe_mem_context_cache_dcache_v_li;
   logic pipe_mem_context_cache_dcache_w_li;
+  logic [reg_addr_width_gp-1:0] pipe_mem_context_cache_dcache_id_li;
   logic [paddr_width_p-1:0] pipe_mem_context_cache_dcache_paddr_li;
   logic [dword_width_gp-1:0] pipe_mem_context_cache_dcache_data_li;
   logic pipe_mem_context_cache_dcache_yumi_lo;
   logic pipe_mem_context_cache_dcache_ready_lo;
   logic pipe_mem_context_cache_dcache_resp_v_lo;
+  logic [reg_addr_width_gp-1:0] pipe_mem_context_cache_dcache_resp_id_lo;
   logic [dword_width_gp-1:0] pipe_mem_context_cache_dcache_resp_data_lo;
   wire ctx_l1_ready_li = pipe_mem_context_cache_dcache_ready_lo & ~context_cache_dcache_v_i;
   wire ctx_l1_cmd_fire_li = ctx_l1_cmd_v_lo & pipe_mem_context_cache_dcache_yumi_lo;
@@ -178,6 +182,9 @@ module bp_be_calculator_top
   assign pipe_mem_context_cache_dcache_w_li = context_cache_dcache_v_i
                                               ? context_cache_dcache_w_i
                                               : ctx_l1_cmd_w_lo;
+  assign pipe_mem_context_cache_dcache_id_li = context_cache_dcache_v_i
+                                               ? context_cache_dcache_id_i
+                                               : '0;
   assign pipe_mem_context_cache_dcache_paddr_li = context_cache_dcache_v_i
                                                   ? context_cache_dcache_paddr_i
                                                   : ctx_l1_cmd_paddr_lo;
@@ -189,6 +196,7 @@ module bp_be_calculator_top
   assign context_cache_dcache_ready_o = pipe_mem_context_cache_dcache_ready_lo;
   assign context_cache_dcache_resp_v_o = pipe_mem_context_cache_dcache_resp_v_lo
                                          & ~ctx_l1_cmd_pending_r;
+  assign context_cache_dcache_resp_id_o = pipe_mem_context_cache_dcache_resp_id_lo;
   assign context_cache_dcache_resp_data_o = pipe_mem_context_cache_dcache_resp_data_lo;
 
   always_ff @(posedge clk_i)
@@ -545,11 +553,13 @@ module bp_be_calculator_top
 
      ,.context_cache_dcache_v_i(pipe_mem_context_cache_dcache_v_li)
      ,.context_cache_dcache_w_i(pipe_mem_context_cache_dcache_w_li)
+     ,.context_cache_dcache_id_i(pipe_mem_context_cache_dcache_id_li)
      ,.context_cache_dcache_paddr_i(pipe_mem_context_cache_dcache_paddr_li)
      ,.context_cache_dcache_data_i(pipe_mem_context_cache_dcache_data_li)
      ,.context_cache_dcache_yumi_o(pipe_mem_context_cache_dcache_yumi_lo)
      ,.context_cache_dcache_ready_o(pipe_mem_context_cache_dcache_ready_lo)
      ,.context_cache_dcache_resp_v_o(pipe_mem_context_cache_dcache_resp_v_lo)
+     ,.context_cache_dcache_resp_id_o(pipe_mem_context_cache_dcache_resp_id_lo)
      ,.context_cache_dcache_resp_data_o(pipe_mem_context_cache_dcache_resp_data_lo)
      );
 
