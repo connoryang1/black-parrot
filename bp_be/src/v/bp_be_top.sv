@@ -222,7 +222,6 @@ module bp_be_top
   logic context_cache_int_l1_wait_resp_r;
   logic context_cache_int_l1_restore_w_v_r;
   logic [1:0] context_cache_int_l1_restore_shadow_v_li;
-  logic context_cache_int_l1_save_complete_v_li;
   logic context_cache_int_l1_phase_active_li;
   logic context_cache_int_l1_restore_from_l1_li;
   logic [reg_addr_width_gp-1:0] context_cache_int_l1_reg_r;
@@ -254,10 +253,10 @@ module bp_be_top
   localparam int context_mem_regs_per_line_lp = 8;
   localparam int context_mem_line_count_lp = reg_count_lp / context_mem_regs_per_line_lp;
   localparam int context_mem_line_index_width_lp = $clog2(context_mem_line_count_lp);
-  logic context_mem_int_w_v_li;
-  logic [context_id_width_p-1:0] context_mem_int_w_context_id_li;
-  logic [reg_addr_width_gp-1:0] context_mem_int_w_reg_addr_li;
-  logic [dpath_width_gp-1:0] context_mem_int_w_data_li;
+  logic [1:0] context_mem_int_w_v_li;
+  logic [1:0][context_id_width_p-1:0] context_mem_int_w_context_id_li;
+  logic [1:0][reg_addr_width_gp-1:0] context_mem_int_w_reg_addr_li;
+  logic [1:0][dpath_width_gp-1:0] context_mem_int_w_data_li;
   logic context_mem_int_r_v_li;
   logic [context_id_width_p-1:0] context_mem_int_r_context_id_li;
   logic [context_mem_line_index_width_lp-1:0] context_mem_int_r_line_index_li;
@@ -312,20 +311,24 @@ module bp_be_top
   endfunction
 
   // Context memory is the fast backing store for nonresident GPR state. Save
-  // scans and nonresident rpush write individual registers; restore streams
-  // four 512-bit lines into a local buffer before touching the physical file.
-  assign context_mem_int_w_v_li = context_cache_scan_save_v_r[0]
-                                  | (ctx_rpush_v_lo & ~ctx_rpush_resident_v_li
-                                     & (ctx_rpush_virtual_context_id_lo < num_contexts_p));
-  assign context_mem_int_w_context_id_li = context_cache_scan_save_v_r[0]
-                                           ? context_cache_victim_virtual_context_id_r
-                                           : ctx_rpush_virtual_context_id_lo;
-  assign context_mem_int_w_reg_addr_li = context_cache_scan_save_v_r[0]
-                                         ? context_cache_scan_save_idx_r[0]
-                                         : ctx_rpush_reg_lo;
-  assign context_mem_int_w_data_li = context_cache_scan_save_v_r[0]
-                                     ? context_cache_scan_r_data_lo[0]
-                                     : ctx_rpush_data_lo;
+  // consumes both existing physical-regfile read lanes; a remote write uses
+  // lane 0 only when no eviction scan is active.
+  assign context_mem_int_w_v_li[0] = context_cache_scan_save_v_r[0]
+                                     | ((~(|context_cache_scan_save_v_r))
+                                        & ctx_rpush_v_lo & ~ctx_rpush_resident_v_li
+                                        & (ctx_rpush_virtual_context_id_lo < num_contexts_p));
+  assign context_mem_int_w_v_li[1] = context_cache_scan_save_v_r[1];
+  for (genvar i = 0; i < 2; i++) begin : gen_context_mem_int_write
+    assign context_mem_int_w_context_id_li[i] = context_cache_scan_save_v_r[i]
+                                                 ? context_cache_victim_virtual_context_id_r
+                                                 : ctx_rpush_virtual_context_id_lo;
+    assign context_mem_int_w_reg_addr_li[i] = context_cache_scan_save_v_r[i]
+                                               ? context_cache_scan_save_idx_r[i]
+                                               : ctx_rpush_reg_lo;
+    assign context_mem_int_w_data_li[i] = context_cache_scan_save_v_r[i]
+                                           ? context_cache_scan_r_data_lo[i]
+                                           : ctx_rpush_data_lo;
+  end
   assign context_mem_int_r_v_li = (context_cache_state_r == e_context_cache_save_restore_regs)
                                   & context_cache_int_restore_phase_r
                                   & ~context_mem_int_restore_issue_done_r;
@@ -396,7 +399,7 @@ module bp_be_top
     save_cnt = 0;
     restore_cnt = 0;
     for (int i = 0; i < reg_count_lp; i++) begin
-      if (context_cache_int_save_mask_r[i] && (save_cnt < 1)) begin
+      if (context_cache_int_save_mask_r[i] && (save_cnt < 2)) begin
         context_cache_int_save_pick_v_li[save_cnt] = 1'b1;
         context_cache_int_save_pick_addr_li[save_cnt] = reg_addr_width_gp'(i);
         save_cnt++;
@@ -436,8 +439,9 @@ module bp_be_top
   always_comb begin
     context_cache_int_save_mask_n_li = context_cache_int_save_mask_r;
     context_cache_int_restore_mask_n_li = context_cache_int_restore_mask_r;
-    if (context_cache_int_l1_save_complete_v_li)
-      context_cache_int_save_mask_n_li[context_cache_int_save_pick_addr_li[0]] = 1'b0;
+    for (int i = 0; i < 2; i++)
+      if (context_cache_scan_r_v_li[i])
+        context_cache_int_save_mask_n_li[context_cache_int_save_pick_addr_li[i]] = 1'b0;
     for (int i = 0; i < 2; i++)
       if (context_cache_int_l1_restore_shadow_v_li[i])
         context_cache_int_restore_mask_n_li[context_cache_int_restore_pick_addr_li[i]] = 1'b0;
@@ -478,7 +482,6 @@ module bp_be_top
                                            [dpath_width_gp*(context_cache_scan_w_addr_li[i] % context_mem_regs_per_line_lp) +: dpath_width_gp]
       : '0;
   end
-  assign context_cache_int_l1_save_complete_v_li = context_cache_scan_r_v_li[0];
   assign context_cache_fp_scan_r_v_li = context_cache_fp_save_pick_v_li
                                         & {2{context_cache_state_r == e_context_cache_save_restore_fp_regs}}
                                         & {2{~context_cache_fp_restore_phase_r}};
