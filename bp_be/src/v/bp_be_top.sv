@@ -252,6 +252,17 @@ module bp_be_top
   logic [1:0][reg_addr_width_gp-1:0] context_cache_fp_scan_save_idx_r;
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_int_shadow_r;
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_fp_shadow_r;
+  logic context_mem_int_w_v_li;
+  logic [context_id_width_p-1:0] context_mem_int_w_context_id_li;
+  logic [reg_addr_width_gp-1:0] context_mem_int_w_reg_addr_li;
+  logic [dpath_width_gp-1:0] context_mem_int_w_data_li;
+  logic context_mem_int_r_v_li;
+  logic [context_id_width_p-1:0] context_mem_int_r_context_id_li;
+  logic [context_mem_line_index_width_lp-1:0] context_mem_int_r_line_index_li;
+  logic context_mem_int_r_v_lo;
+  logic [context_id_width_p-1:0] context_mem_int_r_context_id_lo;
+  logic [context_mem_line_index_width_lp-1:0] context_mem_int_r_line_index_lo;
+  logic [context_mem_regs_per_line_lp*dpath_width_gp-1:0] context_mem_int_r_data_lo;
   logic ctx_npc_write_resident_v_li;
   logic [thread_id_width_p-1:0] ctx_npc_write_physical_thread_id_li;
   logic ctx_rpush_resident_v_li;
@@ -279,6 +290,9 @@ module bp_be_top
   wire [csr_context_width_lp-1:0] csr_context_restore_data_li =
     virtual_context_csr_state_r[context_cache_target_virtual_context_id_r];
   localparam int reg_count_lp = 2**reg_addr_width_gp;
+  localparam int context_mem_regs_per_line_lp = 8;
+  localparam int context_mem_line_count_lp = reg_count_lp / context_mem_regs_per_line_lp;
+  localparam int context_mem_line_index_width_lp = $clog2(context_mem_line_count_lp);
   localparam [paddr_width_p-1:0] context_cache_image_base_lp = paddr_width_p'(64'h0000000087f00000);
   localparam int context_cache_image_stride_bytes_lp = 512;
   localparam int context_cache_image_gpr_base_word_lp = 8;
@@ -293,6 +307,51 @@ module bp_be_top
                                                 + int'(reg_addr_i))
                                  * paddr_width_p'(dword_width_gp/8));
   endfunction
+
+  // The context memory mirrors the existing shadow image during this
+  // checkpoint.  Restore is deliberately still sourced from the shadow array
+  // until the line-read path is verified independently.
+  assign context_mem_int_w_v_li = context_cache_scan_save_v_r[0]
+                                  | (ctx_rpush_v_lo & ~ctx_rpush_resident_v_li
+                                     & (ctx_rpush_virtual_context_id_lo < num_contexts_p));
+  assign context_mem_int_w_context_id_li = context_cache_scan_save_v_r[0]
+                                           ? context_cache_victim_virtual_context_id_r
+                                           : ctx_rpush_virtual_context_id_lo;
+  assign context_mem_int_w_reg_addr_li = context_cache_scan_save_v_r[0]
+                                         ? context_cache_scan_save_idx_r[0]
+                                         : ctx_rpush_reg_lo;
+  assign context_mem_int_w_data_li = context_cache_scan_save_v_r[0]
+                                     ? context_cache_scan_r_data_lo[0]
+                                     : ctx_rpush_data_lo;
+  assign context_mem_int_r_v_li = 1'b0;
+  assign context_mem_int_r_context_id_li = '0;
+  assign context_mem_int_r_line_index_li = '0;
+
+  bp_be_context_mem
+   #(.context_count_p(num_contexts_p)
+     ,.context_id_width_p(context_id_width_p)
+     ,.reg_count_p(reg_count_lp)
+     ,.reg_addr_width_p(reg_addr_width_gp)
+     ,.data_width_p(dpath_width_gp)
+     ,.regs_per_line_p(context_mem_regs_per_line_lp)
+     ,.line_count_p(context_mem_line_count_lp)
+     ,.line_index_width_p(context_mem_line_index_width_lp)
+     )
+   int_context_mem
+    (.clk_i(clk_i)
+     ,.reset_i(reset_i)
+     ,.w_v_i(context_mem_int_w_v_li)
+     ,.w_context_id_i(context_mem_int_w_context_id_li)
+     ,.w_reg_addr_i(context_mem_int_w_reg_addr_li)
+     ,.w_data_i(context_mem_int_w_data_li)
+     ,.r_v_i(context_mem_int_r_v_li)
+     ,.r_context_id_i(context_mem_int_r_context_id_li)
+     ,.r_line_index_i(context_mem_int_r_line_index_li)
+     ,.r_v_o(context_mem_int_r_v_lo)
+     ,.r_context_id_o(context_mem_int_r_context_id_lo)
+     ,.r_line_index_o(context_mem_int_r_line_index_lo)
+     ,.r_data_o(context_mem_int_r_data_lo)
+     );
   wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
                                   & fast_ctxtsw_resident_v_li
                                   & ~cfg_bus_cast_i.freeze

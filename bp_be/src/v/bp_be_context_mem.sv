@@ -52,9 +52,9 @@ module bp_be_context_mem
       r_context_id_o <= '0;
       r_line_index_o <= '0;
       r_data_o <= '0;
-      for (int context = 0; context < context_count_p; context++)
+      for (int context_idx = 0; context_idx < context_count_p; context_idx++)
         for (int line = 0; line < line_count_p; line++)
-          mem[context][line] <= '0;
+          mem[context_idx][line] <= '0;
     end else begin
       r_v_o <= r_v_i;
       if (r_v_i) begin
