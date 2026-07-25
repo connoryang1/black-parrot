@@ -9,7 +9,7 @@
  * depend on ordinary load/store arbitration or cache refill latency.
  *
  * The first interface is deliberately small and pipeline-friendly:
- * - one 64-bit register write per cycle, for eviction scans and rpush;
+ * - two 64-bit register writes per cycle, for eviction scans and rpush;
  * - one synchronous 8-register (512-bit for RV64) line read per cycle.
  *
  * The registered response address allows callers to issue consecutive line
@@ -29,10 +29,10 @@ module bp_be_context_mem
   (input clk_i
    , input reset_i
 
-   , input w_v_i
-   , input [context_id_width_p-1:0] w_context_id_i
-   , input [reg_addr_width_p-1:0] w_reg_addr_i
-   , input [data_width_p-1:0] w_data_i
+   , input [1:0] w_v_i
+   , input [1:0][context_id_width_p-1:0] w_context_id_i
+   , input [1:0][reg_addr_width_p-1:0] w_reg_addr_i
+   , input [1:0][data_width_p-1:0] w_data_i
 
    , input r_v_i
    , input [context_id_width_p-1:0] r_context_id_i
@@ -63,9 +63,11 @@ module bp_be_context_mem
         r_data_o <= mem[r_context_id_i][r_line_index_i];
       end
 
-      if (w_v_i)
-        mem[w_context_id_i][w_reg_addr_i / regs_per_line_p]
-          [data_width_p*(w_reg_addr_i % regs_per_line_p) +: data_width_p] <= w_data_i;
+      for (int write_port = 0; write_port < 2; write_port++)
+        if (w_v_i[write_port])
+          mem[w_context_id_i[write_port]][w_reg_addr_i[write_port] / regs_per_line_p]
+            [data_width_p*(w_reg_addr_i[write_port] % regs_per_line_p) +: data_width_p]
+              <= w_data_i[write_port];
     end
   end
 
