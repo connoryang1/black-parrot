@@ -232,14 +232,19 @@ module bp_be_pipe_mem
      ,.r_store_page_fault_o(store_page_fault_v_o)
      );
 
-  logic context_cache_dcache_active_r;
+  // A context request first needs its physical tag in the D$ TV stage, then
+  // remains outstanding until the D$ returns its load data or store ordering
+  // acknowledgement. Keep those lifetimes distinct: a future load window
+  // needs to accept a new TL request while an older load still awaits data.
+  logic context_cache_dcache_ptag_v_r;
+  logic context_cache_dcache_resp_pending_r;
   logic context_cache_dcache_store_r;
   logic [paddr_width_p-1:0] context_cache_dcache_paddr_r;
   logic [dword_width_gp-1:0] context_cache_dcache_data_r;
   wire context_cache_dcache_accept_li = context_cache_dcache_v_i
                                         & context_cache_dcache_ready_o;
   assign context_cache_dcache_yumi_o = context_cache_dcache_accept_li;
-  assign context_cache_dcache_ready_o = ~context_cache_dcache_active_r
+  assign context_cache_dcache_ready_o = ~context_cache_dcache_resp_pending_r
                                         & ~is_req
                                         & ~dcache_busy_lo;
 
@@ -266,16 +271,16 @@ module bp_be_pipe_mem
      );
 
   // D$ can't handle misaligned accesses
-  wire dcache_ptag_v = context_cache_dcache_active_r
+  wire dcache_ptag_v = context_cache_dcache_ptag_v_r
                        | (dtlb_v_lo & ~load_misaligned_v_o & ~store_misaligned_v_o);
   wire [ptag_width_p-1:0] dcache_ptag_li =
-    context_cache_dcache_active_r
+    context_cache_dcache_ptag_v_r
     ? context_cache_dcache_paddr_r[page_offset_width_gp+:ptag_width_p]
     : dtlb_ptag_lo;
-  wire dcache_ptag_uncached_li = context_cache_dcache_active_r
+  wire dcache_ptag_uncached_li = context_cache_dcache_ptag_v_r
                                  ? 1'b0
                                  : dtlb_ptag_uncached_lo;
-  wire dcache_ptag_dram_li = context_cache_dcache_active_r
+  wire dcache_ptag_dram_li = context_cache_dcache_ptag_v_r
                              ? 1'b1
                              : dtlb_ptag_dram_lo;
 
@@ -286,7 +291,7 @@ module bp_be_pipe_mem
   logic [thread_id_width_p-1:0] dcache_thread_id;
   logic dcache_unsigned, dcache_int, dcache_float, dcache_ptw, dcache_ret, dcache_late;
   logic dcache_busy_lo, dcache_ordered_lo;
-  wire [dword_width_gp-1:0] dcache_st_data = context_cache_dcache_active_r
+  wire [dword_width_gp-1:0] dcache_st_data = context_cache_dcache_ptag_v_r
                                              ? context_cache_dcache_data_r
                                              : rs2_val_i;
   bp_be_dcache
@@ -358,9 +363,9 @@ module bp_be_pipe_mem
      ,.data_o(early_v_o)
      );
 
-  assign cache_miss_v_o   = ~context_cache_dcache_active_r
+  assign cache_miss_v_o   = ~context_cache_dcache_resp_pending_r
                              & early_v_r & ~(dcache_v |  dcache_late) &  cache_req_yumi_i;
-  assign cache_replay_v_o = ~context_cache_dcache_active_r
+  assign cache_replay_v_o = ~context_cache_dcache_resp_pending_r
                              & early_v_r & ~(dcache_v & ~dcache_late) & ~cache_req_yumi_i;
 
   bp_be_int_reg_s dcache_idata;
@@ -424,7 +429,7 @@ module bp_be_pipe_mem
      ,.data_o({ordered_o, busy_o})
      );
 
-  assign late_wb_v_o = ~context_cache_dcache_active_r
+  assign late_wb_v_o = ~context_cache_dcache_resp_pending_r
                        & dcache_v_r & dcache_ret_r & (dcache_late_r | dcache_ptw_r);
   assign late_wb_pkt_cast_o = '{ird_w_v  : dcache_int_r
                                 ,frd_w_v : dcache_float_r
@@ -435,7 +440,7 @@ module bp_be_pipe_mem
                                 ,default : '0
                                 };
 
-  assign context_cache_dcache_resp_v_o = context_cache_dcache_active_r
+  assign context_cache_dcache_resp_v_o = context_cache_dcache_resp_pending_r
                                          & (context_cache_dcache_store_r
                                             ? dcache_ordered_lo
                                             : dcache_v);
@@ -444,18 +449,22 @@ module bp_be_pipe_mem
 
   always_ff @(posedge posedge_clk)
     if (reset_i) begin
-      context_cache_dcache_active_r <= 1'b0;
+      context_cache_dcache_ptag_v_r <= 1'b0;
+      context_cache_dcache_resp_pending_r <= 1'b0;
       context_cache_dcache_store_r <= 1'b0;
       context_cache_dcache_paddr_r <= '0;
       context_cache_dcache_data_r <= '0;
     end else begin
+      // The request accepted in this cycle is consumed by the D$ TL stage;
+      // its physical tag and store data are required in the following TV stage.
+      context_cache_dcache_ptag_v_r <= context_cache_dcache_accept_li;
       if (context_cache_dcache_accept_li) begin
-        context_cache_dcache_active_r <= 1'b1;
+        context_cache_dcache_resp_pending_r <= 1'b1;
         context_cache_dcache_store_r <= context_cache_dcache_w_i;
         context_cache_dcache_paddr_r <= context_cache_dcache_paddr_i;
         context_cache_dcache_data_r <= context_cache_dcache_data_i;
       end else if (context_cache_dcache_resp_v_o) begin
-        context_cache_dcache_active_r <= 1'b0;
+        context_cache_dcache_resp_pending_r <= 1'b0;
         context_cache_dcache_store_r <= 1'b0;
       end
     end
