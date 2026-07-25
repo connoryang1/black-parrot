@@ -252,6 +252,10 @@ module bp_be_top
   logic [1:0][reg_addr_width_gp-1:0] context_cache_fp_scan_save_idx_r;
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_int_shadow_r;
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_fp_shadow_r;
+  localparam int reg_count_lp = 2**reg_addr_width_gp;
+  localparam int context_mem_regs_per_line_lp = 8;
+  localparam int context_mem_line_count_lp = reg_count_lp / context_mem_regs_per_line_lp;
+  localparam int context_mem_line_index_width_lp = $clog2(context_mem_line_count_lp);
   logic context_mem_int_w_v_li;
   logic [context_id_width_p-1:0] context_mem_int_w_context_id_li;
   logic [reg_addr_width_gp-1:0] context_mem_int_w_reg_addr_li;
@@ -263,6 +267,11 @@ module bp_be_top
   logic [context_id_width_p-1:0] context_mem_int_r_context_id_lo;
   logic [context_mem_line_index_width_lp-1:0] context_mem_int_r_line_index_lo;
   logic [context_mem_regs_per_line_lp*dpath_width_gp-1:0] context_mem_int_r_data_lo;
+  logic context_mem_int_restore_issue_done_r;
+  logic [context_mem_line_index_width_lp-1:0] context_mem_int_restore_issue_line_r;
+  logic [context_mem_line_count_lp-1:0] context_mem_int_restore_line_v_r;
+  logic [context_mem_line_count_lp-1:0][context_mem_regs_per_line_lp*dpath_width_gp-1:0]
+    context_mem_int_restore_line_data_r;
   logic ctx_npc_write_resident_v_li;
   logic [thread_id_width_p-1:0] ctx_npc_write_physical_thread_id_li;
   logic ctx_rpush_resident_v_li;
@@ -289,10 +298,6 @@ module bp_be_top
     ~virtual_context_csr_valid_r[context_cache_target_virtual_context_id_r];
   wire [csr_context_width_lp-1:0] csr_context_restore_data_li =
     virtual_context_csr_state_r[context_cache_target_virtual_context_id_r];
-  localparam int reg_count_lp = 2**reg_addr_width_gp;
-  localparam int context_mem_regs_per_line_lp = 8;
-  localparam int context_mem_line_count_lp = reg_count_lp / context_mem_regs_per_line_lp;
-  localparam int context_mem_line_index_width_lp = $clog2(context_mem_line_count_lp);
   localparam [paddr_width_p-1:0] context_cache_image_base_lp = paddr_width_p'(64'h0000000087f00000);
   localparam int context_cache_image_stride_bytes_lp = 512;
   localparam int context_cache_image_gpr_base_word_lp = 8;
@@ -308,9 +313,9 @@ module bp_be_top
                                  * paddr_width_p'(dword_width_gp/8));
   endfunction
 
-  // The context memory mirrors the existing shadow image during this
-  // checkpoint.  Restore is deliberately still sourced from the shadow array
-  // until the line-read path is verified independently.
+  // Context memory is the fast backing store for nonresident GPR state. Save
+  // scans and nonresident rpush write individual registers; restore streams
+  // four 512-bit lines into a local buffer before touching the physical file.
   assign context_mem_int_w_v_li = context_cache_scan_save_v_r[0]
                                   | (ctx_rpush_v_lo & ~ctx_rpush_resident_v_li
                                      & (ctx_rpush_virtual_context_id_lo < num_contexts_p));
@@ -323,9 +328,11 @@ module bp_be_top
   assign context_mem_int_w_data_li = context_cache_scan_save_v_r[0]
                                      ? context_cache_scan_r_data_lo[0]
                                      : ctx_rpush_data_lo;
-  assign context_mem_int_r_v_li = 1'b0;
-  assign context_mem_int_r_context_id_li = '0;
-  assign context_mem_int_r_line_index_li = '0;
+  assign context_mem_int_r_v_li = (context_cache_state_r == e_context_cache_save_restore_regs)
+                                  & context_cache_int_restore_phase_r
+                                  & ~context_mem_int_restore_issue_done_r;
+  assign context_mem_int_r_context_id_li = context_cache_target_virtual_context_id_r;
+  assign context_mem_int_r_line_index_li = context_mem_int_restore_issue_line_r;
 
   bp_be_context_mem
    #(.context_count_p(num_contexts_p)
@@ -371,10 +378,7 @@ module bp_be_top
   assign context_cache_dcache_id_li = context_cache_int_l1_reg_r;
   assign context_cache_dcache_paddr_li = context_cache_int_l1_paddr_r;
   assign context_cache_dcache_data_li = context_cache_int_l1_data_r;
-  assign context_cache_int_l1_phase_active_li = context_cache_int_l1_req_v_r
-                                                | context_cache_int_l1_wait_resp_r
-                                                | (|context_cache_scan_save_v_r)
-                                                | context_cache_int_l1_restore_w_v_r;
+  assign context_cache_int_l1_phase_active_li = 1'b0;
   assign context_cache_drain_safe_li = context_cache_calculator_drain_ready_lo
                                        & ~dispatch_pkt.v
                                        & ~late_wb_v_lo
@@ -435,7 +439,7 @@ module bp_be_top
     context_cache_int_save_mask_n_li = context_cache_int_save_mask_r;
     context_cache_int_restore_mask_n_li = context_cache_int_restore_mask_r;
     if (context_cache_int_l1_save_complete_v_li)
-      context_cache_int_save_mask_n_li[context_cache_int_l1_reg_r] = 1'b0;
+      context_cache_int_save_mask_n_li[context_cache_int_save_pick_addr_li[0]] = 1'b0;
     if (context_cache_int_l1_restore_complete_v_li)
       context_cache_int_restore_mask_n_li[context_cache_int_l1_restore_complete_addr_li] = 1'b0;
   end
@@ -458,43 +462,27 @@ module bp_be_top
 
   assign context_cache_scan_r_v_li = context_cache_int_save_pick_v_li
                                      & {2{context_cache_state_r == e_context_cache_save_restore_regs}}
-                                     & {2{~context_cache_int_restore_phase_r}}
-                                     & {2{~context_cache_int_l1_phase_active_li}}
-                                     & {2{context_cache_dcache_ready_lo}};
-  assign context_cache_int_l1_restore_from_l1_li =
-    context_cache_int_restore_pick_v_li[0]
-    & context_cache_int_restore_phase_r
-    & context_cache_int_l1_valid_r[context_cache_target_virtual_context_id_r][context_cache_int_restore_pick_addr_li[0]];
+                                     & {2{~context_cache_int_restore_phase_r}};
+  assign context_cache_int_l1_restore_from_l1_li = 1'b0;
   assign context_cache_int_l1_restore_shadow_v_li =
     (context_cache_state_r == e_context_cache_save_restore_regs)
     & context_cache_int_restore_pick_v_li[0]
     & context_cache_int_restore_phase_r
-    & ~context_cache_int_l1_phase_active_li
-    & ~context_cache_int_l1_restore_from_l1_li;
-  assign context_cache_scan_w_v_li = {1'b0, context_cache_int_l1_restore_shadow_v_li
-                                            | context_cache_int_l1_restore_w_v_r};
+    & (&context_mem_int_restore_line_v_r);
+  assign context_cache_scan_w_v_li = {1'b0, context_cache_int_l1_restore_shadow_v_li};
   assign context_cache_scan_physical_thread_id_li = context_cache_victim_physical_thread_id_r;
   assign context_cache_scan_r_addr_li = context_cache_int_save_pick_addr_li;
-  assign context_cache_scan_w_addr_li[0] = context_cache_int_l1_restore_w_v_r
-                                           ? context_cache_int_l1_resp_id_r
-                                           : context_cache_int_restore_pick_addr_li[0];
+  assign context_cache_scan_w_addr_li[0] = context_cache_int_restore_pick_addr_li[0];
   assign context_cache_scan_w_addr_li[1] = '0;
   assign context_cache_scan_w_data_li[0] =
-    context_cache_int_l1_restore_w_v_r
-    ? context_cache_int_l1_data_r
-    : virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r][context_cache_scan_w_addr_li[0]]
-    ? context_cache_int_shadow_r[context_cache_target_virtual_context_id_r][context_cache_scan_w_addr_li[0]]
+    virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r][context_cache_scan_w_addr_li[0]]
+    ? context_mem_int_restore_line_data_r[context_cache_scan_w_addr_li[0] / context_mem_regs_per_line_lp]
+                                         [dpath_width_gp*(context_cache_scan_w_addr_li[0] % context_mem_regs_per_line_lp) +: dpath_width_gp]
     : '0;
   assign context_cache_scan_w_data_li[1] = '0;
-  assign context_cache_int_l1_save_complete_v_li = context_cache_int_l1_wait_resp_r
-                                                   & context_cache_int_l1_req_w_r
-                                                   & context_cache_dcache_resp_v_lo;
-  assign context_cache_int_l1_restore_complete_v_li = context_cache_int_l1_restore_shadow_v_li
-                                                      | context_cache_int_l1_restore_w_v_r;
-  assign context_cache_int_l1_restore_complete_addr_li =
-    context_cache_int_l1_restore_w_v_r
-    ? context_cache_int_l1_resp_id_r
-    : context_cache_int_restore_pick_addr_li[0];
+  assign context_cache_int_l1_save_complete_v_li = context_cache_scan_r_v_li[0];
+  assign context_cache_int_l1_restore_complete_v_li = context_cache_int_l1_restore_shadow_v_li;
+  assign context_cache_int_l1_restore_complete_addr_li = context_cache_int_restore_pick_addr_li[0];
   assign context_cache_fp_scan_r_v_li = context_cache_fp_save_pick_v_li
                                         & {2{context_cache_state_r == e_context_cache_save_restore_fp_regs}}
                                         & {2{~context_cache_fp_restore_phase_r}};
@@ -825,6 +813,10 @@ module bp_be_top
       context_cache_int_l1_resp_id_r <= '0;
       context_cache_int_l1_data_r <= '0;
       context_cache_int_l1_paddr_r <= '0;
+      context_mem_int_restore_issue_done_r <= 1'b0;
+      context_mem_int_restore_issue_line_r <= '0;
+      context_mem_int_restore_line_v_r <= '0;
+      context_mem_int_restore_line_data_r <= '0;
       physical_thread_fp_dirty_r <= '0;
       virtual_context_fp_dirty_r <= '0;
       physical_thread_int_dirty_r <= '0;
@@ -858,46 +850,15 @@ module bp_be_top
       if (context_cache_fp_scan_save_v_r[1])
         context_cache_fp_shadow_r[context_cache_victim_virtual_context_id_r][context_cache_fp_scan_save_idx_r[1]]
           <= context_cache_fp_scan_r_data_lo[1];
-      if (context_cache_int_l1_req_v_r && context_cache_dcache_yumi_lo) begin
-        context_cache_int_l1_req_v_r <= 1'b0;
-        context_cache_int_l1_wait_resp_r <= 1'b1;
+      if (context_mem_int_r_v_lo) begin
+        context_mem_int_restore_line_v_r[context_mem_int_r_line_index_lo] <= 1'b1;
+        context_mem_int_restore_line_data_r[context_mem_int_r_line_index_lo] <= context_mem_int_r_data_lo;
       end
-
-      if (context_cache_int_l1_wait_resp_r && context_cache_dcache_resp_v_lo) begin
-        context_cache_int_l1_wait_resp_r <= 1'b0;
-        if (context_cache_int_l1_req_w_r) begin
-          context_cache_int_l1_valid_r[context_cache_victim_virtual_context_id_r][context_cache_int_l1_reg_r]
-            <= 1'b1;
-        end else begin
-          context_cache_int_l1_data_r <= context_cache_dcache_resp_data_lo;
-          context_cache_int_l1_resp_id_r <= context_cache_dcache_resp_id_lo;
-          context_cache_int_l1_restore_w_v_r <= 1'b1;
-        end
-      end
-
-      if (context_cache_scan_save_v_r[0]
-          && !context_cache_int_l1_req_v_r
-          && !context_cache_int_l1_wait_resp_r) begin
-        context_cache_int_l1_req_v_r <= 1'b1;
-        context_cache_int_l1_req_w_r <= 1'b1;
-        context_cache_int_l1_reg_r <= context_cache_scan_save_idx_r[0];
-        context_cache_int_l1_data_r <= context_cache_scan_r_data_lo[0];
-        context_cache_int_l1_paddr_r <= context_cache_gpr_paddr(context_cache_victim_virtual_context_id_r,
-                                                                 context_cache_scan_save_idx_r[0]);
-      end
-
-      if ((context_cache_state_r == e_context_cache_save_restore_regs)
-          && context_cache_int_restore_phase_r
-          && context_cache_int_restore_pick_v_li[0]
-          && context_cache_int_l1_restore_from_l1_li
-          && !context_cache_int_l1_phase_active_li
-          && context_cache_dcache_ready_lo) begin
-        context_cache_int_l1_req_v_r <= 1'b1;
-        context_cache_int_l1_req_w_r <= 1'b0;
-        context_cache_int_l1_reg_r <= context_cache_int_restore_pick_addr_li[0];
-        context_cache_int_l1_data_r <= '0;
-        context_cache_int_l1_paddr_r <= context_cache_gpr_paddr(context_cache_target_virtual_context_id_r,
-                                                                 context_cache_int_restore_pick_addr_li[0]);
+      if (context_mem_int_r_v_li) begin
+        if (context_mem_int_r_line_index_li == context_mem_line_index_width_lp'(context_mem_line_count_lp-1))
+          context_mem_int_restore_issue_done_r <= 1'b1;
+        else
+          context_mem_int_restore_issue_line_r <= context_mem_int_restore_issue_line_r + 1'b1;
       end
 
       if (ctx_rpush_v_lo && !ctx_rpush_resident_v_li && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
@@ -963,6 +924,9 @@ module bp_be_top
         e_context_cache_wait_drain: begin
           context_cache_int_restore_phase_r <= 1'b0;
           context_cache_fp_restore_phase_r <= 1'b0;
+          context_mem_int_restore_issue_done_r <= 1'b0;
+          context_mem_int_restore_issue_line_r <= '0;
+          context_mem_int_restore_line_v_r <= '0;
           context_cache_int_save_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r];
           context_cache_int_restore_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
                                               | virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r];
