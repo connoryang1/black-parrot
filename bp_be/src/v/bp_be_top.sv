@@ -253,6 +253,9 @@ module bp_be_top
   localparam int context_mem_regs_per_line_lp = 8;
   localparam int context_mem_line_count_lp = reg_count_lp / context_mem_regs_per_line_lp;
   localparam int context_mem_line_index_width_lp = $clog2(context_mem_line_count_lp);
+  // GPR-only context-cache experiment. Nonresident FP execution is outside
+  // this phase's contract and must remain disabled until separately tested.
+  localparam bit context_cache_fp_enable_lp = 1'b0;
   logic [1:0] context_mem_int_w_v_li;
   logic [1:0][context_id_width_p-1:0] context_mem_int_w_context_id_li;
   logic [1:0][reg_addr_width_gp-1:0] context_mem_int_w_reg_addr_li;
@@ -763,8 +766,9 @@ module bp_be_top
 
   assign context_cache_victim_fp_dirty_li = physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r];
   assign context_cache_target_fp_dirty_li = virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r];
-  assign context_cache_fp_copy_v_li = (|context_cache_victim_fp_dirty_li)
-                                      | (|context_cache_target_fp_dirty_li);
+  assign context_cache_fp_copy_v_li = context_cache_fp_enable_lp
+                                      & ((|context_cache_victim_fp_dirty_li)
+                                         | (|context_cache_target_fp_dirty_li));
 
   always_comb begin
     context_cache_miss_v_li = 1'b0;
@@ -929,15 +933,20 @@ module bp_be_top
           context_cache_int_save_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r];
           context_cache_int_restore_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
                                               | virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r];
-          context_cache_fp_save_mask_r <= physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r];
-          context_cache_fp_restore_mask_r <= physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
-                                             | virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r];
+          context_cache_fp_save_mask_r <= context_cache_fp_copy_v_li
+                                         ? physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
+                                         : '0;
+          context_cache_fp_restore_mask_r <= context_cache_fp_copy_v_li
+                                            ? (physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
+                                               | virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r])
+                                            : '0;
           context_cache_state_r <= context_cache_drain_safe_li
                                    ? ((!context_cache_fp_copy_v_li)
                                       && !((|physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r])
                                            || (|virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r])
-                                           || (|physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r])
-                                           || (|virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r]))
+                                           || (context_cache_fp_copy_v_li
+                                               & ((|physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r])
+                                                  | (|virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r]))))
                                       ? e_context_cache_launch_fe
                                       : e_context_cache_save_restore_regs)
                                    : context_cache_state_r;
