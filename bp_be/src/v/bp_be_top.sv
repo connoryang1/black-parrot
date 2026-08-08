@@ -333,7 +333,6 @@ module bp_be_top
                                            : ctx_rpush_data_lo;
   end
   assign context_mem_int_r_v_li = (context_cache_state_r == e_context_cache_save_restore_regs)
-                                  & context_cache_int_restore_phase_r
                                   & ~context_mem_int_restore_issue_done_r;
   assign context_mem_int_r_context_id_li = context_cache_target_virtual_context_id_r;
   assign context_mem_int_r_line_index_li = context_mem_int_restore_issue_line_r;
@@ -467,12 +466,10 @@ module bp_be_top
   assign context_cache_fp_restore_done_n_li = ~(|context_cache_fp_restore_mask_n_li);
 
   assign context_cache_scan_r_v_li = context_cache_int_save_pick_v_li
-                                     & {2{context_cache_state_r == e_context_cache_save_restore_regs}}
-                                     & {2{~context_cache_int_restore_phase_r}};
+                                     & {2{context_cache_state_r == e_context_cache_save_restore_regs}};
   assign context_cache_int_l1_restore_from_l1_li = 1'b0;
   assign context_cache_int_l1_restore_shadow_v_li = context_cache_int_restore_pick_v_li
                                                     & {2{context_cache_state_r == e_context_cache_save_restore_regs}}
-                                                    & {2{context_cache_int_restore_phase_r}}
                                                     & {2{&context_mem_int_restore_line_v_r}};
   assign context_cache_scan_w_v_li = context_cache_int_l1_restore_shadow_v_li;
   assign context_cache_scan_physical_thread_id_li = context_cache_victim_physical_thread_id_r;
@@ -953,25 +950,17 @@ module bp_be_top
         end
 
         e_context_cache_save_restore_regs: begin
-          if (!context_cache_int_restore_phase_r) begin
-            context_cache_int_save_mask_r <= context_cache_int_save_mask_n_li;
-            if (context_cache_int_save_done_n_li)
-              context_cache_int_restore_phase_r <= 1'b1;
-            context_cache_state_r <= context_cache_int_save_done_n_li
-                                     ? (context_cache_int_restore_done_n_li
-                                        ? ((|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
-                                           ? e_context_cache_save_restore_fp_regs
-                                           : e_context_cache_save_restore_regs_tail)
-                                        : context_cache_state_r)
-                                     : context_cache_state_r;
-          end else begin
-            context_cache_int_restore_mask_r <= context_cache_int_restore_mask_n_li;
-            context_cache_state_r <= context_cache_int_restore_done_n_li
-                                     ? ((|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
-                                        ? e_context_cache_save_restore_fp_regs
-                                        : e_context_cache_save_restore_regs_tail)
-                                     : context_cache_state_r;
-          end
+          // The physical register file has independent read and write paths,
+          // so eviction and installation can proceed together once the
+          // incoming context-memory lines arrive.
+          context_cache_int_save_mask_r <= context_cache_int_save_mask_n_li;
+          context_cache_int_restore_mask_r <= context_cache_int_restore_mask_n_li;
+          context_cache_state_r <= context_cache_int_save_done_n_li
+                                   & context_cache_int_restore_done_n_li
+                                   ? ((|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
+                                      ? e_context_cache_save_restore_fp_regs
+                                      : e_context_cache_save_restore_regs_tail)
+                                   : context_cache_state_r;
         end
 
         e_context_cache_save_restore_fp_regs: begin
