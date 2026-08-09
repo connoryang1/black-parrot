@@ -34,6 +34,13 @@ module bp_be_context_mem
    , input [1:0][reg_addr_width_p-1:0] w_reg_addr_i
    , input [1:0][data_width_p-1:0] w_data_i
 
+   , input bulk_w_v_i
+   , input [context_id_width_p-1:0] bulk_w_context_id_i
+   , input [reg_count_p-1:0] bulk_w_mask_i
+   , input [reg_count_p-1:0][data_width_p-1:0] bulk_w_data_i
+   , input [context_id_width_p-1:0] bulk_r_context_id_i
+   , output logic [reg_count_p-1:0][data_width_p-1:0] bulk_r_data_o
+
    , input r_v_i
    , input [context_id_width_p-1:0] r_context_id_i
    , input [line_index_width_p-1:0] r_line_index_i
@@ -45,6 +52,12 @@ module bp_be_context_mem
 
   logic [regs_per_line_p*data_width_p-1:0]
     mem [0:context_count_p-1][0:line_count_p-1];
+
+  always_comb
+    for (int reg_idx = 0; reg_idx < reg_count_p; reg_idx++)
+      bulk_r_data_o[reg_idx] =
+        mem[bulk_r_context_id_i][reg_idx / regs_per_line_p]
+           [data_width_p*(reg_idx % regs_per_line_p) +: data_width_p];
 
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
@@ -63,11 +76,19 @@ module bp_be_context_mem
         r_data_o <= mem[r_context_id_i][r_line_index_i];
       end
 
-      for (int write_port = 0; write_port < 2; write_port++)
-        if (w_v_i[write_port])
-          mem[w_context_id_i[write_port]][w_reg_addr_i[write_port] / regs_per_line_p]
-            [data_width_p*(w_reg_addr_i[write_port] % regs_per_line_p) +: data_width_p]
-              <= w_data_i[write_port];
+      if (bulk_w_v_i) begin
+        for (int reg_idx = 0; reg_idx < reg_count_p; reg_idx++)
+          if (bulk_w_mask_i[reg_idx])
+            mem[bulk_w_context_id_i][reg_idx / regs_per_line_p]
+              [data_width_p*(reg_idx % regs_per_line_p) +: data_width_p]
+                <= bulk_w_data_i[reg_idx];
+      end else begin
+        for (int write_port = 0; write_port < 2; write_port++)
+          if (w_v_i[write_port])
+            mem[w_context_id_i[write_port]][w_reg_addr_i[write_port] / regs_per_line_p]
+              [data_width_p*(w_reg_addr_i[write_port] % regs_per_line_p) +: data_width_p]
+                <= w_data_i[write_port];
+      end
     end
   end
 

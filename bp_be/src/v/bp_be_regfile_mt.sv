@@ -67,11 +67,25 @@ module bp_be_regfile_mt
    , input [thread_id_width_p-1:0]                     rd_thread_id2_i
    , input [reg_addr_width_gp-1:0]                     rd_addr2_i
    , input [data_width_p-1:0]                           rd_data2_i
+
+   // Drained nonresident-context exchange.  The selected physical bank is
+   // visible as one architectural image and may be replaced atomically under
+   // a per-register mask.  Normal issue/writeback is quiescent while asserted.
+   , input                                              context_swap_v_i
+   , input [thread_id_width_p-1:0]                     context_swap_thread_id_i
+   , input [(2**reg_addr_width_gp)-1:0]                context_swap_w_mask_i
+   , input [(2**reg_addr_width_gp)-1:0][data_width_p-1:0] context_swap_data_i
+   , output logic [(2**reg_addr_width_gp)-1:0][data_width_p-1:0] context_swap_data_o
    );
 
   // Derived parameters
   localparam rf_els_lp = 2**reg_addr_width_gp;                           // 32 registers per thread
   localparam total_rf_els_lp = 2**(reg_addr_width_gp + thread_id_width_p); // Total storage
+  logic [data_width_p-1:0] mem [total_rf_els_lp-1:0];
+
+  always_comb
+    for (int i = 0; i < rf_els_lp; i++)
+      context_swap_data_o[i] = mem[{context_swap_thread_id_i, reg_addr_width_gp'(i)}];
 
   // Compose thread-indexed addresses
   logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_indexed;
@@ -149,7 +163,6 @@ module bp_be_regfile_mt
   else if ((write_ports_p == 2) && ((read_ports_p == 2) || (read_ports_p == 3)))
     begin : twoport_twowrite
       logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_mem_r;
-      logic [data_width_p-1:0] mem [total_rf_els_lp-1:0];
 
 `ifndef SYNTHESIS
       always_ff @(posedge clk_i)
@@ -160,10 +173,16 @@ module bp_be_regfile_mt
 `endif
 
       always_ff @(posedge clk_i) begin
-        if (w_v_mux)
-          mem[w_addr_mux] <= w_data_mux;
-        if (rd_w_v2_i)
-          mem[rd_addr2_indexed] <= rd_data2_i;
+        if (context_swap_v_i) begin
+          for (int i = 0; i < rf_els_lp; i++)
+            if (context_swap_w_mask_i[i])
+              mem[{context_swap_thread_id_i, reg_addr_width_gp'(i)}] <= context_swap_data_i[i];
+        end else begin
+          if (w_v_mux)
+            mem[w_addr_mux] <= w_data_mux;
+          if (rd_w_v2_i)
+            mem[rd_addr2_indexed] <= rd_data2_i;
+        end
 
         for (int i = 0; i < read_ports_p; i++)
           if (rs_v_li[i])
