@@ -254,7 +254,12 @@ module bp_be_pipe_mem
                           ? '{thread_id : '0
                           ,rd_addr : context_cache_dcache_id_i
                           ,opcode : context_cache_dcache_w_i ? e_dcache_op_sd : e_dcache_op_ld
-                          ,vaddr  : context_cache_dcache_paddr_i[0+:vaddr_width_p]
+                          // Some FPGA configurations use a physical address
+                          // narrower than the virtual address.  A sized cast
+                          // preserves the old low-bit mapping while allowing
+                          // Vivado to zero-extend instead of selecting bits
+                          // beyond the input width.
+                          ,vaddr  : vaddr_width_p'(context_cache_dcache_paddr_i)
                           }
                       : '{thread_id : reservation_thread_id
                           ,rd_addr : instr.t.rtype.rd_addr
