@@ -318,70 +318,25 @@ module bp_be_top
                                  * paddr_width_p'(dword_width_gp/8));
   endfunction
 
-  // Context memory is the fast backing store for nonresident GPR state. Save
-  // consumes both existing physical-regfile read lanes; a remote write uses
-  // lane 0 only when no eviction scan is active.
-  assign context_mem_int_w_v_li[0] = context_cache_scan_save_v_r[0]
-                                     | ((~(|context_cache_scan_save_v_r))
-                                        & ctx_rpush_v_lo & ~ctx_rpush_resident_v_li
-                                        & (ctx_rpush_virtual_context_id_lo < num_contexts_p));
-  assign context_mem_int_w_v_li[1] = context_cache_scan_save_v_r[1];
-  for (genvar i = 0; i < 2; i++) begin : gen_context_mem_int_write
-    assign context_mem_int_w_context_id_li[i] = context_cache_scan_save_v_r[i]
-                                                 ? context_cache_victim_virtual_context_id_r
-                                                 : ctx_rpush_virtual_context_id_lo;
-    assign context_mem_int_w_reg_addr_li[i] = context_cache_scan_save_v_r[i]
-                                               ? context_cache_scan_save_idx_r[i]
-                                               : ctx_rpush_reg_lo;
-    assign context_mem_int_w_data_li[i] = context_cache_scan_save_v_r[i]
-                                           ? context_cache_scan_r_data_lo[i]
-                                           : ctx_rpush_data_lo;
-  end
+  // Integer state is held directly in virtual-context-indexed register banks.
+  // The FSM retains one exchange state for ordering and redirect timing, but
+  // no architectural data crosses between a physical bank and a duplicate
+  // backing image at that edge.
+  assign context_mem_int_w_v_li = '0;
+  assign context_mem_int_w_context_id_li = '0;
+  assign context_mem_int_w_reg_addr_li = '0;
+  assign context_mem_int_w_data_li = '0;
   assign context_mem_int_r_v_li = 1'b0;
-  assign context_mem_int_r_context_id_li = context_cache_target_virtual_context_id_r;
-  assign context_mem_int_r_line_index_li = context_mem_int_restore_issue_line_r;
-
-  bp_be_context_mem
-   #(.context_count_p(num_contexts_p)
-     ,.context_id_width_p(context_id_width_p)
-     ,.reg_count_p(reg_count_lp)
-     ,.reg_addr_width_p(reg_addr_width_gp)
-     ,.data_width_p(dpath_width_gp)
-     ,.regs_per_line_p(context_mem_regs_per_line_lp)
-     ,.line_count_p(context_mem_line_count_lp)
-     ,.line_index_width_p(context_mem_line_index_width_lp)
-     )
-   int_context_mem
-    (.clk_i(clk_i)
-     ,.reset_i(reset_i)
-     ,.w_v_i(context_mem_int_w_v_li)
-     ,.w_context_id_i(context_mem_int_w_context_id_li)
-     ,.w_reg_addr_i(context_mem_int_w_reg_addr_li)
-     ,.w_data_i(context_mem_int_w_data_li)
-     ,.bulk_w_v_i(context_cache_bulk_swap_v_li)
-     ,.bulk_w_context_id_i(context_cache_victim_virtual_context_id_r)
-     ,.bulk_w_mask_i(physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r])
-     ,.bulk_w_data_i(context_cache_bulk_swap_r_data_lo)
-     ,.bulk_r_context_id_i(context_cache_target_virtual_context_id_r)
-     ,.bulk_r_data_o(context_mem_int_bulk_r_data_lo)
-     ,.r_v_i(context_mem_int_r_v_li)
-     ,.r_context_id_i(context_mem_int_r_context_id_li)
-     ,.r_line_index_i(context_mem_int_r_line_index_li)
-     ,.r_v_o(context_mem_int_r_v_lo)
-     ,.r_context_id_o(context_mem_int_r_context_id_lo)
-     ,.r_line_index_o(context_mem_int_r_line_index_lo)
-     ,.r_data_o(context_mem_int_r_data_lo)
-     );
-  assign context_cache_bulk_swap_v_li = context_cache_state_r == e_context_cache_save_restore_regs;
-  assign context_cache_bulk_swap_w_mask_li =
-    physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
-    | virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r];
-  for (genvar i = 0; i < reg_count_lp; i++) begin : gen_context_cache_bulk_restore
-    assign context_cache_bulk_swap_w_data_li[i] =
-      virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r][i]
-      ? context_mem_int_bulk_r_data_lo[i]
-      : '0;
-  end
+  assign context_mem_int_r_context_id_li = '0;
+  assign context_mem_int_r_line_index_li = '0;
+  assign context_mem_int_bulk_r_data_lo = '0;
+  assign context_mem_int_r_v_lo = 1'b0;
+  assign context_mem_int_r_context_id_lo = '0;
+  assign context_mem_int_r_line_index_lo = '0;
+  assign context_mem_int_r_data_lo = '0;
+  assign context_cache_bulk_swap_v_li = 1'b0;
+  assign context_cache_bulk_swap_w_mask_li = '0;
+  assign context_cache_bulk_swap_w_data_li = '0;
   wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
                                   & fast_ctxtsw_resident_v_li
                                   & ~cfg_bus_cast_i.freeze
@@ -538,7 +493,8 @@ module bp_be_top
     end
   end
 
-  assign scheduler_rpush_v_li = ctx_rpush_v_lo & ctx_rpush_resident_v_li;
+  assign scheduler_rpush_v_li = ctx_rpush_v_lo
+                                 & (ctx_rpush_virtual_context_id_lo < num_contexts_p);
   assign scheduler_rpush_fp_v_li = ctx_rpush_fp_v_lo & ctx_rpush_resident_v_li;
 
   assign fe_ctxtsw_v_o = context_cache_launch_v_li | fast_ctxtsw_launch_v_li | ctxtsw_launch_lo;
@@ -1206,11 +1162,13 @@ module bp_be_top
 
      ,.current_physical_thread_id_i(scheduler_current_physical_thread_id_li)
      ,.current_virtual_context_id_i(current_virtual_context_id_r)
+     ,.physical_thread_context_id_i(physical_thread_context_id_r)
      ,.retire_thread_id_i(retire_thread_id_lo)
 
      ,.rpush_w_v_i(scheduler_rpush_v_li)
      ,.rpush_fp_w_v_i(scheduler_rpush_fp_v_li)
      ,.rpush_tid_i(ctx_rpush_physical_thread_id_li)
+     ,.rpush_context_id_i(ctx_rpush_virtual_context_id_lo)
      ,.rpush_reg_i(ctx_rpush_reg_lo)
      ,.rpush_data_i(ctx_rpush_data_lo)
      ,.context_cache_scan_r_v_i(context_cache_scan_r_v_li)
