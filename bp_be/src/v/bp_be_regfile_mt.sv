@@ -85,9 +85,13 @@ module bp_be_regfile_mt
   localparam total_rf_els_lp = 2**(reg_addr_width_gp + regfile_id_width_p); // Total storage
   logic [data_width_p-1:0] mem [total_rf_els_lp-1:0];
 
-  always_comb
-    for (int i = 0; i < rf_els_lp; i++)
-      context_swap_data_o[i] = mem[{context_swap_thread_id_i, reg_addr_width_gp'(i)}];
+  if (write_ports_p == 2) begin : bulk_read
+    always_comb
+      for (int i = 0; i < rf_els_lp; i++)
+        context_swap_data_o[i] = mem[{context_swap_thread_id_i, reg_addr_width_gp'(i)}];
+  end else begin : no_bulk_read
+    assign context_swap_data_o = '0;
+  end
 
   // Compose thread-indexed addresses
   logic [read_ports_p-1:0][reg_addr_width_gp+regfile_id_width_p-1:0] rs_addr_indexed;

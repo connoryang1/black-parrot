@@ -338,7 +338,10 @@ module bp_be_scheduler
   assign fp_rpush_data_li = context_cache_fp_scan_w_v_i[0] ? context_cache_fp_scan_w_data_i[0] : rpush_data_i;
   assign context_cache_fp_scan_r_data_o = {frf_rs2, frf_rs1};
   bp_be_regfile_mt
-  #(.bp_params_p(bp_params_p), .read_ports_p(3), .zero_x0_p(0), .data_width_p($bits(bp_be_fp_reg_s)), .write_ports_p(2))
+  // Nonresident FP copying is disabled in the GPR-only context-cache design.
+  // Keep the ordinary FP write/rpush port, but do not pay for the unreachable
+  // second restore-only write port on FPGA.
+  #(.bp_params_p(bp_params_p), .read_ports_p(3), .zero_x0_p(0), .data_width_p($bits(bp_be_fp_reg_s)), .write_ports_p(1))
    fp_regfile
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
@@ -353,10 +356,10 @@ module bp_be_scheduler
      ,.rpush_addr_i(fp_rpush_reg_li)
      ,.rpush_data_i(fp_rpush_data_li)
 
-     ,.rd_w_v2_i(context_cache_fp_scan_w_v_i[1])
-     ,.rd_thread_id2_i(context_cache_fp_scan_physical_thread_id_i)
-     ,.rd_addr2_i(context_cache_fp_scan_w_addr_i[1])
-     ,.rd_data2_i(context_cache_fp_scan_w_data_i[1])
+     ,.rd_w_v2_i(1'b0)
+     ,.rd_thread_id2_i('0)
+     ,.rd_addr2_i('0)
+     ,.rd_data2_i('0)
 
      ,.context_swap_v_i(1'b0)
      ,.context_swap_thread_id_i('0)
