@@ -58,14 +58,12 @@ module bp_be_scheduler
    // Current thread ID for register file reads/writes
    , input [thread_id_width_p-1:0]            current_physical_thread_id_i
    , input [context_id_width_p-1:0]           current_virtual_context_id_i
-   , input [num_threads_p-1:0][context_id_width_p-1:0] physical_thread_context_id_i
    , input [thread_id_width_p-1:0]            retire_thread_id_i
 
    // CSR 0x802 remote register write into another hardware thread context
    , input                                    rpush_w_v_i
    , input                                    rpush_fp_w_v_i
    , input [thread_id_width_p-1:0]            rpush_tid_i
-   , input [context_id_width_p-1:0]           rpush_context_id_i
    , input [reg_addr_width_gp-1:0]            rpush_reg_i
    , input [dpath_width_gp-1:0]               rpush_data_i
 
@@ -229,52 +227,43 @@ module bp_be_scheduler
     preissue_pkt.thread_id[0 +: thread_id_width_p];
 
   logic [1:0] int_rs_r_v_li;
-  logic [1:0][context_id_width_p-1:0] int_rs_thread_id_li;
+  logic [1:0][thread_id_width_p-1:0] int_rs_thread_id_li;
   logic [1:0][reg_addr_width_gp-1:0] int_rs_addr_li;
   logic int_rpush_w_v_li;
-  logic [context_id_width_p-1:0] int_rpush_tid_li;
+  logic [thread_id_width_p-1:0] int_rpush_tid_li;
   logic [reg_addr_width_gp-1:0] int_rpush_reg_li;
   logic [dpath_width_gp-1:0] int_rpush_data_li;
   logic [dpath_width_gp-1:0] irf_rs1, irf_rs2;
   always_comb begin
     if (|context_cache_scan_r_v_i) begin
       int_rs_r_v_li = context_cache_scan_r_v_i;
-      int_rs_thread_id_li[0] = context_id_width_p'(context_cache_scan_physical_thread_id_i);
-      int_rs_thread_id_li[1] = context_id_width_p'(context_cache_scan_physical_thread_id_i);
+      int_rs_thread_id_li[0] = context_cache_scan_physical_thread_id_i;
+      int_rs_thread_id_li[1] = context_cache_scan_physical_thread_id_i;
       int_rs_addr_li[0] = context_cache_scan_r_addr_i[0];
       int_rs_addr_li[1] = context_cache_scan_r_addr_i[1];
     end else begin
       int_rs_r_v_li = {preissue_pkt.irs2_v, preissue_pkt.irs1_v};
-      int_rs_thread_id_li[0] = physical_thread_context_id_i[preissue_thread_id_li];
-      int_rs_thread_id_li[1] = physical_thread_context_id_i[preissue_thread_id_li];
+      int_rs_thread_id_li[0] = preissue_thread_id_li;
+      int_rs_thread_id_li[1] = preissue_thread_id_li;
       int_rs_addr_li[0] = preissue_instr.rs1_addr;
       int_rs_addr_li[1] = preissue_instr.rs2_addr;
     end
   end
 
   assign int_rpush_w_v_li = context_cache_scan_w_v_i[0] | rpush_w_v_i;
-  assign int_rpush_tid_li = context_cache_scan_w_v_i[0]
-                             ? context_id_width_p'(context_cache_scan_physical_thread_id_i)
-                             : rpush_context_id_i;
+  assign int_rpush_tid_li = context_cache_scan_w_v_i[0] ? context_cache_scan_physical_thread_id_i : rpush_tid_i;
   assign int_rpush_reg_li = context_cache_scan_w_v_i[0] ? context_cache_scan_w_addr_i[0] : rpush_reg_i;
   assign int_rpush_data_li = context_cache_scan_w_v_i[0] ? context_cache_scan_w_data_i[0] : rpush_data_i;
   assign context_cache_scan_r_data_o = {irf_rs2, irf_rs1};
 
   bp_be_regfile_mt
-  #(.bp_params_p(bp_params_p)
-    ,.read_ports_p(2)
-    ,.zero_x0_p(1)
-    ,.data_width_p($bits(bp_be_int_reg_s))
-    ,.write_ports_p(1)
-    ,.regfile_els_p(num_contexts_p)
-    ,.regfile_id_width_p(context_id_width_p)
-    )
+  #(.bp_params_p(bp_params_p), .read_ports_p(2), .zero_x0_p(1), .data_width_p($bits(bp_be_int_reg_s)), .write_ports_p(2))
    int_regfile
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
 
      ,.rd_w_v_i(iwb_pkt_cast_i.ird_w_v)
-     ,.rd_thread_id_i(physical_thread_context_id_i[iwb_pkt_cast_i.thread_id])
+     ,.rd_thread_id_i(iwb_pkt_cast_i.thread_id)
      ,.rd_addr_i(iwb_pkt_cast_i.rd_addr)
      ,.rd_data_i(iwb_pkt_cast_i.rd_data)
 
@@ -283,24 +272,22 @@ module bp_be_scheduler
      ,.rpush_addr_i(int_rpush_reg_li)
      ,.rpush_data_i(int_rpush_data_li)
 
-     ,.rd_w_v2_i(1'b0)
-     ,.rd_thread_id2_i('0)
-     ,.rd_addr2_i('0)
-     ,.rd_data2_i('0)
+     ,.rd_w_v2_i(context_cache_scan_w_v_i[1])
+     ,.rd_thread_id2_i(context_cache_scan_physical_thread_id_i)
+     ,.rd_addr2_i(context_cache_scan_w_addr_i[1])
+     ,.rd_data2_i(context_cache_scan_w_data_i[1])
 
-     ,.context_swap_v_i(1'b0)
-     ,.context_swap_thread_id_i('0)
-     ,.context_swap_w_mask_i('0)
-     ,.context_swap_data_i('0)
-     ,.context_swap_data_o()
+     ,.context_swap_v_i(context_cache_bulk_swap_v_i)
+     ,.context_swap_thread_id_i(context_cache_bulk_swap_physical_thread_id_i)
+     ,.context_swap_w_mask_i(context_cache_bulk_swap_w_mask_i)
+     ,.context_swap_data_i(context_cache_bulk_swap_w_data_i)
+     ,.context_swap_data_o(context_cache_bulk_swap_r_data_o)
 
      ,.rs_r_v_i(int_rs_r_v_li)
      ,.rs_thread_id_i(int_rs_thread_id_li)
      ,.rs_addr_i(int_rs_addr_li)
      ,.rs_data_o({irf_rs2, irf_rs1})
      );
-
-  assign context_cache_bulk_swap_r_data_o = '0;
 
   logic [dpath_width_gp-1:0] frf_rs1, frf_rs2, frf_rs3;
   logic [2:0] fp_rs_r_v_li;
