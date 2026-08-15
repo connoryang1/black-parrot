@@ -250,7 +250,7 @@ module bp_be_top
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_int_shadow_r;
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_fp_shadow_r;
   localparam int reg_count_lp = 2**reg_addr_width_gp;
-  localparam int context_mem_regs_per_line_lp = 8;
+  localparam int context_mem_regs_per_line_lp = 16;
   localparam int context_mem_line_count_lp = reg_count_lp / context_mem_regs_per_line_lp;
   localparam int context_mem_line_index_width_lp = $clog2(context_mem_line_count_lp);
   // GPR-only context-cache experiment. Nonresident FP execution is outside
