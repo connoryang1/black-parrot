@@ -306,7 +306,10 @@ module bp_fe_controller
                 icache_force_o = 1'b1;
                 itlb_r_v_o = icache_yumi_i;
 
-                tv_flush_o = ctxtsw_accept_v;
+                // A pending context redirect owns the speculative TV stage.
+                // Holding the flush until the forced I-cache request is
+                // accepted avoids feeding cache acceptance back into itself.
+                tv_flush_o = 1'b1;
               end
             else if (cmd_immediate_v)
               begin
