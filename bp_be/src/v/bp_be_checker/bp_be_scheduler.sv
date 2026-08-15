@@ -81,8 +81,8 @@ module bp_be_scheduler
    , output logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_bulk_swap_r_data_o
    , input                                    context_cache_line_w_v_i
    , input [thread_id_width_p-1:0]            context_cache_line_physical_thread_id_i
-   , input [1:0]                              context_cache_line_index_i
-   , input [7:0][dpath_width_gp-1:0]          context_cache_line_data_i
+   , input [0:0]                              context_cache_line_index_i
+   , input [15:0][dpath_width_gp-1:0]         context_cache_line_data_i
    , input [1:0]                              context_cache_fp_scan_r_v_i
    , input [1:0]                              context_cache_fp_scan_w_v_i
    , input [thread_id_width_p-1:0]            context_cache_fp_scan_physical_thread_id_i
@@ -269,7 +269,14 @@ module bp_be_scheduler
   assign context_cache_scan_r_data_o = {irf_rs2, irf_rs1};
 
   bp_be_regfile_mt
-  #(.bp_params_p(bp_params_p), .read_ports_p(2), .zero_x0_p(1), .data_width_p($bits(bp_be_int_reg_s)), .write_ports_p(2))
+  #(.bp_params_p(bp_params_p)
+    ,.read_ports_p(2)
+    ,.zero_x0_p(1)
+    ,.data_width_p($bits(bp_be_int_reg_s))
+    ,.write_ports_p(1)
+    ,.context_line_p(1)
+    ,.context_regs_per_line_p(16)
+    )
    int_regfile
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
