@@ -39,6 +39,8 @@ module bp_be_regfile_mt
    , parameter `BSG_INV_PARAM(read_ports_p)
    , parameter `BSG_INV_PARAM(zero_x0_p)
    , parameter write_ports_p = 1
+   , parameter context_regs_per_line_p = 8
+   , parameter context_line_index_width_p = $clog2((2**reg_addr_width_gp)/context_regs_per_line_p)
    )
   (input                                            clk_i
    , input                                          reset_i
@@ -76,6 +78,13 @@ module bp_be_regfile_mt
    , input [(2**reg_addr_width_gp)-1:0]                context_swap_w_mask_i
    , input [(2**reg_addr_width_gp)-1:0][data_width_p-1:0] context_swap_data_i
    , output logic [(2**reg_addr_width_gp)-1:0][data_width_p-1:0] context_swap_data_o
+
+   // Synchronous wide restore port. The normal pipeline is drained while it
+   // is active, so one backing-store line may replace adjacent GPRs.
+   , input                                              context_line_w_v_i
+   , input [thread_id_width_p-1:0]                     context_line_thread_id_i
+   , input [context_line_index_width_p-1:0]            context_line_index_i
+   , input [context_regs_per_line_p-1:0][data_width_p-1:0] context_line_data_i
    );
 
   // Derived parameters
@@ -177,7 +186,12 @@ module bp_be_regfile_mt
 `endif
 
       always_ff @(posedge clk_i) begin
-        if (context_swap_v_i) begin
+        if (context_line_w_v_i) begin
+          for (int i = 0; i < context_regs_per_line_p; i++)
+            mem[{context_line_thread_id_i,
+                 reg_addr_width_gp'(context_line_index_i*context_regs_per_line_p+i)}]
+              <= context_line_data_i[i];
+        end else if (context_swap_v_i) begin
           for (int i = 0; i < rf_els_lp; i++)
             if (context_swap_w_mask_i[i])
               mem[{context_swap_thread_id_i, reg_addr_width_gp'(i)}] <= context_swap_data_i[i];
