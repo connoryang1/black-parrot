@@ -79,6 +79,10 @@ module bp_be_scheduler
    , input [(2**reg_addr_width_gp)-1:0]       context_cache_bulk_swap_w_mask_i
    , input [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_bulk_swap_w_data_i
    , output logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_bulk_swap_r_data_o
+   , input                                    context_cache_line_w_v_i
+   , input [thread_id_width_p-1:0]            context_cache_line_physical_thread_id_i
+   , input [1:0]                              context_cache_line_index_i
+   , input [7:0][dpath_width_gp-1:0]          context_cache_line_data_i
    , input [1:0]                              context_cache_fp_scan_r_v_i
    , input [1:0]                              context_cache_fp_scan_w_v_i
    , input [thread_id_width_p-1:0]            context_cache_fp_scan_physical_thread_id_i
@@ -291,6 +295,11 @@ module bp_be_scheduler
      ,.context_swap_data_i(context_cache_bulk_swap_w_data_i)
      ,.context_swap_data_o(context_cache_bulk_swap_r_data_o)
 
+     ,.context_line_w_v_i(context_cache_line_w_v_i)
+     ,.context_line_thread_id_i(context_cache_line_physical_thread_id_i)
+     ,.context_line_index_i(context_cache_line_index_i)
+     ,.context_line_data_i(context_cache_line_data_i)
+
      ,.rs_r_v_i(int_rs_r_v_li)
      ,.rs_thread_id_i(int_rs_thread_id_li)
      ,.rs_addr_i(int_rs_addr_li)
@@ -361,6 +370,11 @@ module bp_be_scheduler
      ,.context_swap_w_mask_i('0)
      ,.context_swap_data_i('0)
      ,.context_swap_data_o()
+
+     ,.context_line_w_v_i(1'b0)
+     ,.context_line_thread_id_i('0)
+     ,.context_line_index_i('0)
+     ,.context_line_data_i('0)
 
      ,.rs_r_v_i(fp_rs_r_v_li)
      ,.rs_thread_id_i(fp_rs_thread_id_li)

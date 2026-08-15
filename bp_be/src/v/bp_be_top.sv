@@ -272,6 +272,9 @@ module bp_be_top
   logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_bulk_swap_w_data_li;
   logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_bulk_swap_r_data_lo;
   logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_mem_int_bulk_r_data_lo;
+  logic context_cache_line_w_v_li;
+  logic [context_mem_line_index_width_lp-1:0] context_cache_line_index_li;
+  logic [context_mem_regs_per_line_lp-1:0][dpath_width_gp-1:0] context_cache_line_data_li;
   logic context_mem_int_restore_issue_done_r;
   logic [context_mem_line_index_width_lp-1:0] context_mem_int_restore_issue_line_r;
   logic [context_mem_line_count_lp-1:0] context_mem_int_restore_line_v_r;
@@ -335,7 +338,8 @@ module bp_be_top
   assign context_mem_int_w_context_id_li[1] = ctx_rpush_virtual_context_id_lo;
   assign context_mem_int_w_reg_addr_li[1] = ctx_rpush_reg_lo;
   assign context_mem_int_w_data_li[1] = ctx_rpush_data_lo;
-  assign context_mem_int_r_v_li = 1'b0;
+  assign context_mem_int_r_v_li = (context_cache_state_r == e_context_cache_save_restore_regs)
+                                  & ~context_mem_int_restore_issue_done_r;
   assign context_mem_int_r_context_id_li = context_cache_target_virtual_context_id_r;
   assign context_mem_int_r_line_index_li = context_mem_int_restore_issue_line_r;
 
@@ -370,16 +374,12 @@ module bp_be_top
      ,.r_line_index_o(context_mem_int_r_line_index_lo)
      ,.r_data_o(context_mem_int_r_data_lo)
      );
-  assign context_cache_bulk_swap_v_li = context_cache_state_r == e_context_cache_save_restore_regs;
-  assign context_cache_bulk_swap_w_mask_li =
-    physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
-    | virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r];
-  for (genvar i = 0; i < reg_count_lp; i++) begin : gen_context_cache_bulk_restore
-    assign context_cache_bulk_swap_w_data_li[i] =
-      virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r][i]
-      ? context_mem_int_bulk_r_data_lo[i]
-      : '0;
-  end
+  assign context_cache_bulk_swap_v_li = 1'b0;
+  assign context_cache_bulk_swap_w_mask_li = '0;
+  assign context_cache_bulk_swap_w_data_li = '0;
+  assign context_cache_line_w_v_li = context_mem_int_r_v_lo;
+  assign context_cache_line_index_li = context_mem_int_r_line_index_lo;
+  assign context_cache_line_data_li = context_mem_int_r_data_lo;
   wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
                                   & fast_ctxtsw_resident_v_li
                                   & ~cfg_bus_cast_i.freeze
@@ -965,11 +965,16 @@ module bp_be_top
         end
 
         e_context_cache_save_restore_regs: begin
-          // The drained physical bank and private context image exchange at
-          // this edge; the tail keeps launch after architectural state.
-          context_cache_state_r <= (|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
-                                   ? e_context_cache_save_restore_fp_regs
-                                   : e_context_cache_save_restore_regs_tail;
+          // Issue four synchronous backing-store line reads. The final line is
+          // installed into the drained physical bank on the same edge that
+          // advances the FSM, so frontend launch cannot observe partial state.
+          context_cache_state_r <= context_mem_int_r_v_lo
+                                   && (context_mem_int_r_line_index_lo
+                                       == context_mem_line_index_width_lp'(context_mem_line_count_lp-1))
+                                   ? ((|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
+                                      ? e_context_cache_save_restore_fp_regs
+                                      : e_context_cache_save_restore_regs_tail)
+                                   : context_cache_state_r;
         end
 
         e_context_cache_save_restore_fp_regs: begin
@@ -1223,6 +1228,10 @@ module bp_be_top
      ,.context_cache_bulk_swap_w_mask_i(context_cache_bulk_swap_w_mask_li)
      ,.context_cache_bulk_swap_w_data_i(context_cache_bulk_swap_w_data_li)
      ,.context_cache_bulk_swap_r_data_o(context_cache_bulk_swap_r_data_lo)
+     ,.context_cache_line_w_v_i(context_cache_line_w_v_li)
+     ,.context_cache_line_physical_thread_id_i(context_cache_victim_physical_thread_id_r)
+     ,.context_cache_line_index_i(context_cache_line_index_li)
+     ,.context_cache_line_data_i(context_cache_line_data_li)
      ,.context_cache_fp_scan_r_v_i(context_cache_fp_scan_r_v_li)
      ,.context_cache_fp_scan_w_v_i(context_cache_fp_scan_w_v_li)
      ,.context_cache_fp_scan_physical_thread_id_i(context_cache_fp_scan_physical_thread_id_li)
