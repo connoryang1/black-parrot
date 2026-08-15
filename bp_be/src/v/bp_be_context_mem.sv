@@ -34,13 +34,6 @@ module bp_be_context_mem
    , input [1:0][reg_addr_width_p-1:0] w_reg_addr_i
    , input [1:0][data_width_p-1:0] w_data_i
 
-   , input bulk_w_v_i
-   , input [context_id_width_p-1:0] bulk_w_context_id_i
-   , input [reg_count_p-1:0] bulk_w_mask_i
-   , input [reg_count_p-1:0][data_width_p-1:0] bulk_w_data_i
-   , input [context_id_width_p-1:0] bulk_r_context_id_i
-   , output logic [reg_count_p-1:0][data_width_p-1:0] bulk_r_data_o
-
    , input r_v_i
    , input [context_id_width_p-1:0] r_context_id_i
    , input [line_index_width_p-1:0] r_line_index_i
@@ -50,45 +43,65 @@ module bp_be_context_mem
    , output logic [regs_per_line_p*data_width_p-1:0] r_data_o
    );
 
-  logic [regs_per_line_p*data_width_p-1:0]
-    mem [0:context_count_p-1][0:line_count_p-1];
+  localparam int bank_els_lp = context_count_p*line_count_p;
+  localparam int bank_addr_width_lp = $clog2(bank_els_lp);
+  localparam int lane_index_width_lp = $clog2(regs_per_line_p);
+  logic [regs_per_line_p-1:0][data_width_p-1:0] bank_r_data_lo;
+  logic [context_count_p-1:0][reg_count_p-1:0] valid_r;
 
-  always_comb
-    for (int reg_idx = 0; reg_idx < reg_count_p; reg_idx++)
-      bulk_r_data_o[reg_idx] =
-        mem[bulk_r_context_id_i][reg_idx / regs_per_line_p]
-           [data_width_p*(reg_idx % regs_per_line_p) +: data_width_p];
+  // The pipeline register file gives CSR remote writes priority over ordinary
+  // writeback. Mirror that exact ordering into the write-through image so each
+  // lane remains a simple one-write, one-read synchronous RAM.
+  wire scalar_w_v = |w_v_i;
+  wire scalar_w_port = w_v_i[1];
+  wire [context_id_width_p-1:0] scalar_w_context_id = w_context_id_i[scalar_w_port];
+  wire [reg_addr_width_p-1:0] scalar_w_reg_addr = w_reg_addr_i[scalar_w_port];
+  wire [data_width_p-1:0] scalar_w_data = w_data_i[scalar_w_port];
+  wire [line_index_width_p-1:0] scalar_w_line_index =
+    scalar_w_reg_addr[reg_addr_width_p-1:lane_index_width_lp];
+
+  for (genvar lane = 0; lane < regs_per_line_p; lane++) begin : lane
+    wire lane_w_v = scalar_w_v
+                    & (scalar_w_reg_addr[0+:lane_index_width_lp]
+                       == lane_index_width_lp'(lane));
+    bsg_mem_1r1w_sync
+     #(.width_p(data_width_p), .els_p(bank_els_lp))
+     lane_mem
+      (.clk_i(clk_i)
+       ,.reset_i(reset_i)
+       ,.w_v_i(lane_w_v)
+       ,.w_addr_i({scalar_w_context_id, scalar_w_line_index})
+       ,.w_data_i(scalar_w_data)
+       ,.r_v_i(r_v_i)
+       ,.r_addr_i({r_context_id_i, r_line_index_i})
+       ,.r_data_o(bank_r_data_lo[lane])
+       );
+  end
+
+  always_comb begin
+    r_data_o = '0;
+    for (int lane = 0; lane < regs_per_line_p; lane++) begin
+      automatic int reg_idx = lane + regs_per_line_p*int'(r_line_index_o);
+      if ((reg_idx < reg_count_p) && valid_r[r_context_id_o][reg_idx])
+        r_data_o[data_width_p*lane +: data_width_p] = bank_r_data_lo[lane];
+    end
+  end
 
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
       r_v_o <= 1'b0;
       r_context_id_o <= '0;
       r_line_index_o <= '0;
-      r_data_o <= '0;
-      for (int context_idx = 0; context_idx < context_count_p; context_idx++)
-        for (int line = 0; line < line_count_p; line++)
-          mem[context_idx][line] <= '0;
+      valid_r <= '0;
     end else begin
       r_v_o <= r_v_i;
       if (r_v_i) begin
         r_context_id_o <= r_context_id_i;
         r_line_index_o <= r_line_index_i;
-        r_data_o <= mem[r_context_id_i][r_line_index_i];
       end
 
-      if (bulk_w_v_i) begin
-        for (int reg_idx = 0; reg_idx < reg_count_p; reg_idx++)
-          if (bulk_w_mask_i[reg_idx])
-            mem[bulk_w_context_id_i][reg_idx / regs_per_line_p]
-              [data_width_p*(reg_idx % regs_per_line_p) +: data_width_p]
-                <= bulk_w_data_i[reg_idx];
-      end else begin
-        for (int write_port = 0; write_port < 2; write_port++)
-          if (w_v_i[write_port])
-            mem[w_context_id_i[write_port]][w_reg_addr_i[write_port] / regs_per_line_p]
-              [data_width_p*(w_reg_addr_i[write_port] % regs_per_line_p) +: data_width_p]
-                <= w_data_i[write_port];
-      end
+      if (scalar_w_v)
+        valid_r[scalar_w_context_id][scalar_w_reg_addr] <= 1'b1;
     end
   end
 

@@ -271,7 +271,6 @@ module bp_be_top
   logic [(2**reg_addr_width_gp)-1:0] context_cache_bulk_swap_w_mask_li;
   logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_bulk_swap_w_data_li;
   logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_bulk_swap_r_data_lo;
-  logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_mem_int_bulk_r_data_lo;
   logic context_cache_line_w_v_li;
   logic [context_mem_line_index_width_lp-1:0] context_cache_line_index_li;
   logic [context_mem_regs_per_line_lp-1:0][dpath_width_gp-1:0] context_cache_line_data_li;
@@ -360,12 +359,6 @@ module bp_be_top
      ,.w_context_id_i(context_mem_int_w_context_id_li)
      ,.w_reg_addr_i(context_mem_int_w_reg_addr_li)
      ,.w_data_i(context_mem_int_w_data_li)
-     ,.bulk_w_v_i(1'b0)
-     ,.bulk_w_context_id_i(context_cache_victim_virtual_context_id_r)
-     ,.bulk_w_mask_i(physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r])
-     ,.bulk_w_data_i(context_cache_bulk_swap_r_data_lo)
-     ,.bulk_r_context_id_i(context_cache_target_virtual_context_id_r)
-     ,.bulk_r_data_o(context_mem_int_bulk_r_data_lo)
      ,.r_v_i(context_mem_int_r_v_li)
      ,.r_context_id_i(context_mem_int_r_context_id_li)
      ,.r_line_index_i(context_mem_int_r_line_index_li)
