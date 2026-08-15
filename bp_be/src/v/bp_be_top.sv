@@ -973,7 +973,7 @@ module bp_be_top
                                        == context_mem_line_index_width_lp'(context_mem_line_count_lp-1))
                                    ? ((|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
                                       ? e_context_cache_save_restore_fp_regs
-                                      : e_context_cache_save_restore_regs_tail)
+                                      : e_context_cache_launch_fe)
                                    : context_cache_state_r;
         end
 
