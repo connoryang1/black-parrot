@@ -39,7 +39,8 @@ module bp_be_regfile_mt
    , parameter `BSG_INV_PARAM(read_ports_p)
    , parameter `BSG_INV_PARAM(zero_x0_p)
    , parameter write_ports_p = 1
-   , parameter context_regs_per_line_p = 8
+   , parameter context_line_p = 0
+   , parameter context_regs_per_line_p = 16
    , parameter context_line_index_width_p = $clog2((2**reg_addr_width_gp)/context_regs_per_line_p)
    )
   (input                                            clk_i
@@ -127,7 +128,60 @@ module bp_be_regfile_mt
   logic [read_ports_p-1:0][data_width_p-1:0] rs_data_lo;
 
   // Select appropriate memory based on read ports
-  if ((write_ports_p == 1) && (read_ports_p == 2))
+  if (context_line_p && (read_ports_p == 2))
+    begin : context_line_banked
+      localparam int bank_els_lp = num_threads_p*(rf_els_lp/context_regs_per_line_p);
+      localparam int bank_addr_width_lp = $clog2(bank_els_lp);
+      localparam int bank_select_width_lp = $clog2(context_regs_per_line_p);
+
+      logic [read_ports_p-1:0][context_regs_per_line_p-1:0][data_width_p-1:0] bank_r_data_lo;
+      logic [read_ports_p-1:0][bank_select_width_lp-1:0] bank_select_r;
+
+`ifndef SYNTHESIS
+      always_ff @(posedge clk_i)
+        if (rd_w_v2_i | context_swap_v_i)
+          $error("%m: scalar port 2 and atomic swap are disabled in line-banked mode");
+`endif
+
+      for (genvar bank = 0; bank < context_regs_per_line_p; bank++) begin : bank
+        wire normal_w_v = w_v_mux
+                          & (w_reg_addr_mux[0+:bank_select_width_lp]
+                             == bank_select_width_lp'(bank));
+        wire bank_w_v = context_line_w_v_i | normal_w_v;
+        wire [bank_addr_width_lp-1:0] bank_w_addr = context_line_w_v_i
+          ? {context_line_thread_id_i, context_line_index_i}
+          : {w_thread_id_mux, w_reg_addr_mux[bank_select_width_lp+:context_line_index_width_p]};
+        wire [data_width_p-1:0] bank_w_data = context_line_w_v_i
+          ? context_line_data_i[bank]
+          : w_data_mux;
+
+        bsg_mem_2r1w_sync
+         #(.width_p(data_width_p), .els_p(bank_els_lp))
+         bank_mem
+          (.clk_i(clk_i)
+           ,.reset_i(reset_i)
+           ,.w_v_i(bank_w_v)
+           ,.w_addr_i(bank_w_addr)
+           ,.w_data_i(bank_w_data)
+           ,.r0_v_i(rs_v_li[0])
+           ,.r0_addr_i({rs_thread_id_i[0], rs_addr_i[0][bank_select_width_lp+:context_line_index_width_p]})
+           ,.r0_data_o(bank_r_data_lo[0][bank])
+           ,.r1_v_i(rs_v_li[1])
+           ,.r1_addr_i({rs_thread_id_i[1], rs_addr_i[1][bank_select_width_lp+:context_line_index_width_p]})
+           ,.r1_data_o(bank_r_data_lo[1][bank])
+           );
+      end
+
+      always_ff @(posedge clk_i)
+        for (int i = 0; i < read_ports_p; i++)
+          if (rs_v_li[i])
+            bank_select_r[i] <= rs_addr_i[i][0+:bank_select_width_lp];
+
+      for (genvar i = 0; i < read_ports_p; i++)
+        assign rs_data_lo[i] = bank_r_data_lo[i][bank_select_r[i]];
+
+    end
+  else if ((write_ports_p == 1) && (read_ports_p == 2))
     begin : twoport
       bsg_mem_2r1w_sync
        #(.width_p(data_width_p), .els_p(total_rf_els_lp))
