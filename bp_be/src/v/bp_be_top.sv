@@ -318,25 +318,23 @@ module bp_be_top
                                  * paddr_width_p'(dword_width_gp/8));
   endfunction
 
-  // Context memory is the fast backing store for nonresident GPR state. Save
-  // consumes both existing physical-regfile read lanes; a remote write uses
-  // lane 0 only when no eviction scan is active.
-  assign context_mem_int_w_v_li[0] = context_cache_scan_save_v_r[0]
-                                     | ((~(|context_cache_scan_save_v_r))
-                                        & ctx_rpush_v_lo & ~ctx_rpush_resident_v_li
-                                        & (ctx_rpush_virtual_context_id_lo < num_contexts_p));
-  assign context_mem_int_w_v_li[1] = context_cache_scan_save_v_r[1];
-  for (genvar i = 0; i < 2; i++) begin : gen_context_mem_int_write
-    assign context_mem_int_w_context_id_li[i] = context_cache_scan_save_v_r[i]
-                                                 ? context_cache_victim_virtual_context_id_r
-                                                 : ctx_rpush_virtual_context_id_lo;
-    assign context_mem_int_w_reg_addr_li[i] = context_cache_scan_save_v_r[i]
-                                               ? context_cache_scan_save_idx_r[i]
-                                               : ctx_rpush_reg_lo;
-    assign context_mem_int_w_data_li[i] = context_cache_scan_save_v_r[i]
-                                           ? context_cache_scan_r_data_lo[i]
-                                           : ctx_rpush_data_lo;
-  end
+  // Keep the private context image coherent with the physical register cache.
+  // This makes eviction free: a miss only installs the incoming image. Port 0
+  // mirrors ordinary integer writeback and port 1 mirrors CSR remote writes.
+  assign context_mem_int_w_v_li[0] = iwb_pkt.ird_w_v
+                                     & (iwb_pkt.rd_addr != '0)
+                                     & (iwb_pkt.thread_id < num_threads_p)
+                                     & (physical_thread_context_id_r[iwb_pkt.thread_id] < num_contexts_p);
+  assign context_mem_int_w_context_id_li[0] = physical_thread_context_id_r[iwb_pkt.thread_id];
+  assign context_mem_int_w_reg_addr_li[0] = iwb_pkt.rd_addr;
+  assign context_mem_int_w_data_li[0] = iwb_pkt.rd_data;
+
+  assign context_mem_int_w_v_li[1] = ctx_rpush_v_lo
+                                     & (ctx_rpush_virtual_context_id_lo < num_contexts_p)
+                                     & (ctx_rpush_reg_lo != '0);
+  assign context_mem_int_w_context_id_li[1] = ctx_rpush_virtual_context_id_lo;
+  assign context_mem_int_w_reg_addr_li[1] = ctx_rpush_reg_lo;
+  assign context_mem_int_w_data_li[1] = ctx_rpush_data_lo;
   assign context_mem_int_r_v_li = 1'b0;
   assign context_mem_int_r_context_id_li = context_cache_target_virtual_context_id_r;
   assign context_mem_int_r_line_index_li = context_mem_int_restore_issue_line_r;
@@ -358,7 +356,7 @@ module bp_be_top
      ,.w_context_id_i(context_mem_int_w_context_id_li)
      ,.w_reg_addr_i(context_mem_int_w_reg_addr_li)
      ,.w_data_i(context_mem_int_w_data_li)
-     ,.bulk_w_v_i(context_cache_bulk_swap_v_li)
+     ,.bulk_w_v_i(1'b0)
      ,.bulk_w_context_id_i(context_cache_victim_virtual_context_id_r)
      ,.bulk_w_mask_i(physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r])
      ,.bulk_w_data_i(context_cache_bulk_swap_r_data_lo)
