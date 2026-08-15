@@ -39,34 +39,32 @@ module bp_be_regfile_mt
    , parameter `BSG_INV_PARAM(read_ports_p)
    , parameter `BSG_INV_PARAM(zero_x0_p)
    , parameter write_ports_p = 1
-   , parameter regfile_els_p = num_threads_p
-   , parameter regfile_id_width_p = thread_id_width_p
    )
   (input                                            clk_i
    , input                                          reset_i
 
    // Read bus - each read can be from a different thread
    , input [read_ports_p-1:0]                           rs_r_v_i
-   , input [read_ports_p-1:0][regfile_id_width_p-1:0]  rs_thread_id_i  // Storage-bank ID for each read
+   , input [read_ports_p-1:0][thread_id_width_p-1:0]   rs_thread_id_i  // Thread ID for each read
    , input [read_ports_p-1:0][reg_addr_width_gp-1:0]   rs_addr_i
    , output [read_ports_p-1:0][data_width_p-1:0]        rs_data_o
 
    // Write bus - writes to a specific thread's register
    , input                                              rd_w_v_i
-   , input [regfile_id_width_p-1:0]                    rd_thread_id_i  // Storage-bank ID for write
+   , input [thread_id_width_p-1:0]                     rd_thread_id_i  // Thread ID for write
    , input [reg_addr_width_gp-1:0]                     rd_addr_i
    , input [data_width_p-1:0]                           rd_data_i
 
    // CSR 0x083 remote-write bus: software-initiated write into another thread's register state
    // Encoding: {thread_id, reg_addr} selects the destination register; rpush_data_i is the value
    , input                                              rpush_w_v_i
-   , input [regfile_id_width_p-1:0]                    rpush_thread_id_i
+   , input [thread_id_width_p-1:0]                     rpush_thread_id_i
    , input [reg_addr_width_gp-1:0]                     rpush_addr_i
    , input [data_width_p-1:0]                           rpush_data_i
 
    // Optional second write port, used only by the nonresident context-cache restore path.
    , input                                              rd_w_v2_i
-   , input [regfile_id_width_p-1:0]                    rd_thread_id2_i
+   , input [thread_id_width_p-1:0]                     rd_thread_id2_i
    , input [reg_addr_width_gp-1:0]                     rd_addr2_i
    , input [data_width_p-1:0]                           rd_data2_i
 
@@ -74,7 +72,7 @@ module bp_be_regfile_mt
    // visible as one architectural image and may be replaced atomically under
    // a per-register mask.  Normal issue/writeback is quiescent while asserted.
    , input                                              context_swap_v_i
-   , input [regfile_id_width_p-1:0]                    context_swap_thread_id_i
+   , input [thread_id_width_p-1:0]                     context_swap_thread_id_i
    , input [(2**reg_addr_width_gp)-1:0]                context_swap_w_mask_i
    , input [(2**reg_addr_width_gp)-1:0][data_width_p-1:0] context_swap_data_i
    , output logic [(2**reg_addr_width_gp)-1:0][data_width_p-1:0] context_swap_data_o
@@ -82,7 +80,7 @@ module bp_be_regfile_mt
 
   // Derived parameters
   localparam rf_els_lp = 2**reg_addr_width_gp;                           // 32 registers per thread
-  localparam total_rf_els_lp = 2**(reg_addr_width_gp + regfile_id_width_p); // Total storage
+  localparam total_rf_els_lp = 2**(reg_addr_width_gp + thread_id_width_p); // Total storage
   logic [data_width_p-1:0] mem [total_rf_els_lp-1:0];
 
   if (write_ports_p == 2) begin : bulk_read
@@ -94,10 +92,10 @@ module bp_be_regfile_mt
   end
 
   // Compose thread-indexed addresses
-  logic [read_ports_p-1:0][reg_addr_width_gp+regfile_id_width_p-1:0] rs_addr_indexed;
-  logic [reg_addr_width_gp+regfile_id_width_p-1:0] rd_addr_indexed;
-  logic [reg_addr_width_gp+regfile_id_width_p-1:0] rpush_addr_indexed;
-  logic [reg_addr_width_gp+regfile_id_width_p-1:0] rd_addr2_indexed;
+  logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_indexed;
+  logic [reg_addr_width_gp+thread_id_width_p-1:0] rd_addr_indexed;
+  logic [reg_addr_width_gp+thread_id_width_p-1:0] rpush_addr_indexed;
+  logic [reg_addr_width_gp+thread_id_width_p-1:0] rd_addr2_indexed;
 
   // Construct indexed addresses: {thread_id, reg_addr}
   for (genvar i = 0; i < read_ports_p; i++)
@@ -111,12 +109,12 @@ module bp_be_regfile_mt
   // Mux write port: CSR 0x083 remote write takes priority over normal writeback
   // CSR 0x083 remote writes and normal writeback never happen on the same cycle
   wire w_v_mux    = rpush_w_v_i | rd_w_v_i;
-  wire [reg_addr_width_gp+regfile_id_width_p-1:0] w_addr_mux = rpush_w_v_i ? rpush_addr_indexed : rd_addr_indexed;
+  wire [reg_addr_width_gp+thread_id_width_p-1:0] w_addr_mux = rpush_w_v_i ? rpush_addr_indexed : rd_addr_indexed;
   wire [data_width_p-1:0] w_data_mux = rpush_w_v_i ? rpush_data_i : rd_data_i;
 
   // Register file storage
   logic [read_ports_p-1:0] rs_v_li;
-  logic [read_ports_p-1:0][reg_addr_width_gp+regfile_id_width_p-1:0] rs_addr_li;
+  logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_li;
   logic [read_ports_p-1:0][data_width_p-1:0] rs_data_lo;
 
   // Select appropriate memory based on read ports
@@ -168,7 +166,7 @@ module bp_be_regfile_mt
     end
   else if ((write_ports_p == 2) && ((read_ports_p == 2) || (read_ports_p == 3)))
     begin : twoport_twowrite
-      logic [read_ports_p-1:0][reg_addr_width_gp+regfile_id_width_p-1:0] rs_addr_mem_r;
+      logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_mem_r;
 
 `ifndef SYNTHESIS
       always_ff @(posedge clk_i)
@@ -205,7 +203,7 @@ module bp_be_regfile_mt
 
   // Save the written data for forwarding (use muxed write port values to capture remote writes too)
   logic [1:0][data_width_p-1:0] rd_data_r;
-  wire [regfile_id_width_p-1:0] w_thread_id_mux = rpush_w_v_i ? rpush_thread_id_i : rd_thread_id_i;
+  wire [thread_id_width_p-1:0] w_thread_id_mux = rpush_w_v_i ? rpush_thread_id_i : rd_thread_id_i;
   wire [reg_addr_width_gp-1:0] w_reg_addr_mux  = rpush_w_v_i ? rpush_addr_i : rd_addr_i;
   bsg_dff
    #(.width_p(2*data_width_p))
@@ -247,9 +245,9 @@ module bp_be_regfile_mt
                            : rs_data_lo[i];
 
       logic [reg_addr_width_gp-1:0] rs_addr_r;
-      logic [regfile_id_width_p-1:0] rs_thread_id_r;
+      logic [thread_id_width_p-1:0] rs_thread_id_r;
       bsg_dff_en
-       #(.width_p(reg_addr_width_gp + regfile_id_width_p))
+       #(.width_p(reg_addr_width_gp + thread_id_width_p))
        rs_addr_reg
         (.clk_i(clk_i)
          ,.en_i(rs_r_v_i[i])
