@@ -200,13 +200,7 @@ module bp_fe_icache
 
   // Accept requests when we're in ready state and there's no blocked request in TL
   // Also accept request when 'forced'
-  // Spell out forced-request acceptance so redirect flush cannot feed back
-  // through the normal TV-stage write decision. This preserves the original
-  // acceptance condition for both occupied and empty TL stages.
-  assign yumi_o = v_i
-                  & (force_i
-                     ? (v_tl_r | ~cache_req_lock_i)
-                     : tl_we);
+  assign yumi_o = v_i & tl_we;
 
   ///////////////////////////
   // Tag Mem Storage
