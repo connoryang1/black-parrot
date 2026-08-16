@@ -276,6 +276,7 @@ module bp_be_top
   logic [context_mem_regs_per_line_lp-1:0][dpath_width_gp-1:0] context_cache_line_data_li;
   logic context_mem_int_restore_issue_done_r;
   logic [context_mem_line_index_width_lp-1:0] context_mem_int_restore_issue_line_r;
+  logic [context_mem_line_index_width_lp-1:0] context_mem_int_restore_install_line_r;
   logic [context_mem_line_count_lp-1:0] context_mem_int_restore_line_v_r;
   logic [context_mem_line_count_lp-1:0][context_mem_regs_per_line_lp*dpath_width_gp-1:0]
     context_mem_int_restore_line_data_r;
@@ -337,7 +338,11 @@ module bp_be_top
   assign context_mem_int_w_context_id_li[1] = ctx_rpush_virtual_context_id_lo;
   assign context_mem_int_w_reg_addr_li[1] = ctx_rpush_reg_lo;
   assign context_mem_int_w_data_li[1] = ctx_rpush_data_lo;
-  assign context_mem_int_r_v_li = (context_cache_state_r == e_context_cache_save_restore_regs)
+  // Fetch the nonresident image while the switching instruction commits and
+  // the victim drains.  Responses remain speculative in private line buffers;
+  // the physical register bank is not modified until drain safety is proven.
+  assign context_mem_int_r_v_li = ((context_cache_state_r == e_context_cache_wait_ctxtsw_commit)
+                                   || (context_cache_state_r == e_context_cache_wait_drain))
                                   & ~context_mem_int_restore_issue_done_r;
   assign context_mem_int_r_context_id_li = context_cache_target_virtual_context_id_r;
   assign context_mem_int_r_line_index_li = context_mem_int_restore_issue_line_r;
@@ -370,9 +375,11 @@ module bp_be_top
   assign context_cache_bulk_swap_v_li = 1'b0;
   assign context_cache_bulk_swap_w_mask_li = '0;
   assign context_cache_bulk_swap_w_data_li = '0;
-  assign context_cache_line_w_v_li = context_mem_int_r_v_lo;
-  assign context_cache_line_index_li = context_mem_int_r_line_index_lo;
-  assign context_cache_line_data_li = context_mem_int_r_data_lo;
+  assign context_cache_line_w_v_li = (context_cache_state_r == e_context_cache_save_restore_regs)
+                                     & context_mem_int_restore_line_v_r[context_mem_int_restore_install_line_r];
+  assign context_cache_line_index_li = context_mem_int_restore_install_line_r;
+  assign context_cache_line_data_li =
+    context_mem_int_restore_line_data_r[context_mem_int_restore_install_line_r];
   wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
                                   & fast_ctxtsw_resident_v_li
                                   & ~cfg_bus_cast_i.freeze
@@ -833,6 +840,7 @@ module bp_be_top
       context_cache_int_l1_paddr_r <= '0;
       context_mem_int_restore_issue_done_r <= 1'b0;
       context_mem_int_restore_issue_line_r <= '0;
+      context_mem_int_restore_install_line_r <= '0;
       context_mem_int_restore_line_v_r <= '0;
       context_mem_int_restore_line_data_r <= '0;
       physical_thread_fp_dirty_r <= '0;
@@ -931,6 +939,10 @@ module bp_be_top
             context_cache_victim_physical_thread_id_r <= current_physical_thread_id_lo;
             context_cache_resume_npc_r <= context_cache_miss_resume_npc_li;
             context_cache_miss_count_r <= context_cache_miss_count_r + dword_width_gp'(1);
+            context_mem_int_restore_issue_done_r <= 1'b0;
+            context_mem_int_restore_issue_line_r <= '0;
+            context_mem_int_restore_install_line_r <= '0;
+            context_mem_int_restore_line_v_r <= '0;
           end
         end
 
@@ -942,9 +954,6 @@ module bp_be_top
         e_context_cache_wait_drain: begin
           context_cache_int_restore_phase_r <= 1'b0;
           context_cache_fp_restore_phase_r <= 1'b0;
-          context_mem_int_restore_issue_done_r <= 1'b0;
-          context_mem_int_restore_issue_line_r <= '0;
-          context_mem_int_restore_line_v_r <= '0;
           context_cache_int_save_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r];
           context_cache_int_restore_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
                                               | virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r];
@@ -968,16 +977,19 @@ module bp_be_top
         end
 
         e_context_cache_save_restore_regs: begin
-          // Issue four synchronous backing-store line reads. The final line is
-          // installed into the drained physical bank on the same edge that
-          // advances the FSM, so frontend launch cannot observe partial state.
-          context_cache_state_r <= context_mem_int_r_v_lo
-                                   && (context_mem_int_r_line_index_lo
-                                       == context_mem_line_index_width_lp'(context_mem_line_count_lp-1))
-                                   ? ((|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
-                                      ? e_context_cache_save_restore_fp_regs
-                                      : e_context_cache_launch_fe)
-                                   : context_cache_state_r;
+          // Install the two prefetched lines only after the victim is drained.
+          // The final line is written on the same edge that advances the FSM,
+          // so frontend launch still cannot observe partial register state.
+          if (context_cache_line_w_v_li) begin
+            if (context_mem_int_restore_install_line_r
+                == context_mem_line_index_width_lp'(context_mem_line_count_lp-1))
+              context_cache_state_r <= (|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
+                                       ? e_context_cache_save_restore_fp_regs
+                                       : e_context_cache_launch_fe;
+            else
+              context_mem_int_restore_install_line_r
+                <= context_mem_int_restore_install_line_r + 1'b1;
+          end
         end
 
         e_context_cache_save_restore_fp_regs: begin
