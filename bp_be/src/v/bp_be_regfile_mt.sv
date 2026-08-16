@@ -155,21 +155,24 @@ module bp_be_regfile_mt
           ? context_line_data_i[bank]
           : w_data_mux;
 
-        bsg_mem_2r1w_sync
-         #(.width_p(data_width_p), .els_p(bank_els_lp))
-         bank_mem
-          (.clk_i(clk_i)
-           ,.reset_i(reset_i)
-           ,.w_v_i(bank_w_v)
-           ,.w_addr_i(bank_w_addr)
-           ,.w_data_i(bank_w_data)
-           ,.r0_v_i(rs_v_li[0])
-           ,.r0_addr_i({rs_thread_id_i[0], rs_addr_i[0][bank_select_width_lp+:context_line_index_width_p]})
-           ,.r0_data_o(bank_r_data_lo[0][bank])
-           ,.r1_v_i(rs_v_li[1])
-           ,.r1_addr_i({rs_thread_id_i[1], rs_addr_i[1][bank_select_width_lp+:context_line_index_width_p]})
-           ,.r1_data_o(bank_r_data_lo[1][bank])
-           );
+        // A true 2R1W FPGA block memory requires two mirrored 1R1W copies.
+        // Both copies receive the same architectural write, while each read
+        // port owns one copy.  Explicit block-RAM style avoids turning these
+        // very wide physical GPR banks into thousands of LUTRAM cells.
+        for (genvar rp = 0; rp < read_ports_p; rp++) begin : read_copy
+          bsg_mem_1r1w_sync
+           #(.width_p(data_width_p), .els_p(bank_els_lp), .ram_style_p("block"))
+           bank_mem
+            (.clk_i(clk_i)
+             ,.reset_i(reset_i)
+             ,.w_v_i(bank_w_v)
+             ,.w_addr_i(bank_w_addr)
+             ,.w_data_i(bank_w_data)
+             ,.r_v_i(rs_v_li[rp])
+             ,.r_addr_i({rs_thread_id_i[rp], rs_addr_i[rp][bank_select_width_lp+:context_line_index_width_p]})
+             ,.r_data_o(bank_r_data_lo[rp][bank])
+             );
+        end
       end
 
       always_ff @(posedge clk_i)
