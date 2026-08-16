@@ -162,7 +162,11 @@ module bp_fe_icache
     & (~tag_mem_pkt_v_i | tag_mem_pkt_yumi_o)
     & (~data_mem_pkt_v_i | data_mem_pkt_yumi_o);
 
-  wire abort_miss = is_miss & force_i & ~complete_recv;
+  // The UCE holds last and its refill packets until the SRAM handshakes
+  // complete.  Use that held intent for the abort decision; feeding the
+  // packet yummies back through complete_recv creates a combinational cycle
+  // through SRAM arbitration and the UCE refill counters.
+  wire abort_miss = is_miss & force_i & ~cache_req_last_i;
   logic abort_miss_r;
   wire abort_recv = abort_miss_r
     & (~stat_mem_pkt_v_i | stat_mem_pkt_yumi_o)
