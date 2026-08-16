@@ -65,7 +65,7 @@ module bp_be_context_mem
                     & (scalar_w_reg_addr[0+:lane_index_width_lp]
                        == lane_index_width_lp'(lane));
     bsg_mem_1r1w_sync
-     #(.width_p(data_width_p), .els_p(bank_els_lp))
+     #(.width_p(data_width_p), .els_p(bank_els_lp), .ram_style_p("block"))
      lane_mem
       (.clk_i(clk_i)
        ,.reset_i(reset_i)
