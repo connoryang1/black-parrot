@@ -634,7 +634,7 @@ module bp_be_top
         pending_ctxtsw_sent_r <= 1'b0;
         ctxtsw_launch_pending_r <= 1'b1;
         spec_ctxtsw_state_r <= e_ctxtsw_prepared;
-        pending_ctxtsw_prev_physical_thread_id_r <= fast_ctxtsw_old_physical_thread_id_lo;
+        pending_ctxtsw_prev_physical_thread_id_r <= current_physical_thread_id_lo;
         pending_ctxtsw_virtual_context_id_r <= fast_ctxtsw_virtual_context_id_lo;
         pending_ctxtsw_physical_thread_id_r <= fast_ctxtsw_physical_thread_id_lo;
         pending_ctxtsw_resume_npc_r <= fast_ctxtsw_resume_npc_lo;
