@@ -136,7 +136,7 @@ module bp_fe_controller
   always_comb
     begin
       ctxtsw_branch_metadata_fwd_cast = '0;
-      ctxtsw_branch_metadata_fwd_cast.thread_id = ctxtsw_thread_id_i;
+      ctxtsw_branch_metadata_fwd_cast.thread_id = ctxtsw_thread_id_r;
     end
 
   wire br_miss_v     = pc_redirect_v & (fe_cmd_cast_i.operands.pc_redirect_operands.subopcode == e_subop_branch_mispredict);
