@@ -17,6 +17,9 @@ module bp_be_csr
 
    , input [cfg_bus_width_lp-1:0]            cfg_bus_i
 
+   // Core-wide physical timebase.  This is never context-saved or restored.
+   , input [dword_width_gp-1:0]               global_cycle_i
+
    // CSR check interface
    , input                                   csr_r_v_i
    , input [rv64_csr_addr_width_gp-1:0]      csr_r_addr_i
@@ -445,6 +448,7 @@ module bp_be_csr
         {`CSR_ADDR_FRM          }: csr_data_lo = fcsr_lo.frm;
         {`CSR_ADDR_FCSR         }: csr_data_lo = fcsr_lo;
         {`CSR_ADDR_CYCLE        }: csr_data_lo = mcycle_lo;
+        {`CSR_ADDR_TIME         }: csr_data_lo = global_cycle_i;
         {`CSR_ADDR_INSTRET      }: csr_data_lo = minstret_lo;
         {`CSR_ADDR_SSTATUS      }: csr_data_lo = sstatus_lo;
         {`CSR_ADDR_SEDELEG      }: csr_data_lo = sedeleg_lo;
@@ -491,6 +495,8 @@ module bp_be_csr
           csr_data_lo = ctx_l1_data_r;
         12'h085:  // Context-cache L1 service status
           csr_data_lo = {{(dword_width_gp-2){1'b0}}, ctx_l1_resp_v_i, ctx_l1_ready_i};
+        {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
+          csr_data_lo = global_cycle_i;
         default:
           begin
             csr_data_lo = '0;
