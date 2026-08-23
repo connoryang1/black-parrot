@@ -103,6 +103,7 @@ module bp_fe_controller
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
   `declare_bp_fe_icache_pkt_s(vaddr_width_p);
+  `declare_bp_fe_branch_metadata_fwd_s(ras_idx_width_p, btb_tag_width_p, btb_idx_width_p, bht_idx_width_p, ghist_width_p, bht_row_els_p, thread_id_width_p);
   `bp_cast_i(bp_fe_cmd_s, fe_cmd);
   `bp_cast_o(bp_fe_queue_s, fe_queue);
   `bp_cast_o(bp_fe_icache_pkt_s, icache_pkt);
@@ -125,6 +126,16 @@ module bp_fe_controller
   wire itlb_fill_response_v   = fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_itlb_fill_response);
   wire itlb_fence_v           = fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_itlb_fence);
   wire wait_v                 = fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_wait);
+
+  bp_fe_branch_metadata_fwd_s redirect_branch_metadata_fwd_cast;
+  assign redirect_branch_metadata_fwd_cast =
+    fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd;
+  bp_fe_branch_metadata_fwd_s ctxtsw_branch_metadata_fwd_cast;
+  always_comb
+    begin
+      ctxtsw_branch_metadata_fwd_cast = '0;
+      ctxtsw_branch_metadata_fwd_cast.thread_id = ctxtsw_thread_id_r;
+    end
 
   wire br_miss_v     = pc_redirect_v & (fe_cmd_cast_i.operands.pc_redirect_operands.subopcode == e_subop_branch_mispredict);
   wire eret_v        = pc_redirect_v & (fe_cmd_cast_i.operands.pc_redirect_operands.subopcode == e_subop_eret);
@@ -192,9 +203,9 @@ module bp_fe_controller
                                       ? ctxtsw_thread_id_r
                                       : context_switch_v
                                       ? fe_cmd_cast_i.operands.pc_redirect_operands.context_switch_thread_id
-                                      : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd[branch_metadata_fwd_width_p-1 -: thread_id_width_p];
+                                      : redirect_branch_metadata_fwd_cast.thread_id;
   assign redirect_br_metadata_fwd_o = ctxtsw_accept_v
-                                      ? branch_metadata_fwd_width_p'({ctxtsw_thread_id_r, {(branch_metadata_fwd_width_p-thread_id_width_p){1'b0}}})
+                                      ? branch_metadata_fwd_width_p'(ctxtsw_branch_metadata_fwd_cast)
                                       : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd;
 
   assign attaboy_v_o               = attaboy_v;
