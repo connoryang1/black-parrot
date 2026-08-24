@@ -96,9 +96,10 @@ package bp_be_pkg;
 
   localparam [dpath_width_gp-1:0] dp_canonical_reg = 66'h0_e0080000_00000000;
   localparam [dpath_width_gp-1:0] sp_canonical_reg = 66'h2_e0080000_00000000;
+  // Recoded +0.0 written by the crt0 `fmv.s.x fN, zero` initialization.
+  localparam [dpath_width_gp-1:0] sp_zero_reg = 66'h2_12a00000_00000000;
 
   `include "bp_be_ctl_pkgdef.svh"
   `include "bp_be_dcache_pkgdef.svh"
 
 endpackage
-
