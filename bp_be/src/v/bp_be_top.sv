@@ -448,7 +448,10 @@ module bp_be_top
         context_cache_fp_save_pick_addr_li[save_cnt] = reg_addr_width_gp'(i);
         save_cnt++;
       end
-      if (context_cache_fp_restore_mask_r[i] && (restore_cnt < 2)) begin
+      // Keep restore single-lane so the FPGA FP register file retains one
+      // physical write port.  A second restore write port dissolves the RAM
+      // into distributed registers and makes PYNQ-Z2 synthesis pathological.
+      if (context_cache_fp_restore_mask_r[i] && (restore_cnt < 1)) begin
         context_cache_fp_restore_pick_v_li[restore_cnt] = 1'b1;
         context_cache_fp_restore_pick_addr_li[restore_cnt] = reg_addr_width_gp'(i);
         restore_cnt++;
