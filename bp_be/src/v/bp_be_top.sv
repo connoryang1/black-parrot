@@ -253,9 +253,9 @@ module bp_be_top
   localparam int context_mem_regs_per_line_lp = 16;
   localparam int context_mem_line_count_lp = reg_count_lp / context_mem_regs_per_line_lp;
   localparam int context_mem_line_index_width_lp = $clog2(context_mem_line_count_lp);
-  // GPR-only context-cache experiment. Nonresident FP execution is outside
-  // this phase's contract and must remain disabled until separately tested.
-  localparam bit context_cache_fp_enable_lp = 1'b0;
+  // Preserve only FP registers that have actually been written. Contexts
+  // which never use FP bypass this path and retain the GPR-only switch cost.
+  localparam bit context_cache_fp_enable_lp = 1'b1;
   logic [1:0] context_mem_int_w_v_li;
   logic [1:0][context_id_width_p-1:0] context_mem_int_w_context_id_li;
   logic [1:0][reg_addr_width_gp-1:0] context_mem_int_w_reg_addr_li;
@@ -509,11 +509,11 @@ module bp_be_top
   assign context_cache_fp_scan_w_data_li[0] =
     virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[0]]
     ? context_cache_fp_shadow_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[0]]
-    : '0;
+    : sp_zero_reg;
   assign context_cache_fp_scan_w_data_li[1] =
     virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[1]]
     ? context_cache_fp_shadow_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[1]]
-    : '0;
+    : sp_zero_reg;
   assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_physical_thread_id_r : current_physical_thread_id_lo;
   wire [thread_id_width_p-1:0] scheduler_current_physical_thread_id_li =
     (commit_pkt.ctxtsw & pending_ctxtsw_sent_r) ? pending_ctxtsw_physical_thread_id_r : current_physical_thread_id_lo;
@@ -897,9 +897,14 @@ module bp_be_top
         physical_thread_fp_dirty_r[ctx_rpush_physical_thread_id_li][ctx_rpush_reg_lo] <= 1'b1;
       end
       if (fwb_pkt.frd_w_v && (fwb_pkt.thread_id < num_threads_p)) begin
-        physical_thread_fp_dirty_r[fwb_pkt.thread_id][fwb_pkt.rd_addr] <= 1'b1;
+        // crt0 initializes every FP register with the canonical SP zero. Treat
+        // that value as the clean/default state so integer-only contexts do
+        // not pay an FP save/restore penalty merely because startup ran.
+        physical_thread_fp_dirty_r[fwb_pkt.thread_id][fwb_pkt.rd_addr]
+          <= fwb_pkt.rd_data != sp_zero_reg;
         if (physical_thread_context_id_r[fwb_pkt.thread_id] < num_contexts_p)
-          virtual_context_fp_dirty_r[physical_thread_context_id_r[fwb_pkt.thread_id]][fwb_pkt.rd_addr] <= 1'b1;
+          virtual_context_fp_dirty_r[physical_thread_context_id_r[fwb_pkt.thread_id]][fwb_pkt.rd_addr]
+            <= fwb_pkt.rd_data != sp_zero_reg;
       end
       if (iwb_pkt.ird_w_v && (iwb_pkt.thread_id < num_threads_p) && (iwb_pkt.rd_addr != '0)) begin
         physical_thread_int_dirty_r[iwb_pkt.thread_id][iwb_pkt.rd_addr] <= 1'b1;
