@@ -83,6 +83,10 @@ module bp_be_scheduler
    , input [thread_id_width_p-1:0]            context_cache_line_physical_thread_id_i
    , input [0:0]                              context_cache_line_index_i
    , input [15:0][dpath_width_gp-1:0]         context_cache_line_data_i
+   , input                                    context_cache_fp_line_w_v_i
+   , input [thread_id_width_p-1:0]            context_cache_fp_line_physical_thread_id_i
+   , input [0:0]                              context_cache_fp_line_index_i
+   , input [15:0][dpath_width_gp-1:0]         context_cache_fp_line_data_i
    , input [1:0]                              context_cache_fp_scan_r_v_i
    , input [1:0]                              context_cache_fp_scan_w_v_i
    , input [thread_id_width_p-1:0]            context_cache_fp_scan_physical_thread_id_i
@@ -350,10 +354,14 @@ module bp_be_scheduler
   assign fp_rpush_data_li = context_cache_fp_scan_w_v_i[0] ? context_cache_fp_scan_w_data_i[0] : rpush_data_i;
   assign context_cache_fp_scan_r_data_o = {frf_rs2, frf_rs1};
   bp_be_regfile_mt
-  // Restore dirty FP state through the ordinary rpush port.  Keeping a single
-  // physical write port lets Vivado retain an efficient FPGA register file;
-  // FP saves still consume both otherwise-idle read lanes.
-  #(.bp_params_p(bp_params_p), .read_ports_p(3), .zero_x0_p(0), .data_width_p($bits(bp_be_fp_reg_s)), .write_ports_p(1))
+  #(.bp_params_p(bp_params_p)
+    ,.read_ports_p(3)
+    ,.zero_x0_p(0)
+    ,.data_width_p($bits(bp_be_fp_reg_s))
+    ,.write_ports_p(1)
+    ,.context_line_p(1)
+    ,.context_regs_per_line_p(16)
+    )
    fp_regfile
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
@@ -379,10 +387,10 @@ module bp_be_scheduler
      ,.context_swap_data_i('0)
      ,.context_swap_data_o()
 
-     ,.context_line_w_v_i(1'b0)
-     ,.context_line_thread_id_i('0)
-     ,.context_line_index_i('0)
-     ,.context_line_data_i('0)
+     ,.context_line_w_v_i(context_cache_fp_line_w_v_i)
+     ,.context_line_thread_id_i(context_cache_fp_line_physical_thread_id_i)
+     ,.context_line_index_i(context_cache_fp_line_index_i)
+     ,.context_line_data_i(context_cache_fp_line_data_i)
 
      ,.rs_r_v_i(fp_rs_r_v_li)
      ,.rs_thread_id_i(fp_rs_thread_id_li)

@@ -128,7 +128,7 @@ module bp_be_regfile_mt
   logic [read_ports_p-1:0][data_width_p-1:0] rs_data_lo;
 
   // Select appropriate memory based on read ports
-  if (context_line_p && (read_ports_p == 2))
+  if (context_line_p && ((read_ports_p == 2) || (read_ports_p == 3)))
     begin : context_line_banked
       localparam int bank_els_lp = num_threads_p*(rf_els_lp/context_regs_per_line_p);
       localparam int bank_addr_width_lp = $clog2(bank_els_lp);
