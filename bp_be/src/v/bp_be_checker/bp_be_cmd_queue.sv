@@ -29,14 +29,18 @@ module bp_be_cmd_queue
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
   `bp_cast_i(bp_fe_cmd_s, fe_cmd);
 
-  // Only context switches need zero-cycle FE delivery.  Bypassing every command
-  // exposes ordinary redirect payloads combinationally and is not Linux-safe.
-  wire bypass_v = empty_lo & fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_context_switch);
+  logic full_lo, empty_lo;
+
+  // Context redirects and I-cache refill completions need zero-cycle FE
+  // delivery.  Keep ordinary redirects queued so their payload is not exposed
+  // combinationally across the BE/FE boundary.
+  wire fast_cmd_v = (fe_cmd_cast_i.opcode == e_op_context_switch)
+                    | (fe_cmd_cast_i.opcode == e_op_icache_fill_response);
+  wire bypass_v = empty_lo & fe_cmd_v_i & fast_cmd_v;
   wire enq = fe_cmd_v_i & (~bypass_v | ~fe_cmd_yumi_i);
   wire deq = fe_cmd_yumi_i & ~empty_lo;
 
   logic [ptr_width_lp-1:0] wptr_r, rptr_n, rptr_r;
-  logic full_lo, empty_lo;
   bsg_fifo_tracker
    #(.els_p(fe_cmd_fifo_els_p))
    ft
