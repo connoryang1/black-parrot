@@ -47,6 +47,7 @@ module bp_fe_controller
    , output logic                                     redirect_br_ntaken_o
    , output logic                                     redirect_br_nonbr_o
    , output logic [thread_id_width_p-1:0]             redirect_thread_id_o
+   , output logic                                     redirect_thread_id_v_o
    , output logic [branch_metadata_fwd_width_p-1:0]   redirect_br_metadata_fwd_o
 
    , output logic                                     attaboy_v_o
@@ -204,6 +205,7 @@ module bp_fe_controller
                                       : context_switch_v
                                       ? fe_cmd_cast_i.operands.pc_redirect_operands.context_switch_thread_id
                                       : redirect_branch_metadata_fwd_cast.thread_id;
+  assign redirect_thread_id_v_o     = ctxtsw_accept_v | context_switch_v;
   assign redirect_br_metadata_fwd_o = ctxtsw_accept_v
                                       ? branch_metadata_fwd_width_p'(ctxtsw_branch_metadata_fwd_cast)
                                       : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd;

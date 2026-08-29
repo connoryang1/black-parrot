@@ -27,8 +27,11 @@ module bp_be_cmd_queue
    );
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
+  `bp_cast_i(bp_fe_cmd_s, fe_cmd);
 
-  wire bypass_v = empty_lo & fe_cmd_v_i;
+  // Only context switches need zero-cycle FE delivery.  Bypassing every command
+  // exposes ordinary redirect payloads combinationally and is not Linux-safe.
+  wire bypass_v = empty_lo & fe_cmd_v_i & (fe_cmd_cast_i.opcode == e_op_context_switch);
   wire enq = fe_cmd_v_i & (~bypass_v | ~fe_cmd_yumi_i);
   wire deq = fe_cmd_yumi_i & ~empty_lo;
 
