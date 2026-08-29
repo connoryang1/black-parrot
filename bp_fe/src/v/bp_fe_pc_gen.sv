@@ -87,7 +87,10 @@ module bp_fe_pc_gen
   always_ff @(posedge clk_i) begin
     if (reset_i)
       thread_id_r <= '0;
-    else if (redirect_v_i | state_reset_v_i)
+    // Normal redirects must retain the current predictor bank. A context
+    // switch reaches this path through state_reset_v_i and uses the
+    // explicitly transported target thread ID.
+    else if (state_reset_v_i)
       thread_id_r <= redirect_thread_id_i;
   end
 
