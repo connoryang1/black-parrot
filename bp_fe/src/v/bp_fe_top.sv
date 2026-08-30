@@ -128,7 +128,7 @@ module bp_fe_top
   `declare_bp_fe_icache_pkt_s(vaddr_width_p);
   bp_fe_icache_pkt_s icache_pkt_li;
   logic [icache_data_width_p-1:0] icache_data_lo;
-  logic icache_v_li, icache_force_li, icache_yumi_lo, tl_flush_lo;
+  logic icache_v_li, icache_force_li, icache_miss_abort_li, icache_yumi_lo, tl_flush_lo;
   logic icache_tv_we;
   logic icache_hit_v_lo, icache_miss_v_lo, icache_fence_v_lo, icache_hit_yumi_li, icache_yumi_li;
   logic [thread_id_width_p-1:0] redirect_thread_id_li;
@@ -280,6 +280,7 @@ module bp_fe_top
      ,.icache_pkt_i(icache_pkt_li)
      ,.v_i(icache_v_li)
      ,.force_i(icache_force_li)
+     ,.miss_abort_i(icache_miss_abort_li)
      ,.yumi_o(icache_yumi_lo)
      ,.tl_flush_i(tl_flush_lo)
 
@@ -462,6 +463,7 @@ module bp_fe_top
 
      ,.icache_v_o(icache_v_li)
      ,.icache_force_o(icache_force_li)
+     ,.icache_miss_abort_o(icache_miss_abort_li)
      ,.icache_pkt_o(icache_pkt_li)
      ,.icache_yumi_i(icache_yumi_lo)
 

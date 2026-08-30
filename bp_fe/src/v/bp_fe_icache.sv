@@ -67,6 +67,7 @@ module bp_fe_icache
    , input [icache_pkt_width_lp-1:0]                  icache_pkt_i
    , input                                            v_i
    , input                                            force_i
+   , input                                            miss_abort_i
    , output                                           yumi_o
    , input                                            tl_flush_i
 
@@ -155,15 +156,15 @@ module bp_fe_icache
 
   // UCE memory packets are accepted unconditionally below, so the held
   // critical/last sidebands are themselves the aligned receive events. A
-  // forced redirect wins over a critical restart.
-  wire critical_recv = is_miss & cache_req_critical_i & ~force_i;
-  wire complete_recv = is_miss & cache_req_last_i & ~force_i;
+  // context-switch miss abort wins over a critical restart.
+  wire critical_recv = is_miss & cache_req_critical_i & ~miss_abort_i;
+  wire complete_recv = is_miss & cache_req_last_i & ~miss_abort_i;
 
   // The UCE holds last and its refill packets until the SRAM handshakes
   // complete.  Use that held intent for the abort decision; feeding the
   // packet yummies back through complete_recv creates a combinational cycle
   // through SRAM arbitration and the UCE refill counters.
-  wire abort_miss = is_miss & force_i & ~cache_req_last_i;
+  wire abort_miss = is_miss & miss_abort_i & ~cache_req_last_i;
   logic abort_miss_r;
   wire abort_recv = abort_miss_r
     & (~stat_mem_pkt_v_i | stat_mem_pkt_yumi_o)
@@ -539,8 +540,8 @@ module bp_fe_icache
   /////////////////////////////////////////////////////////////////////////////
   always_comb
     case (state_r)
-      e_miss    : state_n = force_i ? e_ready : complete_recv ? e_recover : state_r;
-      e_recover : state_n = force_i ? e_ready : e_ready;
+      e_miss    : state_n = miss_abort_i ? e_ready : complete_recv ? e_recover : state_r;
+      e_recover : state_n = e_ready;
       e_ready   : state_n = cache_req_yumi_i ? e_miss : state_r;
       default   : state_n = e_ready;
     endcase
