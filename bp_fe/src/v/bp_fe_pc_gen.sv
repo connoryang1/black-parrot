@@ -88,7 +88,9 @@ module bp_fe_pc_gen
   always_ff @(posedge clk_i) begin
     if (reset_i)
       thread_id_r <= '0;
-    else if (state_reset_v_i | (redirect_v_i & redirect_thread_id_v_i))
+    // Keep the active thread ID stable across ordinary redirects.  Context
+    // reset still supplies the target ID explicitly.
+    else if (state_reset_v_i)
       thread_id_r <= redirect_thread_id_i;
   end
 
