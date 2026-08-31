@@ -221,14 +221,14 @@ module bp_fe_controller
   assign state_reset_v_o = state_reset_v;
   assign ctxtsw_ready_o  = is_run & ~ctxtsw_pending_r;
   assign ctxtsw_yumi_o   = ctxtsw_capture_v;
-  // A context-switch redirect is first captured in ctxtsw_pending_r, then
-  // abandons any old I-cache refill on the following cycle.  Do not feed the
-  // unregistered FE command directly into the I-cache abort path: its
-  // ready/flush dependence closes a combinational loop through the refill
-  // SRAM handshakes.  The one-cycle registered boundary preserves the held
-  // redirect payload and keeps normal FE commands independent of refill
-  // arbitration.
-  assign icache_miss_abort_o = is_run & ctxtsw_pending_r;
+  // Keep a context redirect pending until the I-cache accepts its forced
+  // request.  The I-cache's abort port feeds the refill SRAM handshakes, so
+  // using it for a redirect (even from registered context-switch state)
+  // creates a combinational loop through the FE/UCE refill path after
+  // synthesis.  A pending switch therefore waits for an in-flight refill to
+  // complete; this only affects the cold-miss tail, while preserving the
+  // normal hit-path switch latency and a realizable FPGA netlist.
+  assign icache_miss_abort_o = 1'b0;
 
   assign shadow_priv_w_o = state_reset_v | trap_v | interrupt_v | eret_v | context_switch_v | ctxtsw_accept_v;
   assign shadow_priv_o = ctxtsw_accept_v ? ctxtsw_priv_r : fe_cmd_cast_i.operands.pc_redirect_operands.priv;
