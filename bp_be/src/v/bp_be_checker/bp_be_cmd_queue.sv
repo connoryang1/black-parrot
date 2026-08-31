@@ -31,12 +31,11 @@ module bp_be_cmd_queue
 
   logic full_lo, empty_lo;
 
-  // Context redirects and I-cache refill completions need zero-cycle FE
-  // delivery.  Keep ordinary redirects queued so their payload is not exposed
-  // combinationally across the BE/FE boundary.
-  wire fast_cmd_v = (fe_cmd_cast_i.opcode == e_op_context_switch)
-                    | (fe_cmd_cast_i.opcode == e_op_icache_fill_response);
-  wire bypass_v = empty_lo & fe_cmd_v_i & fast_cmd_v;
+  // Only a context redirect may cross the BE/FE boundary combinationally.
+  // Refill completions retain the baseline FIFO timing, avoiding an unrelated
+  // change to normal instruction-fetch behavior.
+  wire bypass_v = empty_lo & fe_cmd_v_i
+                & (fe_cmd_cast_i.opcode == e_op_context_switch);
   wire enq = fe_cmd_v_i & (~bypass_v | ~fe_cmd_yumi_i);
   wire deq = fe_cmd_yumi_i & ~empty_lo;
 
