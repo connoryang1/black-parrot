@@ -218,10 +218,7 @@ module bp_fe_controller
   assign attaboy_ntaken_o          = attaboy_v & ~fe_cmd_cast_i.operands.attaboy.taken;
   assign attaboy_br_metadata_fwd_o = fe_cmd_cast_i.operands.attaboy.branch_metadata_fwd;
 
-  // A context redirect changes the active architectural context.  Preserve the
-  // ordinary FE reset semantics while we isolate the Linux S-mode handoff
-  // regression; the redirect sideband still supplies the target thread ID.
-  assign state_reset_v_o = state_reset_v | context_switch_v;
+  assign state_reset_v_o = state_reset_v;
   assign ctxtsw_ready_o  = is_run & ~ctxtsw_pending_r;
   assign ctxtsw_yumi_o   = ctxtsw_capture_v;
   // Only a context switch may abandon an outstanding I-cache miss. Ordinary
