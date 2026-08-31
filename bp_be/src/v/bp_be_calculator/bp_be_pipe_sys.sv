@@ -62,7 +62,7 @@ module bp_be_pipe_sys
 
    // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]           current_physical_thread_id_i
-   // Software-visible virtual context ID returned by CSR 0x081.
+   // Software-visible virtual context ID returned by CSR 0x800.
    , input [context_id_width_p-1:0]          current_virtual_context_id_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
@@ -75,12 +75,12 @@ module bp_be_pipe_sys
    , input [thread_id_width_p-1:0]           csr_context_save_physical_thread_id_i
    , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
 
-   // Bootstrap: write target NPC for a virtual context (CSR 0x082)
+   // Bootstrap: write target NPC for a virtual context (CSR 0x801)
    , output logic                            ctx_npc_write_v_o
    , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // rpush: write arbitrary register of a virtual context (CSR 0x083)
+   // rpush: write arbitrary register of a virtual context (CSR 0x802)
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
    , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o

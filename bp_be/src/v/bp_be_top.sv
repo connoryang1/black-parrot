@@ -641,12 +641,12 @@ module bp_be_top
     end
   end
 
-  // Bootstrap: write a target NPC for a virtual context (CSR 0x082)
+  // Bootstrap: write a target NPC for a virtual context (CSR 0x801)
   logic ctx_npc_write_v_lo;
   logic [context_id_width_p-1:0] ctx_npc_write_virtual_context_id_lo;
   logic [vaddr_width_p-1:0] ctx_npc_write_npc_lo;
 
-  // CSR 0x083 remote register write into a virtual context
+  // CSR 0x802 remote register write into a virtual context
   logic ctx_rpush_v_lo;
   logic ctx_rpush_fp_v_lo;
   logic [context_id_width_p-1:0] ctx_rpush_virtual_context_id_lo;
