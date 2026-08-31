@@ -67,6 +67,7 @@ module bp_fe_icache
    , input [icache_pkt_width_lp-1:0]                  icache_pkt_i
    , input                                            v_i
    , input                                            force_i
+   , input                                            miss_abort_i
    , output                                           yumi_o
    , input                                            tl_flush_i
 
@@ -153,16 +154,23 @@ module bp_fe_icache
   logic v_tl_n, v_tl_r;
   logic v_tv_n, v_tv_r;
 
-  wire critical_recv = is_miss & cache_req_critical_i
+  // Keep the normal refill handshakes on their original ready/valid path.
+  // Context-switch aborts are a separate path and must not alter ordinary
+  // redirects or create a feedback path through the UCE SRAM ports.
+  wire critical_recv = is_miss & cache_req_critical_i & ~miss_abort_i
     & (~stat_mem_pkt_v_i | stat_mem_pkt_yumi_o)
     & (~tag_mem_pkt_v_i | tag_mem_pkt_yumi_o)
     & (~data_mem_pkt_v_i | data_mem_pkt_yumi_o);
-  wire complete_recv = is_miss & cache_req_last_i
+  wire complete_recv = is_miss & cache_req_last_i & ~miss_abort_i
     & (~stat_mem_pkt_v_i | stat_mem_pkt_yumi_o)
     & (~tag_mem_pkt_v_i | tag_mem_pkt_yumi_o)
     & (~data_mem_pkt_v_i | data_mem_pkt_yumi_o);
 
-  wire abort_miss = is_miss & force_i & ~complete_recv;
+  // The UCE holds last and its refill packets until the SRAM handshakes
+  // complete.  Use that held intent for the abort decision; feeding the
+  // packet yummies back through complete_recv creates a combinational cycle
+  // through SRAM arbitration and the UCE refill counters.
+  wire abort_miss = is_miss & miss_abort_i & ~cache_req_last_i;
   logic abort_miss_r;
   wire abort_recv = abort_miss_r
     & (~stat_mem_pkt_v_i | stat_mem_pkt_yumi_o)
@@ -171,6 +179,7 @@ module bp_fe_icache
   wire abort_complete = abort_recv & cache_req_last_i;
   logic [paddr_width_p-1:0] abort_miss_paddr_r;
   logic [lg_assoc_lp-1:0] abort_miss_way_r;
+  wire abort_inflight = abort_miss | abort_miss_r;
 
   // Snoop signals
   logic [block_width_p-1:0] snoop_data;
@@ -258,7 +267,11 @@ module bp_fe_icache
   logic spec_tl_r;
   bp_fe_icache_decode_s decode_tl_r;
 
-  assign tl_we = v_tl_r ? (tv_we | force_i) : ~cache_req_lock_i;
+  wire tl_we_raw = v_tl_r ? (tv_we | force_i) : ~cache_req_lock_i;
+  // Stop fetch progress only while draining a context-switch abort.  Do not
+  // feed UCE SRAM-valid signals into this path: that creates a combinational
+  // loop through TL, the SRAM arbiters, and the UCE refill counters.
+  assign tl_we = tl_we_raw & ~abort_inflight;
   bsg_dff_reset_en
    #(.width_p(1))
    v_tl_reg
@@ -534,8 +547,8 @@ module bp_fe_icache
   /////////////////////////////////////////////////////////////////////////////
   always_comb
     case (state_r)
-      e_miss    : state_n = force_i ? e_ready : complete_recv ? e_recover : state_r;
-      e_recover : state_n = force_i ? e_ready : e_ready;
+      e_miss    : state_n = miss_abort_i ? e_ready : complete_recv ? e_recover : state_r;
+      e_recover : state_n = e_ready;
       e_ready   : state_n = cache_req_yumi_i ? e_miss : state_r;
       default   : state_n = e_ready;
     endcase
@@ -574,7 +587,8 @@ module bp_fe_icache
 
   // Tag mem is bypassed if the index is the same on consecutive reads
   wire tag_mem_bypass = v_tl_r & decode_tl_r.fetch_op & (vaddr_index == vaddr_index_tl);
-  wire tag_mem_fast_read = do_recover || yumi_o & decode_lo.fetch_op & ~tag_mem_bypass;
+  wire tag_mem_fast_read = (do_recover || yumi_o & decode_lo.fetch_op & ~tag_mem_bypass)
+    & ~abort_inflight;
   wire tag_mem_fast_write = abort_miss;
   wire tag_mem_slow_read = tag_mem_pkt_yumi_o & ~abort_miss_r & (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_read) ;
   wire tag_mem_slow_write = tag_mem_pkt_yumi_o & ~abort_miss_r & (tag_mem_pkt_cast_i.opcode != e_cache_tag_mem_read);
@@ -585,7 +599,7 @@ module bp_fe_icache
     : tag_mem_fast_read
       ? do_recover ? vaddr_index_tl : vaddr_index
       : tag_mem_pkt_cast_i.index;
-  assign tag_mem_pkt_yumi_o = tag_mem_pkt_v_i & (abort_miss_r | ~|{tag_mem_fast_read, tag_mem_fast_write});
+  assign tag_mem_pkt_yumi_o = tag_mem_pkt_v_i & ~|tag_mem_fast_read;
 
   logic [assoc_p-1:0] tag_mem_way_one_hot;
   bsg_decode
@@ -704,7 +718,8 @@ module bp_fe_icache
       assign data_mem_slow_read[i] = data_mem_pkt_yumi_o & ~abort_miss_r & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read);
       assign data_mem_slow_write[i] = data_mem_pkt_yumi_o & ~abort_miss_r & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_write) & data_mem_write_bank_mask[i];
 
-      assign data_mem_fast_read[i] = do_recover || yumi_o & decode_lo.fetch_op & (~data_mem_bypass | data_mem_bypass_select[i]);
+      assign data_mem_fast_read[i] = (do_recover || yumi_o & decode_lo.fetch_op & (~data_mem_bypass | data_mem_bypass_select[i]))
+        & ~abort_inflight;
 
       assign data_mem_v_li[i] = data_mem_fast_read[i] | data_mem_slow_read[i] | data_mem_slow_write[i];
       assign data_mem_w_li[i] = data_mem_slow_write[i];
@@ -716,7 +731,7 @@ module bp_fe_icache
     end
   assign data_mem_pkt_yumi_o = (data_mem_pkt_cast_i.opcode == e_cache_data_mem_uncached)
     ? data_mem_pkt_v_i
-    : data_mem_pkt_v_i & (abort_miss_r | ~|data_mem_fast_read);
+    : data_mem_pkt_v_i & ~|data_mem_fast_read;
 
   logic [lg_assoc_lp-1:0] data_mem_pkt_way_r;
   bsg_dff
@@ -739,10 +754,10 @@ module bp_fe_icache
   ///////////////////////////
   // Stat Mem Control
   ///////////////////////////
-  wire stat_mem_fast_read = ~uncached_tv_r & cache_req_yumi_i;
-  wire stat_mem_fast_write = ~uncached_tv_r & yumi_i;
-  wire stat_mem_slow_write = stat_mem_pkt_yumi_o & ~abort_miss_r & (stat_mem_pkt_cast_i.opcode != e_cache_stat_mem_read);
-  assign stat_mem_pkt_yumi_o = stat_mem_pkt_v_i & (abort_miss_r | ~stat_mem_fast_write & ~stat_mem_fast_read);
+  wire stat_mem_fast_read = ~uncached_tv_r & cache_req_yumi_i & ~abort_inflight;
+  wire stat_mem_fast_write = ~uncached_tv_r & yumi_i & ~abort_inflight;
+  wire stat_mem_slow_write = stat_mem_pkt_yumi_o & ~abort_miss & ~abort_miss_r & (stat_mem_pkt_cast_i.opcode != e_cache_stat_mem_read);
+  assign stat_mem_pkt_yumi_o = stat_mem_pkt_v_i & ~stat_mem_fast_write & ~stat_mem_fast_read;
   assign stat_mem_v_li = stat_mem_fast_read | stat_mem_fast_write | stat_mem_pkt_yumi_o;
   assign stat_mem_w_li = stat_mem_fast_write | (stat_mem_pkt_yumi_o & stat_mem_slow_write);
   assign stat_mem_addr_li = (stat_mem_fast_write | stat_mem_fast_read)
