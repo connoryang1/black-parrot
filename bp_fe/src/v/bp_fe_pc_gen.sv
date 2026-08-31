@@ -88,10 +88,10 @@ module bp_fe_pc_gen
   always_ff @(posedge clk_i) begin
     if (reset_i)
       thread_id_r <= '0;
-    // Keep the active thread ID stable across ordinary redirects. The
-    // controller marks only a context-switch redirect as carrying a new
-    // thread ID; state_reset_v_i alone deliberately excludes that path.
-    else if (redirect_thread_id_v_i | state_reset_v_i)
+    // Predictor-bank selection changes only on a state reset.  Ordinary and
+    // context redirects share the normal frontend timing and must not update
+    // this selector directly.
+    else if (state_reset_v_i)
       thread_id_r <= redirect_thread_id_i;
   end
 
