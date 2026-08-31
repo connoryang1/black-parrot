@@ -85,6 +85,7 @@ module bp_fe_controller
 
    , output logic                                     icache_v_o
    , output logic                                     icache_force_o
+   , output logic                                     icache_miss_abort_o
    , output logic [icache_pkt_width_lp-1:0]           icache_pkt_o
    , input                                            icache_yumi_i
 
@@ -171,6 +172,10 @@ module bp_fe_controller
   assign state_reset_v_o = state_reset_v;
   assign ctxtsw_ready_o  = is_run;
   assign ctxtsw_yumi_o   = ctxtsw_accept_v;
+  // This historical midpoint has no safe refill-cancellation handshake.
+  // Keep redirects pending until the in-flight refill completes instead of
+  // using force_i to abandon shared I-cache SRAM traffic.
+  assign icache_miss_abort_o = 1'b0;
 
   assign shadow_priv_w_o = state_reset_v | trap_v | interrupt_v | eret_v | context_switch_v | ctxtsw_accept_v;
   assign shadow_priv_o = ctxtsw_accept_v ? ctxtsw_priv_i : fe_cmd_cast_i.operands.pc_redirect_operands.priv;
