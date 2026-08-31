@@ -330,7 +330,6 @@ module bp_fe_controller
         e_resume:
           begin
             icache_v_o = fe_cmd_v_i;
-            icache_force_o = 1'b1;
             itlb_r_v_o = icache_yumi_i;
 
             fe_cmd_yumi_o = icache_yumi_i;
