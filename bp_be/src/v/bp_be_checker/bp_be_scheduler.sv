@@ -188,20 +188,12 @@ module bp_be_scheduler
                                                      & ~commit_pkt_cast_i.ctxtsw
                                                      & pending_ctxtsw_sent_i;
   wire ctxtsw_cancel_drain_li                      = pending_ctxtsw_cancel_li | |ctxtsw_cancel_drain_r;
-  // D$ replay/miss redirects can target a compressed halfword PC. Clear queued
-  // FE packets so stale realigner grouping cannot be replayed with the new PC.
-  wire dcache_redirect_li                          = commit_pkt_cast_i.dcache_miss
-                                                     | commit_pkt_cast_i.dcache_replay;
   wire fe_queue_clr_li                             = clear_iss_i
                                                      | commit_pkt_cast_i.ctxtsw
-                                                     | ctxtsw_cancel_drain_li
-                                                     | (commit_pkt_cast_i.npc_w_v
-                                                        & ~commit_pkt_cast_i.ctxtsw
-                                                        & dcache_redirect_li);
+                                                     | ctxtsw_cancel_drain_li;
   wire fe_queue_roll_li                            = commit_pkt_cast_i.npc_w_v
                                                      & ~commit_pkt_cast_i.ctxtsw
-                                                     & ~pending_ctxtsw_sent_i
-                                                     & ~dcache_redirect_li;
+                                                     & ~pending_ctxtsw_sent_i;
   wire fe_queue_read_li                            = fe_instr_not_exc_li | fe_exc_not_instr_li;
   wire [op_ptr_width_lp-1:0] fe_queue_read_size_li = issue_pkt_cast_o.size;
   wire [op_ptr_width_lp-1:0] fe_queue_read_cnt_li  = issue_pkt_cast_o.count;
