@@ -570,7 +570,15 @@ module bp_be_csr
         {1'b1, `CSR_ADDR_STVAL        }: stval_li = csr_data_li;
         // SIP subset of MIP
         {1'b1, `CSR_ADDR_SIP          }: mip_li = (mip_lo & ~sip_wmask_li) | (csr_data_li & sip_wmask_li);
-        {1'b1, `CSR_ADDR_SATP         }: satp_li = csr_data_li;
+        // This implementation supports only Bare and Sv39 translation.  The
+        // privileged ISA requires an unsupported SATP MODE write to leave the
+        // entire register unchanged.  Linux relies on this write/readback
+        // behavior while falling back from Sv57/Sv48 to Sv39 during early
+        // page-table setup.
+        {1'b1, `CSR_ADDR_SATP         }: begin
+          if (csr_data_li[60 +: 4] inside {4'd0, 4'd8})
+            satp_li = csr_data_li;
+        end
         {1'b1, `CSR_ADDR_MSTATUS      }: mstatus_li = csr_data_li;
         {1'b1, `CSR_ADDR_MISA         }: begin end
         {1'b1, `CSR_ADDR_MEDELEG      }: medeleg_li = csr_data_li;
