@@ -307,18 +307,19 @@ module bp_be_csr
      );
 
   // A faulting packet can remain visible while its redirect drains through
-  // the frontend.  Consume that synchronous exception once, then re-arm when
-  // a normal instruction retires; otherwise the stale packet would overwrite
-  // EPC with the trap-vector PC on the following cycle(s).
+  // the frontend. Consume that synchronous exception once, then re-arm on a
+  // normal instruction only after the fault input has dropped. In particular,
+  // a handler's mret must not re-arm the latch in a cycle where the stale
+  // packet is still asserted, or that old fault replays at the return target.
   logic synchronous_exception_seen_r;
   wire synchronous_exception_new_li = exception_ecode_v_li & ~synchronous_exception_seen_r;
   always_ff @(posedge clk_i)
     if (reset_i)
       synchronous_exception_seen_r <= 1'b0;
-    else if (retire_pkt_cast_i.queue_v & retire_pkt_cast_i.instret)
-      synchronous_exception_seen_r <= 1'b0;
     else if (exception_ecode_v_li)
       synchronous_exception_seen_r <= 1'b1;
+    else if (retire_pkt_cast_i.queue_v & retire_pkt_cast_i.instret)
+      synchronous_exception_seen_r <= 1'b0;
 
   wire d_interrupt_icode_v_li = debug_irq_i;
 
