@@ -413,7 +413,10 @@ module bp_be_scheduler
 
   wire issue_ctxtsw_v =
     fe_instr_not_exc_li
-    & issue_pkt_cast_o.csrw
+    // CSRRS/CSRRC with rs1=x0 (the `csrr` pseudoinstruction) is a read,
+    // not a context-switch request.  Use the decoder's architectural
+    // effective-write predicate rather than the broad CSR opcode marker.
+    & issue_pkt_cast_o.decode.csr_w_v
     & (issue_pkt_cast_o.instr.t.itype.imm12 == 12'h800);
 
   wire issue_ctxtsw_imm_v =
