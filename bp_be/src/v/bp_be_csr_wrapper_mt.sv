@@ -38,6 +38,7 @@ module bp_be_csr_wrapper_mt
 
    // Misc interface
    , input [retire_pkt_width_lp-1:0]         retire_pkt_i
+   , input                                   retire_ctxtsw_v_i
    , input rv64_fflags_s                     fflags_acc_i
    , input                                   frf_w_v_i
 
@@ -56,19 +57,24 @@ module bp_be_csr_wrapper_mt
    // Slow signals
    , output logic [decode_info_width_lp-1:0] decode_info_o
    , output logic [trans_info_width_lp-1:0]  trans_info_o
+   , output logic [trans_info_width_lp-1:0]  reservation_trans_info_o
    , output rv64_frm_e                       frm_dyn_o
 
-   // Context switching control
+   // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]           current_thread_id_i
-   , output logic                            csr_ctxt_write_v_o
-   , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
+   // Software-visible logical context ID returned by CSR 0x081.
+   , input [context_id_width_p-1:0]          current_context_id_i
+   // CSR reads belong to the instruction in the reservation station.
+   , input [thread_id_width_p-1:0]           csr_thread_id_i
+   // Retire thread owns the instruction currently committing in the backend.
+   , input [thread_id_width_p-1:0]           retire_thread_id_i
 
    // Bootstrap: write target NPC for a thread (CSR 0x082)
    , output logic                            ctx_npc_write_v_o
    , output logic [thread_id_width_p-1:0]    ctx_npc_write_tid_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // rpush: write arbitrary register of a disabled thread (CSR 0x083)
+   // CSR 0x083 remote register write into another hardware thread context
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
    , output logic [thread_id_width_p-1:0]    ctx_rpush_tid_o
@@ -85,8 +91,6 @@ module bp_be_csr_wrapper_mt
   rv64_frm_e [num_threads_p-1:0]                      frm_dyn_co;
   logic [num_threads_p-1:0]                            irq_pending_co;
   logic [num_threads_p-1:0]                            irq_waiting_co;
-  logic [num_threads_p-1:0]                            csr_ctxt_write_v_co;
-  logic [num_threads_p-1:0][thread_id_width_p-1:0]    csr_ctxt_write_data_co;
   logic [num_threads_p-1:0]                            ctx_npc_write_v_co;
   logic [num_threads_p-1:0][thread_id_width_p-1:0]    ctx_npc_write_tid_co;
   logic [num_threads_p-1:0][vaddr_width_p-1:0]        ctx_npc_write_npc_co;
@@ -95,6 +99,7 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][thread_id_width_p-1:0]    ctx_rpush_tid_co;
   logic [num_threads_p-1:0][reg_addr_width_gp-1:0]    ctx_rpush_reg_co;
   logic [num_threads_p-1:0][dpath_width_gp-1:0]       ctx_rpush_data_co;
+  logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
   // Per-thread gated inputs
   logic [num_threads_p-1:0]                          csr_r_v_gated;
@@ -103,11 +108,13 @@ module bp_be_csr_wrapper_mt
   rv64_fflags_s [num_threads_p-1:0]                  fflags_acc_gated;
 
   for (genvar i = 0; i < num_threads_p; i++) begin : gen_gate
-    wire active = (current_thread_id_i == thread_id_width_p'(i));
-    assign csr_r_v_gated[i]     = csr_r_v_i & active;
-    assign frf_w_v_gated[i]     = frf_w_v_i & active;
-    assign retire_pkt_gated[i]  = active ? retire_pkt_i : '0;
-    assign fflags_acc_gated[i]  = active ? fflags_acc_i : rv64_fflags_s'('0);
+    wire csr_active = (csr_thread_id_i == thread_id_width_p'(i));
+    wire retire_active = (retire_thread_id_i == thread_id_width_p'(i));
+    assign csr_r_v_gated[i]     = csr_r_v_i & csr_active;
+    assign frf_w_v_gated[i]     = frf_w_v_i & retire_active;
+    assign retire_pkt_gated[i]  = retire_active ? retire_pkt_i : '0;
+    assign retire_ctxtsw_v_gated[i] = retire_ctxtsw_v_i & retire_active;
+    assign fflags_acc_gated[i]  = retire_active ? fflags_acc_i : rv64_fflags_s'('0);
   end
 
   for (genvar i = 0; i < num_threads_p; i++) begin : gen_csr
@@ -124,6 +131,7 @@ module bp_be_csr_wrapper_mt
        ,.csr_r_illegal_o(csr_r_illegal_co[i])
 
        ,.retire_pkt_i(retire_pkt_gated[i])
+       ,.retire_ctxtsw_v_i(retire_ctxtsw_v_gated[i])
        ,.fflags_acc_i(fflags_acc_gated[i])
        ,.frf_w_v_i(frf_w_v_gated[i])
 
@@ -141,9 +149,7 @@ module bp_be_csr_wrapper_mt
        ,.frm_dyn_o(frm_dyn_co[i])
 
        ,.current_thread_id_i(current_thread_id_i)
-       ,.csr_ctxt_write_v_o(csr_ctxt_write_v_co[i])
-       ,.csr_ctxt_write_data_o(csr_ctxt_write_data_co[i])
-
+       ,.current_context_id_i(current_context_id_i)
        ,.ctx_npc_write_v_o(ctx_npc_write_v_co[i])
        ,.ctx_npc_write_tid_o(ctx_npc_write_tid_co[i])
        ,.ctx_npc_write_npc_o(ctx_npc_write_npc_co[i])
@@ -157,16 +163,15 @@ module bp_be_csr_wrapper_mt
   end
 
   // Mux all outputs from the active thread
-  assign csr_r_data_o          = csr_r_data_co[current_thread_id_i];
-  assign csr_r_illegal_o       = csr_r_illegal_co[current_thread_id_i];
+  assign csr_r_data_o          = csr_r_data_co[csr_thread_id_i];
+  assign csr_r_illegal_o       = csr_r_illegal_co[csr_thread_id_i];
   assign commit_pkt_o          = commit_pkt_co[current_thread_id_i];
   assign decode_info_o         = decode_info_co[current_thread_id_i];
   assign trans_info_o          = trans_info_co[current_thread_id_i];
+  assign reservation_trans_info_o = trans_info_co[csr_thread_id_i];
   assign frm_dyn_o             = frm_dyn_co[current_thread_id_i];
   assign irq_pending_o         = irq_pending_co[current_thread_id_i];
   assign irq_waiting_o         = irq_waiting_co[current_thread_id_i];
-  assign csr_ctxt_write_v_o    = csr_ctxt_write_v_co[current_thread_id_i];
-  assign csr_ctxt_write_data_o = csr_ctxt_write_data_co[current_thread_id_i];
   assign ctx_npc_write_v_o     = ctx_npc_write_v_co[current_thread_id_i];
   assign ctx_npc_write_tid_o   = ctx_npc_write_tid_co[current_thread_id_i];
   assign ctx_npc_write_npc_o   = ctx_npc_write_npc_co[current_thread_id_i];

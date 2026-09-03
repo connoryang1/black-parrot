@@ -55,12 +55,15 @@ module bp_be_pipe_sys
 
    , output logic [decode_info_width_lp-1:0] decode_info_o
    , output logic [trans_info_width_lp-1:0]  trans_info_o
+   , output logic [trans_info_width_lp-1:0]  reservation_trans_info_o
    , output rv64_frm_e                       frm_dyn_o
 
-   // Context switching via CTXT CSR (0x081)
+   // Current thread selects the active per-thread CSR instance.
    , input [thread_id_width_p-1:0]           current_thread_id_i
-   , output logic                            csr_ctxt_write_v_o
-   , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
+   // Software-visible logical context ID returned by CSR 0x081.
+   , input [context_id_width_p-1:0]          current_context_id_i
+   // Retire thread owns the instruction currently committing in the backend.
+   , input [thread_id_width_p-1:0]           retire_thread_id_i
 
    // Bootstrap: write target NPC into context_storage for a given thread (CSR 0x082)
    , output logic                            ctx_npc_write_v_o
@@ -85,16 +88,18 @@ module bp_be_pipe_sys
   `bp_cast_o(bp_be_commit_pkt_s, commit_pkt);
   `bp_cast_o(bp_be_decode_info_s, decode_info);
   `bp_cast_o(bp_be_trans_info_s, trans_info);
+  `bp_cast_o(bp_be_trans_info_s, reservation_trans_info);
 
   assign reservation = reservation_i;
   assign decode = reservation.decode;
   assign instr  = reservation.instr;
+  wire [thread_id_width_p-1:0] reservation_thread_id = reservation.thread_id[0 +: thread_id_width_p];
   wire [vaddr_width_p-1:0] pc  = reservation.pc;
   wire [dword_width_gp-1:0] rs1 = reservation.isrc1;
   wire [dword_width_gp-1:0] rs2 = reservation.isrc2;
   wire [dword_width_gp-1:0] imm = reservation.isrc3;
 
-  wire csr_v_li = reservation.decode.csr_r_v | reservation.decode.csr_w_v;
+  wire csr_v_li = (reservation.decode.csr_r_v | reservation.decode.csr_w_v) & ~reservation.ctxtsw_v;
   wire [rv64_csr_addr_width_gp-1:0] csr_addr_li = instr.t.itype.imm12;
 
   bp_be_retire_pkt_s retire_pkt;
@@ -125,14 +130,18 @@ module bp_be_pipe_sys
      ,.irq_waiting_o(irq_waiting_o)
 
      ,.retire_pkt_i(retire_pkt)
+     ,.retire_ctxtsw_v_i(retire_ctxtsw_r)
      ,.commit_pkt_o(commit_pkt_cast_o)
      ,.decode_info_o(decode_info_cast_o)
      ,.trans_info_o(trans_info_cast_o)
+     ,.reservation_trans_info_o(reservation_trans_info_cast_o)
      ,.frm_dyn_o(frm_dyn_o)
-     // Pass current thread ID for CSR returns
+     // Current selects slow CSR state; reservation thread owns CSR reads
+     // and memory translation information.
      ,.current_thread_id_i(current_thread_id_i)
-     ,.csr_ctxt_write_v_o(csr_ctxt_write_v_o)
-     ,.csr_ctxt_write_data_o(csr_ctxt_write_data_o)
+     ,.current_context_id_i(current_context_id_i)
+     ,.csr_thread_id_i(reservation_thread_id)
+     ,.retire_thread_id_i(retire_thread_id_i)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_tid_o(ctx_npc_write_tid_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
@@ -152,6 +161,7 @@ module bp_be_pipe_sys
   logic retire_niscore_r, retire_iscore_r;
   logic retire_nfscore_r, retire_fscore_r;
   logic retire_nspec_w_r, retire_spec_w_r;
+  logic retire_nctxtsw_r, retire_ctxtsw_r;
   always_ff @(posedge clk_i)
     begin
       retire_npc_r <= reservation.pc;
@@ -179,6 +189,16 @@ module bp_be_pipe_sys
 
       retire_nspec_w_r <= reservation.decode.score_v & reservation.decode.spec_w_v;
       retire_spec_w_r  <= retire_nspec_w_r;
+
+    end
+
+  always_ff @(posedge clk_i)
+    if (reset_i) begin
+      retire_nctxtsw_r <= 1'b0;
+      retire_ctxtsw_r  <= 1'b0;
+    end else begin
+      retire_nctxtsw_r <= reservation.v & reservation.ctxtsw_v & ~flush_i;
+      retire_ctxtsw_r  <= retire_nctxtsw_r;
     end
 
   // Compute input CSR data
