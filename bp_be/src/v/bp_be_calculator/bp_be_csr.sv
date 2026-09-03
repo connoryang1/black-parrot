@@ -193,11 +193,13 @@ module bp_be_csr
 
   `declare_csr(mcycle);
   `declare_csr(minstret);
-  // mhpmcounter not implemented
-  //   This is non-compliant. We should hardcode to 0 instead of trapping
+  // BlackParrot has no programmable hardware-performance monitors. Their
+  // standard machine CSRs must still be legal: OpenSBI probes them with a
+  // temporary mtvec and expects absent counters to read zero after an ignored
+  // write. Trapping here is non-compliant and wedges firmware bootstrap.
+  wire csr_hpm_unimplemented_li = csr_r_addr_i inside {[12'hb03:12'hb1f]
+                                                        ,[12'h323:12'h33f]};
   `declare_csr(mcountinhibit);
-  // mhpmevent not implemented
-  //   This is non-compliant. We should hardcode to 0 instead of trapping
 
   // sstatus subset of mstatus
   wire [dword_width_gp-1:0] sstatus_lo = mstatus_lo & sstatus_rmask_li;
@@ -466,7 +468,9 @@ module bp_be_csr
   always_comb
     begin
       csr_r_illegal_o = 1'b0;
-      unique casez (csr_r_addr_i)
+      if (csr_hpm_unimplemented_li)
+        csr_data_lo = '0;
+      else unique casez (csr_r_addr_i)
         {`CSR_ADDR_FFLAGS       }: csr_data_lo = fcsr_lo.fflags;
         {`CSR_ADDR_FRM          }: csr_data_lo = fcsr_lo.frm;
         {`CSR_ADDR_FCSR         }: csr_data_lo = fcsr_lo;
@@ -578,7 +582,10 @@ module bp_be_csr
       exception_v_lo    = '0;
       interrupt_v_lo    = '0;
 
-      unique casez ({csr_w_v_li, csr_addr_li})
+      if (csr_w_v_li & (csr_addr_li inside {[12'hb03:12'hb1f]
+                                             ,[12'h323:12'h33f]}))
+        begin end
+      else unique casez ({csr_w_v_li, csr_addr_li})
         {1'b1, `CSR_ADDR_FFLAGS       }: fcsr_li = '{frm: fcsr_lo.frm, fflags: csr_data_li, default: '0};
         {1'b1, `CSR_ADDR_FRM          }: fcsr_li = '{frm: csr_data_li, fflags: fcsr_lo.fflags, default: '0};
         {1'b1, `CSR_ADDR_FCSR         }: fcsr_li = csr_data_li;
