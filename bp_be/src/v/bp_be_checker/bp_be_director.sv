@@ -64,6 +64,9 @@ module bp_be_director
 
    // Target thread privilege mode for embedding in ctxtsw fe_cmd
    , input [1:0]                         context_priv_i
+
+   // Target thread translation-enable state for ctxtsw restore
+   , input                               context_translation_en_i
    );
 
   // Declare parameterized structures
@@ -217,11 +220,9 @@ module bp_be_director
           fe_cmd_li.opcode                            = e_op_context_switch;
           fe_cmd_li.npc                               = context_npc_i;
           fe_cmd_pc_redirect_operands.priv            = context_priv_i;
-          fe_cmd_pc_redirect_operands.translation_en  = commit_pkt_cast_i.translation_en_n;
+          fe_cmd_pc_redirect_operands.translation_en  = context_translation_en_i;
           fe_cmd_pc_redirect_operands.asid            = context_asid_i;
-          // Embed target thread_id in MSB of branch_metadata_fwd so pc_gen can update thread_id_r
-          fe_cmd_pc_redirect_operands.branch_metadata_fwd =
-            {context_thread_id_i, {(branch_metadata_fwd_width_p - thread_id_width_p){1'b0}}};
+          fe_cmd_pc_redirect_operands.context_switch_thread_id = context_thread_id_i;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
           fe_cmd_v_li = 1'b1;
@@ -292,12 +293,6 @@ module bp_be_director
         end
     end
 
-  always @(posedge clk_i) begin
-    if (!reset_i && commit_pkt_cast_i.ctxtsw)
-      $display("[DIRECTOR @%0t] emit fe_cmd ctxtsw cur_tid=%0d new_tid=%0d target_npc=0x%08x asid=0x%0x priv=%0d",
-               $time, current_thread_id_i, context_thread_id_i, context_npc_i, context_asid_i, context_priv_i);
-  end
-
   bp_be_cmd_queue
    #(.bp_params_p(bp_params_p))
    fe_cmd_fifo
@@ -318,20 +313,5 @@ module bp_be_director
      );
   assign cmd_full_n_o = cmd_full_n_lo;
   assign cmd_full_r_o = cmd_full_r_lo;
-
-  // Debug: trace NPC updates and FE commands
-  // always @(posedge clk_i) begin
-  //   if (!reset_i) begin
-  //     if (commit_pkt_cast_i.ctxtsw)
-  //       $display("[DIR @%0t] CTXTSW: context_npc_i=0x%08x commit_npc=0x%08x npc_w_v=%0b -> npc_n=0x%08x",
-  //                $time, context_npc_i, commit_pkt_cast_i.npc, commit_pkt_cast_i.npc_w_v, npc_n);
-  //     if (npc_w_v)
-  //       $display("[DIR @%0t] npc_w_v=1 expected_npc_o=0x%08x (bypass: en=%0b data_i=0x%08x)",
-  //                $time, expected_npc_o, npc_w_v, npc_n);
-  //     if (fe_cmd_v_li && !reset_i)
-  //       $display("[DIR @%0t] FE_CMD: opcode=%0d npc=0x%08x",
-  //                $time, fe_cmd_li.opcode, fe_cmd_li.npc);
-  //   end
-  // end
 
 endmodule

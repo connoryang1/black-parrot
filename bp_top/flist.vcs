@@ -200,8 +200,6 @@ $BP_DIR/bp_common/src/v/bp_pma.sv
 $BP_DIR/bp_common/src/v/bp_tlb.sv
 ## BE files
 $BP_DIR/bp_be/src/v/bp_be_top.sv
-$BP_DIR/bp_be/src/v/bp_be_thread_scheduler.sv
-$BP_DIR/bp_be/src/v/bp_be_context_storage.sv
 # Calculator
 $BP_DIR/bp_be/src/v/bp_be_calculator/bp_be_calculator_top.sv
 $BP_DIR/bp_be/src/v/bp_be_calculator/bp_be_csr.sv

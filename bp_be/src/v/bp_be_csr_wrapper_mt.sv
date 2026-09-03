@@ -1,7 +1,7 @@
 /**
  * bp_be_csr_wrapper_mt.sv
  *
- * Multi-thread CSR Wrapper — Phase 2A
+ * Multi-thread CSR Wrapper
  *
  * Instantiates one bp_be_csr per thread (num_threads_p copies).
  * Presents the same external interface as a single bp_be_csr so it can be
@@ -58,7 +58,7 @@ module bp_be_csr_wrapper_mt
    , output logic [trans_info_width_lp-1:0]  trans_info_o
    , output rv64_frm_e                       frm_dyn_o
 
-   // Context switching control (Phase 1.4)
+   // Context switching control
    , input [thread_id_width_p-1:0]           current_thread_id_i
    , output logic                            csr_ctxt_write_v_o
    , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
@@ -155,33 +155,6 @@ module bp_be_csr_wrapper_mt
        ,.ctx_rpush_data_o(ctx_rpush_data_co[i])
        );
   end
-
-  // ── Debug: trace mscratch (0x340) reads and writes per-instance ──
-  `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
-  bp_be_retire_pkt_s dbg_retire;
-  assign dbg_retire = retire_pkt_i;
-
-  // Print which instances see a mscratch write and whether they are gated
-  always_ff @(posedge clk_i) begin
-    if (!reset_i && dbg_retire.special.csrw && (dbg_retire.instr.t.itype.imm12 == 12'h340)) begin
-      $display("[CSR_DBG @%0t] MSCRATCH WRITE: tid=%0d data=0x%0x",
-               $time, current_thread_id_i, dbg_retire.data);
-      for (int k = 0; k < num_threads_p; k++) begin
-        $display("  inst[%0d]: active=%0b  csr_r_data_co=0x%0x",
-                 k, (current_thread_id_i == thread_id_width_p'(k)),
-                 csr_r_data_co[k]);
-      end
-    end
-  end
-
-  // Print mscratch reads: which instance is selected and what value is returned
-  always_ff @(posedge clk_i) begin
-    if (!reset_i && csr_r_v_i && (csr_r_addr_i == 12'h340)) begin
-      $display("[CSR_DBG @%0t] MSCRATCH READ:  tid=%0d  ret=0x%0x  (per-inst: %0p)",
-               $time, current_thread_id_i, csr_r_data_o, csr_r_data_co);
-    end
-  end
-  // ── End debug ──
 
   // Mux all outputs from the active thread
   assign csr_r_data_o          = csr_r_data_co[current_thread_id_i];

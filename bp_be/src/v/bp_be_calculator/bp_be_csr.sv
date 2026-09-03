@@ -43,7 +43,7 @@ module bp_be_csr
    , output logic [trans_info_width_lp-1:0]  trans_info_o
    , output rv64_frm_e                       frm_dyn_o
 
-   // Context switching control (Phase 1.4)
+   // Context switching control
    , input [thread_id_width_p-1:0]           current_thread_id_i
    , output logic                            csr_ctxt_write_v_o
    , output logic [thread_id_width_p-1:0]    csr_ctxt_write_data_o
@@ -97,8 +97,8 @@ module bp_be_csr
   `declare_csr(dscratch0);
   `declare_csr(dscratch1);
 
-  // Phase 1.4: Register current thread ID to synchronize with pipeline
-  // This ensures CSR reads capture the properly updated thread ID
+  // Register current thread ID to synchronize with the pipeline.
+  // This ensures CSR reads capture the properly updated thread ID.
   logic [thread_id_width_p-1:0] current_thread_id_r;
   always @(posedge clk_i) begin
     if (reset_i)
@@ -407,7 +407,7 @@ module bp_be_csr
         {`CSR_ADDR_DPC          }: csr_data_lo = dpc_lo;
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
-        12'h081:  // CTXT CSR - Current thread/context ID (Phase 1.4)
+        12'h081:  // CTXT CSR - Current thread/context ID
           csr_data_lo = current_thread_id_i;
         12'h082:  // Thread NPC seed - write-only, reads as 0
           csr_data_lo = '0;

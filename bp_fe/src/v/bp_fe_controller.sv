@@ -38,6 +38,7 @@ module bp_fe_controller
    , output logic                                     redirect_br_taken_o
    , output logic                                     redirect_br_ntaken_o
    , output logic                                     redirect_br_nonbr_o
+   , output logic [thread_id_width_p-1:0]             redirect_thread_id_o
    , output logic [branch_metadata_fwd_width_p-1:0]   redirect_br_metadata_fwd_o
 
    , output logic                                     attaboy_v_o
@@ -143,6 +144,9 @@ module bp_fe_controller
   assign redirect_br_taken_o        = br_miss_taken;
   assign redirect_br_ntaken_o       = br_miss_ntaken;
   assign redirect_br_nonbr_o        = br_miss_nonbr;
+  assign redirect_thread_id_o       = context_switch_v
+                                      ? fe_cmd_cast_i.operands.pc_redirect_operands.context_switch_thread_id
+                                      : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd[branch_metadata_fwd_width_p-1 -: thread_id_width_p];
   assign redirect_br_metadata_fwd_o = fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd;
 
   assign attaboy_v_o               = attaboy_v;
@@ -181,18 +185,6 @@ module bp_fe_controller
     : icache_fill_response_v
       ? (fe_cmd_cast_i.operands.icache_fill_response.count > '0)
       : '0;
-
-  always @(posedge clk_i) begin
-    if (!reset_i && context_switch_v)
-      $display("[FECTRL @%0t] consume ctxtsw npc=0x%08x state=%0d redirect=%0b state_reset=%0b thread_meta=0x%0x",
-               $time
-               ,fe_cmd_cast_i.npc
-               ,state_r
-               ,redirect_v_o
-               ,state_reset_v_o
-               ,fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd
-               );
-  end
 
   logic itlb_miss_tv_r, instr_page_fault_tv_r, instr_access_fault_tv_r;
   bsg_dff_reset_en
