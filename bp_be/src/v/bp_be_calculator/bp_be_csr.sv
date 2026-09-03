@@ -181,7 +181,15 @@ module bp_be_csr
   `declare_csr_addr(mtval, vaddr_width_p, paddr_width_p);
   `declare_csr(mip);
 
-  // No support for PMP currently
+  // OpenSBI probes PMP during sbi_hart_init.  BlackParrot does not implement
+  // PMP access enforcement, so expose the CSRs as legal hardwired-zero WARL
+  // registers.  This reports zero usable PMP entries without taking the
+  // illegal-instruction/debug path or advertising unenforced protection.
+  wire [dword_width_gp-1:0] pmpcfg0_lo = '0;
+  wire [dword_width_gp-1:0] pmpaddr0_lo = '0;
+  wire [dword_width_gp-1:0] pmpaddr1_lo = '0;
+  wire [dword_width_gp-1:0] pmpaddr2_lo = '0;
+  wire [dword_width_gp-1:0] pmpaddr3_lo = '0;
 
   `declare_csr(mcycle);
   `declare_csr(minstret);
@@ -489,6 +497,12 @@ module bp_be_csr
         {`CSR_ADDR_MTVEC        }: csr_data_lo = mtvec_lo;
         {`CSR_ADDR_MCOUNTEREN   }: csr_data_lo = mcounteren_lo;
         {`CSR_ADDR_MIP          }: csr_data_lo = mip_lo;
+        {`CSR_ADDR_PMPCFG0      }: csr_data_lo = pmpcfg0_lo;
+        {`CSR_ADDR_PMPCFG2      }: csr_data_lo = '0;
+        {`CSR_ADDR_PMPADDR0     }: csr_data_lo = pmpaddr0_lo;
+        {`CSR_ADDR_PMPADDR1     }: csr_data_lo = pmpaddr1_lo;
+        {`CSR_ADDR_PMPADDR2     }: csr_data_lo = pmpaddr2_lo;
+        {`CSR_ADDR_PMPADDR3     }: csr_data_lo = pmpaddr3_lo;
         {`CSR_ADDR_MSCRATCH     }: csr_data_lo = mscratch_lo;
         {`CSR_ADDR_MEPC         }: csr_data_lo = mepc_lo;
         {`CSR_ADDR_MCAUSE       }: csr_data_lo = mcause_lo;
@@ -602,6 +616,12 @@ module bp_be_csr
         {1'b1, `CSR_ADDR_MTVEC        }: mtvec_li = csr_data_li;
         {1'b1, `CSR_ADDR_MCOUNTEREN   }: mcounteren_li = csr_data_li;
         {1'b1, `CSR_ADDR_MIP          }: mip_li = csr_data_li;
+        {1'b1, `CSR_ADDR_PMPCFG0      }: begin end
+        {1'b1, `CSR_ADDR_PMPCFG2      }: begin end
+        {1'b1, `CSR_ADDR_PMPADDR0     }: begin end
+        {1'b1, `CSR_ADDR_PMPADDR1     }: begin end
+        {1'b1, `CSR_ADDR_PMPADDR2     }: begin end
+        {1'b1, `CSR_ADDR_PMPADDR3     }: begin end
         {1'b1, `CSR_ADDR_MSCRATCH     }: mscratch_li = csr_data_li;
         {1'b1, `CSR_ADDR_MEPC         }: mepc_li = csr_data_li;
         {1'b1, `CSR_ADDR_MCAUSE       }: mcause_li = csr_data_li;
