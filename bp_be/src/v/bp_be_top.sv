@@ -146,12 +146,12 @@ module bp_be_top
   assign fe_ctxtsw_translation_en_o = pending_ctxtsw_translation_en_r;
   assign fe_ctxtsw_asid_o = pending_ctxtsw_asid_r;
 
-  // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
+  // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x801)
   logic ctx_npc_write_v_lo;
   logic [thread_id_width_p-1:0] ctx_npc_write_tid_lo;
   logic [vaddr_width_p-1:0] ctx_npc_write_npc_lo;
 
-  // CSR 0x083 remote register write into another hardware thread context
+  // CSR 0x802 remote register write into another hardware thread context
   logic ctx_rpush_v_lo;
   logic ctx_rpush_fp_v_lo;
   logic [thread_id_width_p-1:0] ctx_rpush_tid_lo;

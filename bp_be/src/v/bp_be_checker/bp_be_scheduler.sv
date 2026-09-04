@@ -57,7 +57,7 @@ module bp_be_scheduler
    // Current thread ID for register file reads/writes
    , input [thread_id_width_p-1:0]            current_thread_id_i
 
-   // CSR 0x083 remote register write into another hardware thread context
+   // CSR 0x802 remote register write into another hardware thread context
    , input                                    rpush_w_v_i
    , input                                    rpush_fp_w_v_i
    , input [thread_id_width_p-1:0]            rpush_tid_i
@@ -241,7 +241,7 @@ module bp_be_scheduler
   wire issue_ctxtsw_v =
     fe_instr_not_exc_li
     & issue_pkt_cast_o.csrw
-    & (issue_pkt_cast_o.instr.t.itype.imm12 == 12'h081);
+    & (issue_pkt_cast_o.instr.t.itype.imm12 == 12'h800);
 
   wire issue_ctxtsw_imm_v =
     issue_pkt_cast_o.instr inside {`RV64_CSRRWI, `RV64_CSRRSI, `RV64_CSRRCI};
