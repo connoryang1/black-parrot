@@ -407,11 +407,11 @@ module bp_be_csr
         {`CSR_ADDR_DPC          }: csr_data_lo = dpc_lo;
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
-        12'h081:  // CTXT CSR - Current thread/context ID (Phase 1.4)
+        12'h800:  // CTXT CSR - Current thread/context ID (Phase 1.4)
           csr_data_lo = current_thread_id_i;
-        12'h082:  // Thread NPC seed - write-only, reads as 0
+        12'h801:  // Thread NPC seed - write-only, reads as 0
           csr_data_lo = '0;
-        12'h083:  // Thread register seed (rpush) - write-only, reads as 0
+        12'h802:  // Thread register seed (rpush) - write-only, reads as 0
           csr_data_lo = '0;
         default:
           begin
@@ -695,8 +695,8 @@ module bp_be_csr
   assign commit_pkt_cast_o.sfence            = retire_pkt_cast_i.special.sfence_vma;
   assign commit_pkt_cast_o.wfi               = retire_pkt_cast_i.special.wfi;
   assign commit_pkt_cast_o.eret              = ret_v;
-  assign commit_pkt_cast_o.csrw              = retire_pkt_cast_i.special.csrw & ~(csr_addr_li == 12'h081) & ~(csr_addr_li == 12'h082) & ~(csr_addr_li == 12'h083);
-  assign commit_pkt_cast_o.ctxtsw            = retire_pkt_cast_i.special.csrw & (csr_addr_li == 12'h081);
+  assign commit_pkt_cast_o.csrw              = retire_pkt_cast_i.special.csrw & ~(csr_addr_li == 12'h800) & ~(csr_addr_li == 12'h801) & ~(csr_addr_li == 12'h802);
+  assign commit_pkt_cast_o.ctxtsw            = retire_pkt_cast_i.special.csrw & (csr_addr_li == 12'h800);
   assign commit_pkt_cast_o.resume            = retire_pkt_cast_i.exception.resume;
   assign commit_pkt_cast_o.itlb_miss         = retire_pkt_cast_i.exception.itlb_miss;
   assign commit_pkt_cast_o.icache_miss       = retire_pkt_cast_i.exception.icache_miss;
@@ -734,13 +734,13 @@ module bp_be_csr
   assign frm_dyn_o = rv64_frm_e'(fcsr_lo.frm);
 
   // CSR 0x081 write: context switch to the specified thread ID
-  assign csr_ctxt_write_v_o    = csr_w_v_li & (csr_addr_li == 12'h081);
+  assign csr_ctxt_write_v_o    = csr_w_v_li & (csr_addr_li == 12'h800);
   assign csr_ctxt_write_data_o = csr_data_li[0+:thread_id_width_p];
 
   // CSR 0x082 write: set the NPC for the thread whose ID is in the upper bits
   // Write format: csr_data_li[vaddr_width_p +: thread_id_width_p] = thread_id
   //               csr_data_li[vaddr_width_p-1:0]                  = target NPC
-  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h082);
+  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801);
   assign ctx_npc_write_tid_o = csr_data_li[vaddr_width_p +: thread_id_width_p];
   assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
 
@@ -750,7 +750,7 @@ module bp_be_csr
   //               bits[38+thread_id_width_p+reg_addr_width_gp : 39+thread_id_width_p] = reg_addr
   //               bit[46]                                        = fp_sel (1=FP regfile, 0=INT regfile)
   localparam fp_sel_bit_lp = vaddr_width_p + thread_id_width_p + reg_addr_width_gp;
-  wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h083);
+  wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h802);
   assign ctx_rpush_v_o    = rpush_v & ~csr_data_li[fp_sel_bit_lp];
   assign ctx_rpush_fp_v_o = rpush_v &  csr_data_li[fp_sel_bit_lp];
   assign ctx_rpush_tid_o  = csr_data_li[vaddr_width_p +: thread_id_width_p];
@@ -762,7 +762,7 @@ module bp_be_csr
   //   if (!reset_i && csr_w_v_li) begin
   //     $display("[CSR @%0t] csrw: addr=0x%03x data=0x%016x csr_ctxt_write_v=%0b ctx_npc_write_v=%0b",
   //              $time, csr_addr_li, csr_data_li, csr_ctxt_write_v_o, ctx_npc_write_v_o);
-  //     if (csr_addr_li == 12'h082)
+  //     if (csr_addr_li == 12'h801)
   //       $display("[CSR @%0t] CSR0x082 write: raw_data=0x%016x -> tid=%0d npc=0x%08x",
   //                $time, csr_data_li, ctx_npc_write_tid_o, ctx_npc_write_npc_o);
   //   end
