@@ -229,6 +229,19 @@ module bp_be_csr
      ,.v_o(exception_ecode_v_li)
      );
 
+  // A faulting packet can remain visible while its redirect drains through
+  // the frontend. Consume it once, then re-arm when a normal instruction
+  // retires so the stale packet cannot overwrite EPC at the trap vector.
+  logic synchronous_exception_seen_r;
+  wire synchronous_exception_new_li = exception_ecode_v_li & ~synchronous_exception_seen_r;
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      synchronous_exception_seen_r <= 1'b0;
+    else if (retire_pkt_cast_i.queue_v & retire_pkt_cast_i.instret)
+      synchronous_exception_seen_r <= 1'b0;
+    else if (exception_ecode_v_li)
+      synchronous_exception_seen_r <= 1'b1;
+
   wire d_interrupt_icode_v_li = debug_irq_i;
 
   logic [3:0] m_interrupt_icode_li, s_interrupt_icode_li;
@@ -550,7 +563,7 @@ module bp_be_csr
               interrupt_v_lo        = 1'b1;
             end
         end
-      else if (exception_ecode_v_li)
+      else if (synchronous_exception_new_li)
         begin
           if (is_debug_mode)
             begin
