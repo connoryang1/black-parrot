@@ -256,7 +256,7 @@ module bp_be_detector
        * Register-form CSR writes consume rs1 outside the normal integer
        * forwarding path. In particular, the early context-switch classifier
        * reads the target thread id from the scheduler regfile output, so a
-       * csrw 0x081 immediately after a produced rs1 value must wait until the
+       * csrw 0x800 immediately after a produced rs1 value must wait until the
        * value is architectural.
        */
 	      csr_rs1_haz_v = issue_pkt_cast_i.csrw

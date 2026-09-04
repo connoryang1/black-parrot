@@ -54,7 +54,7 @@ module bp_be_regfile_mt
    , input [reg_addr_width_gp-1:0]                     rd_addr_i
    , input [data_width_p-1:0]                           rd_data_i
 
-   // CSR 0x083 remote-write bus: software-initiated write into another thread's register state
+   // CSR 0x802 remote-write bus: software-initiated write into another thread's register state
    // Encoding: {thread_id, reg_addr} selects the destination register; rpush_data_i is the value
    , input                                              rpush_w_v_i
    , input [thread_id_width_p-1:0]                     rpush_thread_id_i
@@ -79,8 +79,8 @@ module bp_be_regfile_mt
   assign rd_addr_indexed    = {rd_thread_id_i, rd_addr_i};
   assign rpush_addr_indexed = {rpush_thread_id_i, rpush_addr_i};
 
-  // Mux write port: CSR 0x083 remote write takes priority over normal writeback
-  // CSR 0x083 remote writes and normal writeback never happen on the same cycle
+  // Mux write port: CSR 0x802 remote write takes priority over normal writeback
+  // CSR 0x802 remote writes and normal writeback never happen on the same cycle
   wire w_v_mux    = rpush_w_v_i | rd_w_v_i;
   wire [reg_addr_width_gp+thread_id_width_p-1:0] w_addr_mux = rpush_w_v_i ? rpush_addr_indexed : rd_addr_indexed;
   wire [data_width_p-1:0] w_data_mux = rpush_w_v_i ? rpush_data_i : rd_data_i;

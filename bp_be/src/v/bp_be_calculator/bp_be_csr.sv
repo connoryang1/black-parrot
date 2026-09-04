@@ -48,13 +48,13 @@ module bp_be_csr
    , input [thread_id_width_p-1:0]           current_thread_id_i
    , input [context_id_width_p-1:0]          current_context_id_i
 
-   // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x082)
+   // Bootstrap: write a target NPC into context_storage for a given thread (CSR 0x801)
    // Write format: upper bits = thread_id, lower vaddr_width_p bits = target NPC
    , output logic                            ctx_npc_write_v_o
    , output logic [thread_id_width_p-1:0]    ctx_npc_write_tid_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
-   // CSR 0x083 remote register write into another hardware thread context
+   // CSR 0x802 remote register write into another hardware thread context
    // Write format: bits[38:0]=value, bits[40:39]=thread_id, bits[45:41]=reg_addr, bit[46]=fp_sel
    , output logic                            ctx_rpush_v_o
    , output logic                            ctx_rpush_fp_v_o
@@ -397,11 +397,11 @@ module bp_be_csr
         {`CSR_ADDR_DPC          }: csr_data_lo = dpc_lo;
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
-        12'h081:  // CTXT CSR - Current thread/context ID
+        12'h800:  // CTXT CSR - Current thread/context ID
           csr_data_lo = dword_width_gp'(current_context_id_i);
-        12'h082:  // Thread NPC seed - write-only, reads as 0
+        12'h801:  // Thread NPC seed - write-only, reads as 0
           csr_data_lo = '0;
-        12'h083:  // Thread register seed / remote register write - write-only, reads as 0
+        12'h802:  // Thread register seed / remote register write - write-only, reads as 0
           csr_data_lo = '0;
         default:
           begin
@@ -666,9 +666,9 @@ module bp_be_csr
       default: csr_r_data_o = csr_data_lo;
     endcase
 
-  wire ctxt_csr_addr_li = (csr_addr_li == 12'h081)
-                           | (csr_addr_li == 12'h082)
-                           | (csr_addr_li == 12'h083);
+  wire ctxt_csr_addr_li = (csr_addr_li == 12'h800)
+                           | (csr_addr_li == 12'h801)
+                           | (csr_addr_li == 12'h802);
 
   assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special.dcache_miss
                                                  ,retire_pkt_cast_i.special.fencei
@@ -741,20 +741,20 @@ module bp_be_csr
 
   assign frm_dyn_o = rv64_frm_e'(fcsr_lo.frm);
 
-  // CSR 0x082 write: set the NPC for the thread whose ID is in the upper bits
+  // CSR 0x801 write: set the NPC for the thread whose ID is in the upper bits
   // Write format: csr_data_li[vaddr_width_p +: thread_id_width_p] = thread_id
   //               csr_data_li[vaddr_width_p-1:0]                  = target NPC
-  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h082);
+  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801);
   assign ctx_npc_write_tid_o = csr_data_li[vaddr_width_p +: thread_id_width_p];
   assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
 
-  // CSR 0x083 write: remote register write into a target hardware thread context
+  // CSR 0x802 write: remote register write into a target hardware thread context
   // Write format: bits[38:0]                                    = value (39-bit vaddr width)
   //               bits[38+thread_id_width_p : 39]               = thread_id
   //               bits[38+thread_id_width_p+reg_addr_width_gp : 39+thread_id_width_p] = reg_addr
   //               bit[46]                                        = fp_sel (1=FP regfile, 0=INT regfile)
   localparam fp_sel_bit_lp = vaddr_width_p + thread_id_width_p + reg_addr_width_gp;
-  wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h083);
+  wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h802);
   assign ctx_rpush_v_o    = rpush_v & ~csr_data_li[fp_sel_bit_lp];
   assign ctx_rpush_fp_v_o = rpush_v &  csr_data_li[fp_sel_bit_lp];
   assign ctx_rpush_tid_o  = csr_data_li[vaddr_width_p +: thread_id_width_p];
@@ -766,8 +766,8 @@ module bp_be_csr
   //   if (!reset_i && csr_w_v_li) begin
   //     $display("[CSR @%0t] csrw: addr=0x%03x data=0x%016x csr_ctxt_write_v=%0b ctx_npc_write_v=%0b",
   //              $time, csr_addr_li, csr_data_li, csr_ctxt_write_v_o, ctx_npc_write_v_o);
-  //     if (csr_addr_li == 12'h082)
-  //       $display("[CSR @%0t] CSR0x082 write: raw_data=0x%016x -> tid=%0d npc=0x%08x",
+  //     if (csr_addr_li == 12'h801)
+  //       $display("[CSR @%0t] CSR0x801 write: raw_data=0x%016x -> tid=%0d npc=0x%08x",
   //                $time, csr_data_li, ctx_npc_write_tid_o, ctx_npc_write_npc_o);
   //   end
   // end
