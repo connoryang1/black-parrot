@@ -1032,8 +1032,14 @@ module bp_be_top
                                    : context_cache_state_r;
 
         e_context_cache_done: begin
-          context_cache_state_r <= e_context_cache_idle;
-          context_cache_miss_pending_r <= 1'b0;
+          // ctxtsw_yumi only acknowledges FE payload capture.  Keep issue
+          // suppressed until FE has consumed the pending redirect and can
+          // accept another request; otherwise source-context instructions may
+          // execute before the target-context redirect takes effect.
+          if (fe_ctxtsw_ready_i) begin
+            context_cache_state_r <= e_context_cache_idle;
+            context_cache_miss_pending_r <= 1'b0;
+          end
         end
 
         default:
@@ -1043,12 +1049,24 @@ module bp_be_top
   end
 
 `ifndef SYNTHESIS
+  logic context_cache_wait_for_fe_r;
   always_ff @(posedge clk_i) begin
-    if (!reset_i
-        && context_cache_miss_v_li
-        && context_cache_active_li
-        && (context_cache_miss_virtual_context_id_li != context_cache_target_virtual_context_id_r))
-      $fatal(1, "Nested nonresident context switch target %0d is not supported", context_cache_miss_virtual_context_id_li);
+    if (reset_i) begin
+      context_cache_wait_for_fe_r <= 1'b0;
+    end else begin
+      if (context_cache_miss_v_li
+          && context_cache_active_li
+          && (context_cache_miss_virtual_context_id_li != context_cache_target_virtual_context_id_r))
+        $fatal(1, "Nested nonresident context switch target %0d is not supported", context_cache_miss_virtual_context_id_li);
+
+      // A captured redirect remains pending while FE deasserts ready.  The
+      // context-cache FSM must continue suppressing source-context issue until
+      // that pending redirect has actually been consumed.
+      if (context_cache_wait_for_fe_r && (context_cache_state_r != e_context_cache_done))
+        $fatal(1, "Context-cache issue suppression ended before FE consumed its redirect");
+      context_cache_wait_for_fe_r <= (context_cache_state_r == e_context_cache_done)
+                                     && !fe_ctxtsw_ready_i;
+    end
   end
 `endif
 
