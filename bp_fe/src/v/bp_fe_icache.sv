@@ -406,7 +406,10 @@ module bp_fe_icache
 
   logic [lg_assoc_lp-1:0] hit_index_tv;
   logic hit_v_tv;
-  bsg_encode_one_hot
+  // Duplicate tags can transiently appear after an aborted refill. Select a
+  // deterministic matching way instead of using an encoder whose multi-hot
+  // input behavior is undefined in synthesis.
+  bsg_priority_encode
    #(.width_p(assoc_p), .lo_to_hi_p(1))
    hit_index_encoder
     (.i(hit_v_tv_r)
