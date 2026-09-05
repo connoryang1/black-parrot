@@ -114,11 +114,9 @@ module bp_be_director
   // Update the NPC on a valid instruction in ex1 or upon commit
   logic [vaddr_width_p-1:0] npc_n, npc_r;
   wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v | commit_pkt_cast_i.ctxtsw;
-  wire [vaddr_width_p-1:0] commit_redirect_npc =
-    commit_pkt_cast_i.dcache_replay ? commit_pkt_cast_i.pc : commit_pkt_cast_i.npc;
 
   assign npc_n = commit_pkt_cast_i.ctxtsw ? context_npc_i
-               : commit_pkt_cast_i.npc_w_v ? commit_redirect_npc
+               : commit_pkt_cast_i.npc_w_v ? commit_pkt_cast_i.npc
                : br_pkt_cast_i.bspec ? issue_pkt_cast_i.pc
                : br_pkt_cast_i.npc;
 
@@ -273,17 +271,7 @@ module bp_be_director
       else if (ctxtsw_cancel_v & pending_ctxtsw_sent_i)
         begin
           fe_cmd_li.opcode                                 = e_op_pc_redirection;
-          fe_cmd_li.npc                                    = commit_redirect_npc;
-          fe_cmd_pc_redirect_operands.subopcode            = e_subop_resume;
-          fe_cmd_pc_redirect_operands.branch_metadata_fwd  = current_thread_metadata_li;
-          fe_cmd_li.operands.pc_redirect_operands          = fe_cmd_pc_redirect_operands;
-
-          fe_cmd_v_li = 1'b1;
-        end
-      else if (commit_pkt_cast_i.dcache_replay)
-        begin
-          fe_cmd_li.opcode                                 = e_op_pc_redirection;
-          fe_cmd_li.npc                                    = commit_redirect_npc;
+          fe_cmd_li.npc                                    = commit_pkt_cast_i.npc;
           fe_cmd_pc_redirect_operands.subopcode            = e_subop_resume;
           fe_cmd_pc_redirect_operands.branch_metadata_fwd  = current_thread_metadata_li;
           fe_cmd_li.operands.pc_redirect_operands          = fe_cmd_pc_redirect_operands;
