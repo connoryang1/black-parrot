@@ -377,7 +377,11 @@ module bp_uce
      ,.yumi_i(fsm_rev_yumi_lo & fsm_rev_last_li)
      ,.count_o(credit_count_lo)
      );
-  assign cache_req_credits_full_o  = cache_req_v_r && (credit_count_lo == coh_noc_max_credits_p);
+  // The first beat now allocates a transaction credit, so a full counter must
+  // also backpressure a new request while the request FIFO is empty. Gating
+  // this signal with cache_req_v_r permits one extra transaction to overflow
+  // the counter between requests.
+  assign cache_req_credits_full_o  = (credit_count_lo == coh_noc_max_credits_p);
   assign cache_req_credits_empty_o = ~cache_req_v_r && (credit_count_lo == 0);
   wire cache_req_credit_ready_lo = ~cache_req_credits_full_o | ~fsm_fwd_new_lo;
 
