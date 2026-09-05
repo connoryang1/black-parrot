@@ -1,6 +1,7 @@
 
 `include "bp_common_defines.svh"
 `include "bp_be_defines.svh"
+`include "bp_fe_defines.svh"
 
 module bp_be_issue_queue
  import bp_common_pkg::*;
@@ -37,6 +38,7 @@ module bp_be_issue_queue
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
+  `declare_bp_fe_branch_metadata_fwd_s(ras_idx_width_p, btb_tag_width_p, btb_idx_width_p, bht_idx_width_p, ghist_width_p, bht_row_els_p, thread_id_width_p);
   `bp_cast_i(bp_fe_queue_s, fe_queue);
   `bp_cast_o(bp_be_preissue_pkt_s, preissue_pkt);
   `bp_cast_o(bp_be_issue_pkt_s, issue_pkt);
@@ -132,8 +134,9 @@ module bp_be_issue_queue
   wire [entry_ptr_width_lp-1:0] preissue_entry_sel = bypass_preissue ? wptr_r.entry : rptr_n.entry;
   wire [branch_metadata_fwd_width_p-1:0] preissue_branch_metadata_fwd =
     bypass_preissue ? fe_queue_cast_i.branch_metadata_fwd : fe_queue_lo.branch_metadata_fwd;
-  wire [thread_id_width_p-1:0] preissue_thread_id =
-    preissue_branch_metadata_fwd[branch_metadata_fwd_width_p-1 -: thread_id_width_p];
+  bp_fe_branch_metadata_fwd_s preissue_branch_metadata_cast;
+  assign preissue_branch_metadata_cast = preissue_branch_metadata_fwd;
+  wire [thread_id_width_p-1:0] preissue_thread_id = preissue_branch_metadata_cast.thread_id;
   logic [fetch_cinstr_p:0][cinstr_width_gp-1:0] queue_instr_raw;
   assign queue_instr_raw[0+:fetch_cinstr_p] = bypass_preissue ? queue_instr : queue_instr_n;
   assign queue_instr_raw[fetch_cinstr_p] = '0;
