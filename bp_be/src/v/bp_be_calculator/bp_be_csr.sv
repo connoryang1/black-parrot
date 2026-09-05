@@ -70,8 +70,8 @@ module bp_be_csr
    , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
    , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
 
-   // Context-cache L1 D$ service CSRs:
-   //   0x803 data/result, 0x804 command/status.
+   // Compatibility: keep every project context CSR in the collision-free custom range.
+   // Context-cache L1 D$ service: 0x803 data/result, 0x804 command/status.
    , input                                   ctx_l1_ready_i
    , input                                   ctx_l1_resp_v_i
    , input [dword_width_gp-1:0]              ctx_l1_resp_data_i
