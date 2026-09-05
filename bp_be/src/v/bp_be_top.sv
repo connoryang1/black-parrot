@@ -786,6 +786,7 @@ module bp_be_top
      ,.late_wb_yumi_o(late_wb_yumi_li)
 
      ,.current_thread_id_i(scheduler_current_thread_id_li)
+     ,.current_context_id_i(current_context_id_r)
      ,.retire_thread_id_i(retire_thread_id_lo)
 
      ,.rpush_w_v_i(scheduler_rpush_v_li)

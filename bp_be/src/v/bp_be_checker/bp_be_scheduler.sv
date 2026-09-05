@@ -57,6 +57,7 @@ module bp_be_scheduler
 
    // Current thread ID for register file reads/writes
    , input [thread_id_width_p-1:0]            current_thread_id_i
+   , input [context_id_width_p-1:0]           current_context_id_i
    , input [thread_id_width_p-1:0]            retire_thread_id_i
 
    // CSR 0x802 remote register write into another hardware thread context
@@ -317,7 +318,7 @@ module bp_be_scheduler
       ? context_id_width_p'(issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
       : context_id_width_p'(irf_rs1[0 +: context_id_width_p]);
 
-  wire issue_ctxtsw_switch_v = issue_ctxtsw_v & (issue_ctxtsw_target_tid != issue_thread_id_li);
+  wire issue_ctxtsw_switch_v = issue_ctxtsw_v & (issue_ctxtsw_target_tid != current_context_id_i);
   wire issue_ctxtsw_dispatch_v = fe_queue_read_li
                                   & ~hazard_v_i
                                   & ~poison_isd_i
