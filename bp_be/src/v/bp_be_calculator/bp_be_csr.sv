@@ -448,7 +448,6 @@ module bp_be_csr
         {`CSR_ADDR_FRM          }: csr_data_lo = fcsr_lo.frm;
         {`CSR_ADDR_FCSR         }: csr_data_lo = fcsr_lo;
         {`CSR_ADDR_CYCLE        }: csr_data_lo = mcycle_lo;
-        {`CSR_ADDR_TIME         }: csr_data_lo = global_cycle_i;
         {`CSR_ADDR_INSTRET      }: csr_data_lo = minstret_lo;
         {`CSR_ADDR_SSTATUS      }: csr_data_lo = sstatus_lo;
         {`CSR_ADDR_SEDELEG      }: csr_data_lo = sedeleg_lo;
