@@ -101,6 +101,16 @@ module bp_be_top
   bp_be_decode_info_s decode_info_lo;
   bp_be_trans_info_s trans_info_lo;
 
+`ifndef SYNTHESIS
+  // Enable with +bp_noctxtsw_tag_check.  This deliberately has no synthesized
+  // hardware cost and turns otherwise latent thread-tag corruption into an
+  // immediate, stage-local simulator failure.
+  logic noctxtsw_tag_check_en;
+  bp_be_wb_pkt_s late_wb_pkt_nonsynth;
+  initial noctxtsw_tag_check_en = $test$plusargs("bp_noctxtsw_tag_check");
+  assign late_wb_pkt_nonsynth = late_wb_pkt;
+`endif
+
   // Multi-threaded context storage signals
   logic [vaddr_width_p-1:0] context_npc_lo;
   logic [1:0] context_priv_mode_lo;
@@ -596,5 +606,36 @@ module bp_be_top
      ,.fast_ctxtsw_thread_id_o(fast_ctxtsw_context_id_lo)
      ,.fast_ctxtsw_resume_npc_o(fast_ctxtsw_resume_npc_lo)
      );
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk_i)
+    if (noctxtsw_tag_check_en && !reset_i) begin
+      assert (current_thread_id_lo == '0)
+        else $fatal(1, "NOCTXT_TAG_FAIL: BE current thread selector changed to %0d", current_thread_id_lo);
+      assert (scheduler_current_thread_id_li == '0)
+        else $fatal(1, "NOCTXT_TAG_FAIL: scheduler selector changed to %0d", scheduler_current_thread_id_li);
+      assert (retire_thread_id_lo == '0)
+        else $fatal(1, "NOCTXT_TAG_FAIL: retire selector changed to %0d", retire_thread_id_lo);
+      assert (!(fast_ctxtsw_v_lo | dispatch_pkt.ctxtsw_v | commit_pkt.ctxtsw
+                | pending_ctxtsw_v_r | fe_ctxtsw_v_o))
+        else $fatal(1, "NOCTXT_TAG_FAIL: unexpected context-switch event in ordinary instruction test");
+
+      if (issue_pkt.v)
+        assert (issue_pkt.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: issue tag is %0d", issue_pkt.thread_id);
+      if (dispatch_pkt.v)
+        assert (dispatch_pkt.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: dispatch tag is %0d", dispatch_pkt.thread_id);
+      if (iwb_pkt.ird_w_v | iwb_pkt.frd_w_v | iwb_pkt.ptw_w_v)
+        assert (iwb_pkt.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: integer writeback tag is %0d", iwb_pkt.thread_id);
+      if (fwb_pkt.ird_w_v | fwb_pkt.frd_w_v | fwb_pkt.ptw_w_v)
+        assert (fwb_pkt.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: floating writeback tag is %0d", fwb_pkt.thread_id);
+      if (late_wb_v_lo)
+        assert (late_wb_pkt_nonsynth.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: late writeback tag is %0d", late_wb_pkt_nonsynth.thread_id);
+    end
+`endif
 
 endmodule

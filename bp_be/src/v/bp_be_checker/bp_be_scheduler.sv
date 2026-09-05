@@ -79,6 +79,11 @@ module bp_be_scheduler
   `bp_cast_i(bp_be_wb_pkt_s, late_wb_pkt);
   `bp_cast_i(bp_be_trans_info_s, trans_info);
 
+`ifndef SYNTHESIS
+  logic noctxtsw_tag_check_en;
+  initial noctxtsw_tag_check_en = $test$plusargs("bp_noctxtsw_tag_check");
+`endif
+
   logic ptw_busy_lo;
   logic ptw_v_lo, ptw_walk_lo, ptw_itlb_fill_lo, ptw_dtlb_fill_lo;
   logic [fetch_ptr_p-1:0] ptw_count_lo;
@@ -367,5 +372,24 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.special.fencei          |= fe_instr_not_exc_li & issue_pkt_cast_o.fencei;
       dispatch_pkt_cast_o.special.csrw            |= fe_instr_not_exc_li & issue_pkt_cast_o.csrw;
     end
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk_i)
+    if (noctxtsw_tag_check_en && !reset_i) begin
+      assert (current_thread_id_i == '0)
+        else $fatal(1, "NOCTXT_TAG_FAIL: scheduler current selector is %0d", current_thread_id_i);
+      assert (retire_thread_id_i == '0)
+        else $fatal(1, "NOCTXT_TAG_FAIL: scheduler retire selector is %0d", retire_thread_id_i);
+      if (issue_pkt_cast_o.v) begin
+        assert (preissue_thread_id_li == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: preissue tag is %0d", preissue_thread_id_li);
+        assert (issue_thread_id_li == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: scheduler issue tag is %0d", issue_thread_id_li);
+      end
+      if (ptw_v_lo | ptw_busy_lo)
+        assert (ptw_thread_id_r == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: page-table-walk tag is %0d", ptw_thread_id_r);
+    end
+`endif
 
 endmodule

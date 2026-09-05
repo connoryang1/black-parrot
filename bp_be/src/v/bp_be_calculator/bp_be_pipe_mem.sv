@@ -101,6 +101,11 @@ module bp_be_pipe_mem
   `bp_cast_i(bp_cfg_bus_s, cfg_bus);
   `bp_cast_i(bp_be_commit_pkt_s, commit_pkt);
 
+`ifndef SYNTHESIS
+  logic noctxtsw_tag_check_en;
+  initial noctxtsw_tag_check_en = $test$plusargs("bp_noctxtsw_tag_check");
+`endif
+
   wire negedge_clk = ~clk_i;
   wire posedge_clk =  clk_i;
 
@@ -388,5 +393,20 @@ module bp_be_pipe_mem
                                 ,rd_data : dcache_data_r
                                 ,default : '0
                                 };
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk_i)
+    if (noctxtsw_tag_check_en && !reset_i) begin
+      if (is_req)
+        assert (reservation_thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: memory request tag is %0d", reservation_thread_id);
+      if (dcache_v)
+        assert (dcache_thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: dcache response tag is %0d", dcache_thread_id);
+      if (late_wb_v_o)
+        assert (dcache_thread_id_r == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: delayed dcache tag is %0d", dcache_thread_id_r);
+    end
+`endif
 
 endmodule

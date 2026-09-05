@@ -124,6 +124,11 @@ module bp_be_calculator_top
   `bp_cast_o(bp_be_wb_pkt_s, fwb_pkt);
   `bp_cast_o(bp_be_wb_pkt_s, late_wb_pkt);
 
+`ifndef SYNTHESIS
+  logic noctxtsw_tag_check_en;
+  initial noctxtsw_tag_check_en = $test$plusargs("bp_noctxtsw_tag_check");
+`endif
+
   // Pipeline stage registers
   localparam pipe_stage_els_lp = 5;
   bp_be_exc_stage_s [pipe_stage_els_lp  :0] exc_stage_n;
@@ -598,6 +603,26 @@ module bp_be_calculator_top
      );
   assign iwb_pkt_cast_o = comp_stage_r[3];
   assign fwb_pkt_cast_o = comp_stage_r[4];
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk_i)
+    if (noctxtsw_tag_check_en && !reset_i) begin
+      assert (current_thread_id_i == '0)
+        else $fatal(1, "NOCTXT_TAG_FAIL: calculator current selector is %0d", current_thread_id_i);
+      assert (retire_thread_id_i == '0)
+        else $fatal(1, "NOCTXT_TAG_FAIL: calculator retire selector is %0d", retire_thread_id_i);
+      if (dispatch_pkt_cast_i.v)
+        assert (dispatch_pkt_cast_i.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: calculator dispatch tag is %0d", dispatch_pkt_cast_i.thread_id);
+      if (reservation_r.v)
+        assert (reservation_r.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: reservation tag is %0d", reservation_r.thread_id);
+      for (int i = 0; i < pipe_stage_els_lp; i++)
+        if (comp_stage_r[i].ird_w_v | comp_stage_r[i].frd_w_v | comp_stage_r[i].ptw_w_v)
+          assert (comp_stage_r[i].thread_id == '0)
+            else $fatal(1, "NOCTXT_TAG_FAIL: completion stage %0d tag is %0d", i, comp_stage_r[i].thread_id);
+    end
+`endif
 
   always_comb
     begin

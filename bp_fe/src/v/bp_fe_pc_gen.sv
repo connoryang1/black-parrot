@@ -78,6 +78,11 @@ module bp_fe_pc_gen
   `bp_cast_i(bp_fe_branch_metadata_fwd_s, redirect_br_metadata_fwd);
   `bp_cast_i(bp_fe_branch_metadata_fwd_s, attaboy_br_metadata_fwd);
 
+`ifndef SYNTHESIS
+  logic noctxtsw_tag_check_en;
+  initial noctxtsw_tag_check_en = $test$plusargs("bp_noctxtsw_tag_check");
+`endif
+
   /////////////////////////////////////////////////////////////////////////////////////
   // IF0
   /////////////////////////////////////////////////////////////////////////////////////
@@ -420,6 +425,26 @@ module bp_fe_pc_gen
     : metadata_if1.site_br & ~ovr_o
       ? {ghistory_r[0+:ghist_width_p-1], taken_if1_r}
       : ghistory_r;
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk_i)
+    if (noctxtsw_tag_check_en && !reset_i) begin
+      assert (thread_id_r == '0)
+        else $fatal(1, "NOCTXT_TAG_FAIL: FE predictor selector changed to %0d", thread_id_r);
+      if (redirect_thread_id_v_i)
+        assert (redirect_thread_id_i == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: FE redirect selected thread %0d", redirect_thread_id_i);
+      if (icache_hit_v_i | icache_miss_v_i)
+        assert (metadata_if2.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: FE IF2 metadata tag is %0d", metadata_if2.thread_id);
+      if (redirect_br_v_i)
+        assert (redirect_br_metadata_fwd_cast_i.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: FE redirect metadata tag is %0d", redirect_br_metadata_fwd_cast_i.thread_id);
+      if (attaboy_v_i)
+        assert (attaboy_br_metadata_fwd_cast_i.thread_id == '0)
+          else $fatal(1, "NOCTXT_TAG_FAIL: FE attaboy metadata tag is %0d", attaboy_br_metadata_fwd_cast_i.thread_id);
+    end
+`endif
   wire ghistory_w_v = redirect_br_v_i | icache_tv_we_i;
   bsg_dff_reset_en
    #(.width_p(ghist_width_p))
