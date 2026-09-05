@@ -703,6 +703,14 @@ module bp_be_top
         virtual_context_translation_en_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.translation_en_n;
         virtual_context_asid_r[ctx_npc_write_virtual_context_id_lo] <= trans_info_lo.asid;
 
+        // A bootstrap target has no prior CSR image.  Clone the seeding
+        // context's architectural CSR state so a first nonresident launch
+        // preserves the caller's privilege mode and SATP translation root.
+        // Without this, the restore path treats the target as reset state
+        // (M-mode with SATP=0), which cannot enter a Linux user mapping.
+        virtual_context_csr_state_r[ctx_npc_write_virtual_context_id_lo] <= csr_context_save_data_lo;
+        virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo] <= 1'b1;
+
         if (ctx_npc_write_resident_v_li && (ctx_npc_write_physical_thread_id_li < num_threads_p)) begin
           context_npc_r[ctx_npc_write_physical_thread_id_li] <= ctx_npc_write_npc_lo;
           context_priv_mode_r[ctx_npc_write_physical_thread_id_li] <= commit_pkt.priv_n;
