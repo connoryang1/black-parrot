@@ -348,8 +348,15 @@ module bp_be_regfile_mt
       assign rs_v_li[i] = rs_r_v_i[i] & ~(fwd0_rs | fwd1_rs);
       assign rs_addr_li[i] = rs_addr_indexed[i];
 
-      // Output: forward if we had forwarding, else use saved register data
-      assign rs_data_o[i] = rs_r_v_r ? fwd_data_lo : rs_data_r;
+      // A synchronous FPGA RAM may return the old word when a write lands one
+      // cycle after the read request, exactly when its result is consumed.
+      // The replacement path already detects that collision; bypass it to the
+      // live output as well as saving it for a stalled consumer.
+      assign rs_data_o[i] = replace_rs
+                            ? rs_data_n
+                            : rs_r_v_r
+                            ? fwd_data_lo
+                            : rs_data_r;
     end
 
 endmodule
