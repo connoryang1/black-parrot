@@ -397,8 +397,8 @@ module bp_be_csr
         {`CSR_ADDR_DPC          }: csr_data_lo = dpc_lo;
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
-        12'h800:  // CTXT CSR - Current thread/context ID
-          csr_data_lo = dword_width_gp'(current_context_id_i);
+        12'h800:  // CTXT CSR - Preserve the pre-feature-57 physical thread readback
+          csr_data_lo = dword_width_gp'(current_thread_id_i);
         12'h801:  // Thread NPC seed - write-only, reads as 0
           csr_data_lo = '0;
         12'h802:  // Thread register seed / remote register write - write-only, reads as 0
