@@ -146,6 +146,7 @@ module bp_be_scheduler
   localparam entry_cinstr_gp = 2**fetch_sel_p;
   localparam op_ptr_width_lp = `BSG_WIDTH(entry_cinstr_gp);
   logic ctxtsw_issue_hold_r;
+  logic ctxtsw_first_target_dispatch_r;
   logic [3:0] ctxtsw_cancel_drain_r;
   wire ctxtsw_issue_hold_clear_li                  = commit_pkt_cast_i.ctxtsw
                                                      | (commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw);
@@ -304,6 +305,22 @@ module bp_be_scheduler
     else if (issue_ctxtsw_dispatch_v)
       ctxtsw_issue_hold_r <= 1'b1;
 
+  // The first target instruction can arrive one cycle before the issue queue's
+  // registered thread metadata. Tag that dispatch with the authoritative
+  // current physical slot; all later dispatches use the queue-carried tag.
+  wire first_target_dispatch_li = ctxtsw_first_target_dispatch_r
+                                  & fe_queue_read_li
+                                  & ~poison_isd_i
+                                  & ~ctxtsw_cancel_drain_li
+                                  & ~be_exc_not_instr_li;
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ctxtsw_first_target_dispatch_r <= 1'b0;
+    else if (commit_pkt_cast_i.ctxtsw)
+      ctxtsw_first_target_dispatch_r <= 1'b1;
+    else if (first_target_dispatch_li)
+      ctxtsw_first_target_dispatch_r <= 1'b0;
+
   always_ff @(posedge clk_i)
     if (reset_i)
       ctxtsw_cancel_drain_r <= '0;
@@ -331,6 +348,8 @@ module bp_be_scheduler
                                        ? ptw_thread_id_r
                                        : writeback_v
                                        ? late_wb_pkt_cast_i.thread_id
+                                       : ctxtsw_first_target_dispatch_r
+                                       ? current_thread_id_i
                                        : issue_thread_id_li;
       dispatch_pkt_cast_o.instr      = be_exc_not_instr_li ? be_exc_instr_li   : fe_exc_not_instr_li ? fe_exc_instr_li  : issue_pkt_cast_o.instr;
       dispatch_pkt_cast_o.size       = be_exc_not_instr_li ? be_exc_size_li    : fe_exc_not_instr_li ? fe_exc_size_li   : issue_pkt_cast_o.size;
