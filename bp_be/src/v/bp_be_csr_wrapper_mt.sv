@@ -126,6 +126,16 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
+  // A core-wide physical timebase for short-latency measurements.  Unlike
+  // mcycle, this counter is intentionally absent from the virtual-context
+  // save/restore image and therefore never rolls back on a context switch.
+  logic [dword_width_gp-1:0] global_cycle_r;
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      global_cycle_r <= '0;
+    else
+      global_cycle_r <= global_cycle_r + 1'b1;
+
   // Per-thread gated inputs
   logic [num_threads_p-1:0]                          csr_r_v_gated;
   logic [num_threads_p-1:0]                          frf_w_v_gated;
@@ -149,6 +159,7 @@ module bp_be_csr_wrapper_mt
       (.clk_i(clk_i)
        ,.reset_i(reset_i)
        ,.cfg_bus_i(cfg_bus_i)
+       ,.global_cycle_i(global_cycle_r)
 
        ,.csr_r_v_i(csr_r_v_gated[i])
        ,.csr_r_addr_i(csr_r_addr_i)

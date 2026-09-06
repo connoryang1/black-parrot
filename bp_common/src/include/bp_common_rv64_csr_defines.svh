@@ -22,6 +22,8 @@
   `define CSR_ADDR_CYCLE         12'hc00
   `define CSR_ADDR_TIME          12'hc01
   `define CSR_ADDR_INSTRET       12'hc02
+  // Core-wide physical cycle counter, never virtual-context restored.
+  `define CSR_ADDR_GLOBAL_CYCLE  12'hcc0
   `define CSR_ADDR_HPMCOUNTER3   12'hc03
   `define CSR_ADDR_HPMCOUNTER4   12'hc04
   `define CSR_ADDR_HPMCOUNTER5   12'hc05
