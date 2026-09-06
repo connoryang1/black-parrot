@@ -1,0 +1,357 @@
+/**
+ * bp_be_regfile_mt.sv
+ *
+ * Multi-threaded Register File for Black Parrot
+ *
+ * Description:
+ *   Thread-indexed register file supporting simultaneous read/write operations
+ *   across multiple hardware threads without context switching.
+ *
+ * Architecture:
+ *   - Each hardware thread has its own register file (32 x 64-bit registers)
+ *   - Address format: {thread_id[thread_id_width_gp-1:0], reg_addr[reg_addr_width_gp-1:0]}
+ *   - Supports multiple simultaneous reads from different threads
+ *   - Single write port shared across all threads (can be extended if needed)
+ *   - Forwarding logic handles read-after-write hazards within same thread
+ *
+ * Advantages over traditional register renaming:
+ *   - No complex dependency tracking across threads
+ *   - Zero latency context switching (thread's state is ready immediately)
+ *   - Simpler hardware compared to out-of-order execution + renaming
+ *   - Scales linearly with number of threads
+ *
+ * Parameters:
+ *   num_threads_p      - Number of threads (default: 1)
+ *   data_width_p       - Data width in bits (default: 64 for RV64)
+ *   read_ports_p       - Number of simultaneous reads (default: 2)
+ *   zero_x0_p          - If 1, x0 register always reads as 0 (RISC-V spec)
+ */
+
+`include "bp_common_defines.svh"
+`include "bp_be_defines.svh"
+
+module bp_be_regfile_mt
+ import bp_common_pkg::*;
+ #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   `declare_bp_proc_params(bp_params_p)
+
+   , parameter `BSG_INV_PARAM(data_width_p)
+   , parameter `BSG_INV_PARAM(read_ports_p)
+   , parameter `BSG_INV_PARAM(zero_x0_p)
+   , parameter write_ports_p = 1
+   , parameter context_line_p = 0
+   , parameter context_regs_per_line_p = 16
+   , parameter context_line_index_width_p = $clog2((2**reg_addr_width_gp)/context_regs_per_line_p)
+   )
+  (input                                            clk_i
+   , input                                          reset_i
+
+   // Read bus - each read can be from a different thread
+   , input [read_ports_p-1:0]                           rs_r_v_i
+   , input [read_ports_p-1:0][thread_id_width_p-1:0]   rs_thread_id_i  // Thread ID for each read
+   , input [read_ports_p-1:0][reg_addr_width_gp-1:0]   rs_addr_i
+   , output [read_ports_p-1:0][data_width_p-1:0]        rs_data_o
+
+   // Write bus - writes to a specific thread's register
+   , input                                              rd_w_v_i
+   , input [thread_id_width_p-1:0]                     rd_thread_id_i  // Thread ID for write
+   , input [reg_addr_width_gp-1:0]                     rd_addr_i
+   , input [data_width_p-1:0]                           rd_data_i
+
+   // CSR 0x802 remote-write bus: software-initiated write into another thread's register state
+   // Encoding: {thread_id, reg_addr} selects the destination register; rpush_data_i is the value
+   , input                                              rpush_w_v_i
+   , input [thread_id_width_p-1:0]                     rpush_thread_id_i
+   , input [reg_addr_width_gp-1:0]                     rpush_addr_i
+   , input [data_width_p-1:0]                           rpush_data_i
+
+   // Optional second write port, used only by the nonresident context-cache restore path.
+   , input                                              rd_w_v2_i
+   , input [thread_id_width_p-1:0]                     rd_thread_id2_i
+   , input [reg_addr_width_gp-1:0]                     rd_addr2_i
+   , input [data_width_p-1:0]                           rd_data2_i
+
+   // Drained nonresident-context exchange.  The selected physical bank is
+   // visible as one architectural image and may be replaced atomically under
+   // a per-register mask.  Normal issue/writeback is quiescent while asserted.
+   , input                                              context_swap_v_i
+   , input [thread_id_width_p-1:0]                     context_swap_thread_id_i
+   , input [(2**reg_addr_width_gp)-1:0]                context_swap_w_mask_i
+   , input [(2**reg_addr_width_gp)-1:0][data_width_p-1:0] context_swap_data_i
+   , output logic [(2**reg_addr_width_gp)-1:0][data_width_p-1:0] context_swap_data_o
+
+   // Synchronous wide restore port. The normal pipeline is drained while it
+   // is active, so one backing-store line may replace adjacent GPRs.
+   , input                                              context_line_w_v_i
+   , input [thread_id_width_p-1:0]                     context_line_thread_id_i
+   , input [context_line_index_width_p-1:0]            context_line_index_i
+   , input [context_regs_per_line_p-1:0][data_width_p-1:0] context_line_data_i
+   );
+
+  // Derived parameters
+  localparam rf_els_lp = 2**reg_addr_width_gp;                           // 32 registers per thread
+  localparam total_rf_els_lp = 2**(reg_addr_width_gp + thread_id_width_p); // Total storage
+  logic [data_width_p-1:0] mem [total_rf_els_lp-1:0];
+
+  if (write_ports_p == 2) begin : bulk_read
+    always_comb
+      for (int i = 0; i < rf_els_lp; i++)
+        context_swap_data_o[i] = mem[{context_swap_thread_id_i, reg_addr_width_gp'(i)}];
+  end else begin : no_bulk_read
+    assign context_swap_data_o = '0;
+  end
+
+  // Compose thread-indexed addresses
+  logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_indexed;
+  logic [reg_addr_width_gp+thread_id_width_p-1:0] rd_addr_indexed;
+  logic [reg_addr_width_gp+thread_id_width_p-1:0] rpush_addr_indexed;
+  logic [reg_addr_width_gp+thread_id_width_p-1:0] rd_addr2_indexed;
+
+  // Construct indexed addresses: {thread_id, reg_addr}
+  for (genvar i = 0; i < read_ports_p; i++)
+    begin : read_addr_construct
+  assign rs_addr_indexed[i] = {rs_thread_id_i[i], rs_addr_i[i]};
+    end
+  assign rd_addr_indexed    = {rd_thread_id_i, rd_addr_i};
+  assign rpush_addr_indexed = {rpush_thread_id_i, rpush_addr_i};
+  assign rd_addr2_indexed   = {rd_thread_id2_i, rd_addr2_i};
+
+  // Mux write port: rpush takes priority over normal writeback
+  // rpush (CSR 0x802) and normal writeback never happen on the same cycle
+  wire w_v_mux    = rpush_w_v_i | rd_w_v_i;
+  wire [reg_addr_width_gp+thread_id_width_p-1:0] w_addr_mux = rpush_w_v_i ? rpush_addr_indexed : rd_addr_indexed;
+  wire [data_width_p-1:0] w_data_mux = rpush_w_v_i ? rpush_data_i : rd_data_i;
+
+  // Register file storage
+  logic [read_ports_p-1:0] rs_v_li;
+  logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_li;
+  logic [read_ports_p-1:0][data_width_p-1:0] rs_data_lo;
+
+  // Select appropriate memory based on read ports
+  if (context_line_p && (read_ports_p == 2))
+    begin : context_line_banked
+      localparam int bank_els_lp = num_threads_p*(rf_els_lp/context_regs_per_line_p);
+      localparam int bank_addr_width_lp = $clog2(bank_els_lp);
+      localparam int bank_select_width_lp = $clog2(context_regs_per_line_p);
+
+      logic [read_ports_p-1:0][context_regs_per_line_p-1:0][data_width_p-1:0] bank_r_data_lo;
+      logic [read_ports_p-1:0][bank_select_width_lp-1:0] bank_select_r;
+
+`ifndef SYNTHESIS
+      always_ff @(posedge clk_i)
+        if (rd_w_v2_i | context_swap_v_i)
+          $error("%m: scalar port 2 and atomic swap are disabled in line-banked mode");
+`endif
+
+      for (genvar bank = 0; bank < context_regs_per_line_p; bank++) begin : bank
+        wire normal_w_v = w_v_mux
+                          & (w_reg_addr_mux[0+:bank_select_width_lp]
+                             == bank_select_width_lp'(bank));
+        wire bank_w_v = context_line_w_v_i | normal_w_v;
+        wire [bank_addr_width_lp-1:0] bank_w_addr = context_line_w_v_i
+          ? {context_line_thread_id_i, context_line_index_i}
+          : {w_thread_id_mux, w_reg_addr_mux[bank_select_width_lp+:context_line_index_width_p]};
+        wire [data_width_p-1:0] bank_w_data = context_line_w_v_i
+          ? context_line_data_i[bank]
+          : w_data_mux;
+
+        // A true 2R1W FPGA block memory requires two mirrored 1R1W copies.
+        // Both copies receive the same architectural write, while each read
+        // port owns one copy.  Explicit block-RAM style avoids turning these
+        // very wide physical GPR banks into thousands of LUTRAM cells.
+        for (genvar rp = 0; rp < read_ports_p; rp++) begin : read_copy
+          bsg_mem_1r1w_sync
+           #(.width_p(data_width_p), .els_p(bank_els_lp), .ram_style_p("block"))
+           bank_mem
+            (.clk_i(clk_i)
+             ,.reset_i(reset_i)
+             ,.w_v_i(bank_w_v)
+             ,.w_addr_i(bank_w_addr)
+             ,.w_data_i(bank_w_data)
+             ,.r_v_i(rs_v_li[rp])
+             ,.r_addr_i({rs_thread_id_i[rp], rs_addr_i[rp][bank_select_width_lp+:context_line_index_width_p]})
+             ,.r_data_o(bank_r_data_lo[rp][bank])
+             );
+        end
+      end
+
+      always_ff @(posedge clk_i)
+        for (int i = 0; i < read_ports_p; i++)
+          if (rs_v_li[i])
+            bank_select_r[i] <= rs_addr_i[i][0+:bank_select_width_lp];
+
+      for (genvar i = 0; i < read_ports_p; i++)
+        assign rs_data_lo[i] = bank_r_data_lo[i][bank_select_r[i]];
+
+    end
+  else if ((write_ports_p == 1) && (read_ports_p == 2))
+    begin : twoport
+      bsg_mem_2r1w_sync
+       #(.width_p(data_width_p), .els_p(total_rf_els_lp))
+       regfile_mem
+        (.clk_i(clk_i)
+         ,.reset_i(reset_i)
+
+         ,.w_v_i(w_v_mux)
+         ,.w_addr_i(w_addr_mux)
+         ,.w_data_i(w_data_mux)
+
+         ,.r0_v_i(rs_v_li[0])
+         ,.r0_addr_i(rs_addr_li[0])
+         ,.r0_data_o(rs_data_lo[0])
+
+         ,.r1_v_i(rs_v_li[1])
+         ,.r1_addr_i(rs_addr_li[1])
+         ,.r1_data_o(rs_data_lo[1])
+         );
+    end
+  else if ((write_ports_p == 1) && (read_ports_p == 3))
+    begin : threeport
+      bsg_mem_3r1w_sync
+       #(.width_p(data_width_p), .els_p(total_rf_els_lp))
+       regfile_mem
+        (.clk_i(clk_i)
+         ,.reset_i(reset_i)
+
+         ,.w_v_i(w_v_mux)
+         ,.w_addr_i(w_addr_mux)
+         ,.w_data_i(w_data_mux)
+
+         ,.r0_v_i(rs_v_li[0])
+         ,.r0_addr_i(rs_addr_li[0])
+         ,.r0_data_o(rs_data_lo[0])
+
+         ,.r1_v_i(rs_v_li[1])
+         ,.r1_addr_i(rs_addr_li[1])
+         ,.r1_data_o(rs_data_lo[1])
+
+         ,.r2_v_i(rs_v_li[2])
+         ,.r2_addr_i(rs_addr_li[2])
+         ,.r2_data_o(rs_data_lo[2])
+         );
+    end
+  else if ((write_ports_p == 2) && ((read_ports_p == 2) || (read_ports_p == 3)))
+    begin : twoport_twowrite
+      logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_mem_r;
+
+`ifndef SYNTHESIS
+      always_ff @(posedge clk_i)
+        if (w_v_mux & rd_w_v2_i) begin
+          assert (w_addr_mux != rd_addr2_indexed)
+            else $error("%m: concurrent register writes must target different addresses");
+        end
+`endif
+
+      always_ff @(posedge clk_i) begin
+        if (context_line_w_v_i) begin
+          for (int i = 0; i < context_regs_per_line_p; i++)
+            mem[{context_line_thread_id_i,
+                 reg_addr_width_gp'(context_line_index_i*context_regs_per_line_p+i)}]
+              <= context_line_data_i[i];
+        end else if (context_swap_v_i) begin
+          for (int i = 0; i < rf_els_lp; i++)
+            if (context_swap_w_mask_i[i])
+              mem[{context_swap_thread_id_i, reg_addr_width_gp'(i)}] <= context_swap_data_i[i];
+        end else begin
+          if (w_v_mux)
+            mem[w_addr_mux] <= w_data_mux;
+          if (rd_w_v2_i)
+            mem[rd_addr2_indexed] <= rd_data2_i;
+        end
+
+        for (int i = 0; i < read_ports_p; i++)
+          if (rs_v_li[i])
+            rs_addr_mem_r[i] <= rs_addr_li[i];
+      end
+
+      for (genvar i = 0; i < read_ports_p; i++)
+        assign rs_data_lo[i] = mem[rs_addr_mem_r[i]];
+    end
+  else
+    begin : error
+      $error("Error: unsupported number of read ports");
+    end
+
+  // Save the written data for forwarding (use muxed write port values to capture remote writes too)
+  logic [1:0][data_width_p-1:0] rd_data_r;
+  wire [thread_id_width_p-1:0] w_thread_id_mux = rpush_w_v_i ? rpush_thread_id_i : rd_thread_id_i;
+  wire [reg_addr_width_gp-1:0] w_reg_addr_mux  = rpush_w_v_i ? rpush_addr_i : rd_addr_i;
+  bsg_dff
+   #(.width_p(2*data_width_p))
+   rd_reg
+    (.clk_i(clk_i)
+     ,.data_i({rd_data2_i, w_data_mux})
+     ,.data_o(rd_data_r)
+     );
+
+  // Forwarding and bypass logic for each read port
+  for (genvar i = 0; i < read_ports_p; i++)
+    begin : bypass
+      logic zero_rs_r, fwd0_rs_r, fwd1_rs_r, rs_r_v_r;
+      logic [data_width_p-1:0] fwd_data_lo;
+
+      // Check for reads from x0 (should always return 0)
+      wire zero_rs = rs_r_v_i[i] & (rs_addr_i[i] == '0) & (zero_x0_p == 1);
+
+      // Check for forwarding: write to same thread and same register.
+      wire same_thread0 = (w_thread_id_mux == rs_thread_id_i[i]);
+      wire same_thread1 = (rd_thread_id2_i == rs_thread_id_i[i]);
+      wire fwd0_rs = w_v_mux & same_thread0 & rs_r_v_i[i] & (w_reg_addr_mux == rs_addr_i[i]);
+      wire fwd1_rs = rd_w_v2_i & same_thread1 & rs_r_v_i[i] & (rd_addr2_i == rs_addr_i[i]);
+
+      bsg_dff
+       #(.width_p(4))
+       rs_r_v_reg
+        (.clk_i(clk_i)
+         ,.data_i({zero_rs, fwd1_rs, fwd0_rs, rs_r_v_i[i]})
+         ,.data_o({zero_rs_r, fwd1_rs_r, fwd0_rs_r, rs_r_v_r})
+         );
+
+      assign fwd_data_lo = zero_rs_r
+                           ? '0
+                           : fwd0_rs_r
+                           ? rd_data_r[0]
+                           : fwd1_rs_r
+                           ? rd_data_r[1]
+                           : rs_data_lo[i];
+
+      logic [reg_addr_width_gp-1:0] rs_addr_r;
+      logic [thread_id_width_p-1:0] rs_thread_id_r;
+      bsg_dff_en
+       #(.width_p(reg_addr_width_gp + thread_id_width_p))
+       rs_addr_reg
+        (.clk_i(clk_i)
+         ,.en_i(rs_r_v_i[i])
+         ,.data_i({rs_thread_id_i[i], rs_addr_i[i]})
+         ,.data_o({rs_thread_id_r, rs_addr_r})
+         );
+
+      logic [data_width_p-1:0] rs_data_n, rs_data_r;
+      // Check for replacement: write to same thread and same register (delayed, covers both wb and restore writes)
+      wire same_thread0_r = (w_thread_id_mux == rs_thread_id_r);
+      wire same_thread1_r = (rd_thread_id2_i == rs_thread_id_r);
+      wire replace0_rs = w_v_mux & same_thread0_r & (rs_addr_r == w_reg_addr_mux);
+      wire replace1_rs = rd_w_v2_i & same_thread1_r & (rs_addr_r == rd_addr2_i);
+      wire replace_rs = replace0_rs | replace1_rs;
+      assign rs_data_n = replace0_rs ? w_data_mux : replace1_rs ? rd_data2_i : fwd_data_lo;
+
+      bsg_dff_en
+       #(.width_p(data_width_p))
+       rs_data_reg
+        (.clk_i(clk_i)
+         ,.en_i(rs_r_v_r | replace_rs)
+         ,.data_i(rs_data_n)
+         ,.data_o(rs_data_r)
+         );
+
+      // Control signals
+      assign rs_v_li[i] = rs_r_v_i[i] & ~(fwd0_rs | fwd1_rs);
+      assign rs_addr_li[i] = rs_addr_indexed[i];
+
+      // Output: forward if we had forwarding, else use saved register data
+      assign rs_data_o[i] = rs_r_v_r ? fwd_data_lo : rs_data_r;
+    end
+
+endmodule
+
+`BSG_ABSTRACT_MODULE(bp_be_regfile_mt)
