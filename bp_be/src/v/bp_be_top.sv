@@ -1066,6 +1066,11 @@ module bp_be_top
         $fatal(1, "Context-cache issue suppression ended before FE consumed its redirect");
       context_cache_wait_for_fe_r <= (context_cache_state_r == e_context_cache_done)
                                      && !fe_ctxtsw_ready_i;
+
+      // The frontend must not refill the backend issue queue with sequential
+      // source-context instructions while a nonresident switch is in flight.
+      if (context_cache_active_li && fe_queue_ready_and_o)
+        $fatal(1, "Frontend queue reopened during a nonresident context switch");
     end
   end
 `endif
@@ -1225,6 +1230,7 @@ module bp_be_top
      ,.irq_pending_i(irq_pending_lo)
      ,.ordered_v_i(ordered_v)
      ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r | context_cache_active_li)
+     ,.context_cache_active_i(context_cache_active_li)
 
      ,.fe_queue_i(fe_queue_i)
      ,.fe_queue_v_i(fe_queue_v_i)

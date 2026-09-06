@@ -38,6 +38,7 @@ module bp_be_scheduler
    , input                                    ordered_v_i
    , input [trans_info_width_lp-1:0]          trans_info_i
    , input                                    pending_ctxtsw_sent_i
+   , input                                    context_cache_active_i
 
    // Fetch interface
    , input [fe_queue_width_lp-1:0]            fe_queue_i
@@ -430,7 +431,8 @@ module bp_be_scheduler
                               | (fe_queue_clr_li & ~ctxtsw_commit_accept_li);
 
   assign fe_queue_ready_and_o = (issue_queue_ready_and_lo | ctxtsw_commit_accept_li)
-                                & ~ctxtsw_queue_hold_li;
+                                & ~ctxtsw_queue_hold_li
+                                & ~context_cache_active_i;
   assign context_cache_drain_ready_o = issue_queue_empty_lo
                                         & ~issue_pkt_cast_o.v
                                         & ~dispatch_pkt_cast_o.v
