@@ -8,9 +8,9 @@ module bp_be_csr
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_be_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p)
-
    , localparam cfg_bus_width_lp = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
-
+   , localparam csr_context_csrs_lp = 26
+   , localparam csr_context_width_lp = csr_context_csrs_lp*dword_width_gp + rv64_priv_width_gp
    )
   (input                                     clk_i
    , input                                   reset_i
@@ -25,6 +25,7 @@ module bp_be_csr
 
    // Misc interface
    , input [retire_pkt_width_lp-1:0]         retire_pkt_i
+   , input                                   retire_ctxtsw_v_i
    , input rv64_fflags_s                     fflags_acc_i
    , input                                   frf_w_v_i
 
@@ -44,6 +45,41 @@ module bp_be_csr
    , output logic [decode_info_width_lp-1:0] decode_info_o
    , output logic [trans_info_width_lp-1:0]  trans_info_o
    , output rv64_frm_e                       frm_dyn_o
+
+   // Context switching control
+   , input [thread_id_width_p-1:0]           current_physical_thread_id_i
+   , input [context_id_width_p-1:0]          current_virtual_context_id_i
+
+   // Physical CSR bank save/restore for nonresident virtual contexts.
+   , input                                   csr_context_restore_v_i
+   , input                                   csr_context_restore_reset_i
+   , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
+   , input [vaddr_width_p-1:0]               csr_context_restore_npc_i
+   , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
+
+   // Bootstrap: write a target NPC for a virtual context (CSR 0x801)
+   // Write format: upper bits = context_id, lower vaddr_width_p bits = target NPC
+   , output logic                            ctx_npc_write_v_o
+   , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
+   , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
+
+   // CSR 0x802 remote register write into a virtual context
+   // Write format: bits[38:0]=value, context_id, reg_addr, fp_sel
+   , output logic                            ctx_rpush_v_o
+   , output logic                            ctx_rpush_fp_v_o
+   , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o
+   , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
+   , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
+
+   // Compatibility: keep every project context CSR in the collision-free custom range.
+   // Context-cache L1 D$ service: 0x803 data/result, 0x804 command/status.
+   , input                                   ctx_l1_ready_i
+   , input                                   ctx_l1_resp_v_i
+   , input [dword_width_gp-1:0]              ctx_l1_resp_data_i
+   , output logic                            ctx_l1_cmd_v_o
+   , output logic                            ctx_l1_cmd_w_o
+   , output logic [paddr_width_p-1:0]        ctx_l1_cmd_paddr_o
+   , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
    );
 
   // Declare parameterizable structs
@@ -57,8 +93,43 @@ module bp_be_csr
   `bp_cast_o(bp_be_decode_info_s, decode_info);
   `bp_cast_o(bp_be_trans_info_s, trans_info);
 
+  typedef struct packed {
+    logic [dword_width_gp-1:0] dcsr;
+    logic [dword_width_gp-1:0] dpc;
+    logic [dword_width_gp-1:0] dscratch0;
+    logic [dword_width_gp-1:0] dscratch1;
+    logic [dword_width_gp-1:0] mstatus;
+    logic [dword_width_gp-1:0] medeleg;
+    logic [dword_width_gp-1:0] mideleg;
+    logic [dword_width_gp-1:0] mie;
+    logic [dword_width_gp-1:0] mtvec;
+    logic [dword_width_gp-1:0] mcounteren;
+    logic [dword_width_gp-1:0] mscratch;
+    logic [dword_width_gp-1:0] mepc;
+    logic [dword_width_gp-1:0] mcause;
+    logic [dword_width_gp-1:0] mtval;
+    logic [dword_width_gp-1:0] mip;
+    logic [dword_width_gp-1:0] mcycle;
+    logic [dword_width_gp-1:0] minstret;
+    logic [dword_width_gp-1:0] mcountinhibit;
+    logic [dword_width_gp-1:0] stvec;
+    logic [dword_width_gp-1:0] scounteren;
+    logic [dword_width_gp-1:0] sscratch;
+    logic [dword_width_gp-1:0] sepc;
+    logic [dword_width_gp-1:0] scause;
+    logic [dword_width_gp-1:0] stval;
+    logic [dword_width_gp-1:0] satp;
+    logic [dword_width_gp-1:0] fcsr;
+    logic [rv64_priv_width_gp-1:0] priv_mode;
+  } bp_be_csr_context_s;
+
+  bp_be_csr_context_s csr_context_restore;
+  bp_be_csr_context_s csr_context_save;
+  assign csr_context_restore = csr_context_restore_data_i;
+
   // The muxed and demuxed CSR outputs
   logic [dword_width_gp-1:0] csr_data_lo;
+  logic [dword_width_gp-1:0] ctx_l1_data_r;
   logic exception_v_lo, interrupt_v_lo;
 
   rv64_mstatus_s sstatus_wmask_li, sstatus_rmask_li;
@@ -138,6 +209,37 @@ module bp_be_csr
   `declare_csr(fcsr);
   wire [dword_width_gp-1:0] fflags_lo = fcsr_lo.fflags;
   wire [dword_width_gp-1:0] frm_lo    = fcsr_lo.frm;
+
+  assign csr_context_save =
+    '{dcsr: dword_width_gp'(dcsr_lo)
+      ,dpc: dword_width_gp'(dpc_lo)
+      ,dscratch0: dword_width_gp'(dscratch0_lo)
+      ,dscratch1: dword_width_gp'(dscratch1_lo)
+      ,mstatus: dword_width_gp'(mstatus_lo)
+      ,medeleg: dword_width_gp'(medeleg_lo)
+      ,mideleg: dword_width_gp'(mideleg_lo)
+      ,mie: dword_width_gp'(mie_lo)
+      ,mtvec: dword_width_gp'(mtvec_lo)
+      ,mcounteren: dword_width_gp'(mcounteren_lo)
+      ,mscratch: dword_width_gp'(mscratch_lo)
+      ,mepc: dword_width_gp'(mepc_lo)
+      ,mcause: dword_width_gp'(mcause_lo)
+      ,mtval: dword_width_gp'(mtval_lo)
+      ,mip: dword_width_gp'(mip_lo)
+      ,mcycle: dword_width_gp'(mcycle_lo)
+      ,minstret: dword_width_gp'(minstret_lo)
+      ,mcountinhibit: dword_width_gp'(mcountinhibit_lo)
+      ,stvec: dword_width_gp'(stvec_lo)
+      ,scounteren: dword_width_gp'(scounteren_lo)
+      ,sscratch: dword_width_gp'(sscratch_lo)
+      ,sepc: dword_width_gp'(sepc_lo)
+      ,scause: dword_width_gp'(scause_lo)
+      ,stval: dword_width_gp'(stval_lo)
+      ,satp: dword_width_gp'(satp_lo)
+      ,fcsr: dword_width_gp'(fcsr_lo)
+      ,priv_mode: priv_mode_r
+      };
+  assign csr_context_save_data_o = csr_context_save;
 
   wire dgie = ~is_debug_mode;
   wire mgie = ~is_debug_mode & (mstatus_r.mie & is_m_mode) | is_s_mode | is_u_mode;
@@ -222,7 +324,7 @@ module bp_be_csr
      ,.v_o(s_interrupt_icode_v_li)
      );
 
-  wire                               csr_w_v_li = retire_pkt_cast_i.special.csrw;
+  wire                               csr_w_v_li = retire_pkt_cast_i.special.csrw & ~retire_ctxtsw_v_i;
   wire [rv64_reg_data_width_gp-1:0] csr_data_li = retire_pkt_cast_i.data;
   wire [rv64_csr_addr_width_gp-1:0] csr_addr_li = retire_pkt_cast_i.instr.t.itype.imm12;
   wire [rv64_funct3_width_gp-1:0]   csr_func_li = retire_pkt_cast_i.instr.t.itype.funct3;
@@ -295,7 +397,13 @@ module bp_be_csr
         ? retire_pkt_cast_i.npc
         : apc_r;
 
-  assign apc_n = (enter_debug | cfg_bus_cast_i.freeze) ? debug_halt_pc : core_npc;
+  // APC is pipeline bookkeeping rather than an architectural CSR, but it is
+  // nevertheless context-specific: replay and exception paths use it when no
+  // instruction retires.  Restore it alongside the selected physical CSR bank
+  // so a newly installed virtual context cannot inherit its victim's PC.
+  assign apc_n = (enter_debug | cfg_bus_cast_i.freeze)
+                 ? debug_halt_pc
+                 : csr_context_restore_v_i ? csr_context_restore_npc_i : core_npc;
 
   assign translation_en_n = ((priv_mode_n < `PRIV_MODE_M) & (satp_li.mode == 4'd8));
   bsg_dff_reset
@@ -380,6 +488,16 @@ module bp_be_csr
         {`CSR_ADDR_DPC          }: csr_data_lo = dpc_lo;
         {`CSR_ADDR_DSCRATCH0    }: csr_data_lo = dscratch0_lo;
         {`CSR_ADDR_DSCRATCH1    }: csr_data_lo = dscratch1_lo;
+        12'h800:  // CTXT CSR - Current thread/context ID
+          csr_data_lo = dword_width_gp'(current_virtual_context_id_i);
+        12'h801:  // Thread NPC seed - write-only, reads as 0
+          csr_data_lo = '0;
+        12'h802:  // Thread register seed / remote register write - write-only, reads as 0
+          csr_data_lo = '0;
+        12'h803:  // Context-cache L1 service data/result
+          csr_data_lo = ctx_l1_data_r;
+        12'h804:  // Context-cache L1 service status
+          csr_data_lo = {{(dword_width_gp-2){1'b0}}, ctx_l1_resp_v_i, ctx_l1_ready_i};
         default:
           begin
             csr_data_lo = '0;
@@ -627,6 +745,72 @@ module bp_be_csr
       // Set FS to dirty if: fflags set, frf written, fcsr written
       mstatus_li.fs |= {2{csr_w_v_li & csr_fany_li}};
       mstatus_li.fs |= {2{retire_pkt_cast_i.instret & instr_fany_li}};
+
+      if (csr_context_restore_v_i) begin
+        if (csr_context_restore_reset_i) begin
+          priv_mode_n = `PRIV_MODE_M;
+          fcsr_li = '0;
+
+          stvec_li = '0;
+          scounteren_li = '0;
+          sscratch_li = '0;
+          sepc_li = '0;
+          scause_li = '0;
+          stval_li = '0;
+          satp_li = '0;
+
+          mstatus_li = '0;
+          medeleg_li = '0;
+          mideleg_li = '0;
+          mie_li = '0;
+          mtvec_li = '0;
+          mcounteren_li = '0;
+          mscratch_li = '0;
+          mepc_li = '0;
+          mcause_li = '0;
+          mtval_li = '0;
+          mip_li = '0;
+          mcycle_li = '0;
+          minstret_li = '0;
+          mcountinhibit_li = '0;
+
+          dcsr_li = '0;
+          dpc_li = '0;
+          dscratch0_li = '0;
+          dscratch1_li = '0;
+        end else begin
+          priv_mode_n = csr_context_restore.priv_mode;
+          fcsr_li = csr_context_restore.fcsr;
+
+          stvec_li = csr_context_restore.stvec;
+          scounteren_li = csr_context_restore.scounteren;
+          sscratch_li = csr_context_restore.sscratch;
+          sepc_li = csr_context_restore.sepc;
+          scause_li = csr_context_restore.scause;
+          stval_li = csr_context_restore.stval;
+          satp_li = csr_context_restore.satp;
+
+          mstatus_li = csr_context_restore.mstatus;
+          medeleg_li = csr_context_restore.medeleg;
+          mideleg_li = csr_context_restore.mideleg;
+          mie_li = csr_context_restore.mie;
+          mtvec_li = csr_context_restore.mtvec;
+          mcounteren_li = csr_context_restore.mcounteren;
+          mscratch_li = csr_context_restore.mscratch;
+          mepc_li = csr_context_restore.mepc;
+          mcause_li = csr_context_restore.mcause;
+          mtval_li = csr_context_restore.mtval;
+          mip_li = csr_context_restore.mip;
+          mcycle_li = csr_context_restore.mcycle;
+          minstret_li = csr_context_restore.minstret;
+          mcountinhibit_li = csr_context_restore.mcountinhibit;
+
+          dcsr_li = csr_context_restore.dcsr;
+          dpc_li = csr_context_restore.dpc;
+          dscratch0_li = csr_context_restore.dscratch0;
+          dscratch1_li = csr_context_restore.dscratch1;
+        end
+      end
     end
 
   assign irq_pending_o = (~dcsr_lo.step | dcsr_lo.stepie)
@@ -643,7 +827,23 @@ module bp_be_csr
       default: csr_r_data_o = csr_data_lo;
     endcase
 
-  assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special, retire_pkt_cast_i.exception};
+  wire ctxt_csr_addr_li = (csr_addr_li == 12'h800)
+                           | (csr_addr_li == 12'h801)
+                           | (csr_addr_li == 12'h802)
+                           | (csr_addr_li == 12'h803)
+                           | (csr_addr_li == 12'h804);
+
+  assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special.dcache_miss
+                                                 ,retire_pkt_cast_i.special.fencei
+                                                 ,retire_pkt_cast_i.special.sfence_vma
+                                                 ,retire_pkt_cast_i.special.dbreak
+                                                 ,retire_pkt_cast_i.special.dret
+                                                 ,retire_pkt_cast_i.special.mret
+                                                 ,retire_pkt_cast_i.special.sret
+                                                 ,retire_pkt_cast_i.special.wfi
+                                                 ,(csr_w_v_li & ~ctxt_csr_addr_li)
+                                                 ,retire_pkt_cast_i.exception
+                                                 };
   assign commit_pkt_cast_o.queue_v           = retire_pkt_cast_i.queue_v & ~|retire_pkt_cast_i.exception;
   assign commit_pkt_cast_o.instret           = retire_pkt_cast_i.instret;
   assign commit_pkt_cast_o.size              = retire_pkt_cast_i.size;
@@ -662,7 +862,8 @@ module bp_be_csr
   assign commit_pkt_cast_o.sfence            = retire_pkt_cast_i.special.sfence_vma;
   assign commit_pkt_cast_o.wfi               = retire_pkt_cast_i.special.wfi;
   assign commit_pkt_cast_o.eret              = ret_v;
-  assign commit_pkt_cast_o.csrw              = retire_pkt_cast_i.special.csrw;
+  assign commit_pkt_cast_o.csrw              = csr_w_v_li & ~ctxt_csr_addr_li;
+  assign commit_pkt_cast_o.ctxtsw            = retire_pkt_cast_i.instret & retire_ctxtsw_v_i;
   assign commit_pkt_cast_o.resume            = retire_pkt_cast_i.exception.resume;
   assign commit_pkt_cast_o.itlb_miss         = retire_pkt_cast_i.exception.itlb_miss;
   assign commit_pkt_cast_o.icache_miss       = retire_pkt_cast_i.exception.icache_miss;
@@ -673,6 +874,8 @@ module bp_be_csr
   assign commit_pkt_cast_o.itlb_fill_v       = retire_pkt_cast_i.exception.itlb_fill;
   assign commit_pkt_cast_o.dtlb_fill_v       = retire_pkt_cast_i.exception.dtlb_fill;
   assign commit_pkt_cast_o.iscore_v          = retire_pkt_cast_i.iscore;
+  assign commit_pkt_cast_o.fdirty_v          = (csr_w_v_li & csr_fany_li)
+                                               | (retire_pkt_cast_i.instret & instr_fany_li);
   assign commit_pkt_cast_o.fscore_v          = retire_pkt_cast_i.fscore;
 
   wire mprv_mem_v = (~is_debug_mode | dcsr_lo.mprven)
@@ -685,6 +888,7 @@ module bp_be_csr
   assign trans_info_cast_o.translation_en = translation_en_r | mprv_mem_v;
   assign trans_info_cast_o.mstatus_sum = mstatus_lo.sum;
   assign trans_info_cast_o.mstatus_mxr = mstatus_lo.mxr;
+  assign trans_info_cast_o.asid        = satp_lo.asid;
 
   assign decode_info_cast_o.m_mode     = is_m_mode;
   assign decode_info_cast_o.s_mode     = is_s_mode;
@@ -702,5 +906,50 @@ module bp_be_csr
 
   assign frm_dyn_o = rv64_frm_e'(fcsr_lo.frm);
 
-endmodule
+  // CSR 0x801 write: set the NPC for the virtual context whose ID is in the upper bits
+  // Write format: csr_data_li[vaddr_width_p +: context_id_width_p] = context_id
+  //               csr_data_li[vaddr_width_p-1:0]                   = target NPC
+  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801);
+  assign ctx_npc_write_virtual_context_id_o = csr_data_li[vaddr_width_p +: context_id_width_p];
+  assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
 
+  // CSR 0x802 write: remote register write into a target virtual context
+  // Write format: bits[38:0]                                    = value (39-bit vaddr width)
+  //               bits[38+context_id_width_p : 39]              = context_id
+  //               bits[38+context_id_width_p+reg_addr_width_gp : 39+context_id_width_p] = reg_addr
+  //               next bit                                      = fp_sel (1=FP regfile, 0=INT regfile)
+  localparam fp_sel_bit_lp = vaddr_width_p + context_id_width_p + reg_addr_width_gp;
+  wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h802);
+  assign ctx_rpush_v_o    = rpush_v & ~csr_data_li[fp_sel_bit_lp];
+  assign ctx_rpush_fp_v_o = rpush_v &  csr_data_li[fp_sel_bit_lp];
+  assign ctx_rpush_virtual_context_id_o  = csr_data_li[vaddr_width_p +: context_id_width_p];
+  assign ctx_rpush_reg_o  = csr_data_li[vaddr_width_p + context_id_width_p +: reg_addr_width_gp];
+  assign ctx_rpush_data_o = {{(dpath_width_gp - vaddr_width_p){1'b0}}, csr_data_li[0 +: vaddr_width_p]};
+
+  wire ctx_l1_data_write_v_li = csr_w_v_li & (csr_addr_li == 12'h803);
+  wire ctx_l1_cmd_write_v_li = csr_w_v_li & (csr_addr_li == 12'h804);
+  assign ctx_l1_cmd_v_o = ctx_l1_cmd_write_v_li & ctx_l1_ready_i;
+  assign ctx_l1_cmd_w_o = csr_data_li[dword_width_gp-1];
+  assign ctx_l1_cmd_paddr_o = csr_data_li[0+:paddr_width_p];
+  assign ctx_l1_cmd_data_o = ctx_l1_data_r;
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ctx_l1_data_r <= '0;
+    else if (ctx_l1_resp_v_i)
+      ctx_l1_data_r <= ctx_l1_resp_data_i;
+    else if (ctx_l1_data_write_v_li)
+      ctx_l1_data_r <= csr_data_li;
+
+  // Debug: trace every CSR write
+  // always @(posedge clk_i) begin
+  //   if (!reset_i && csr_w_v_li) begin
+  //     $display("[CSR @%0t] csrw: addr=0x%03x data=0x%016x csr_ctxt_write_v=%0b ctx_npc_write_v=%0b",
+  //              $time, csr_addr_li, csr_data_li, csr_ctxt_write_v_o, ctx_npc_write_v_o);
+  //     if (csr_addr_li == 12'h801)
+  //       $display("[CSR @%0t] CSR0x801 write: raw_data=0x%016x -> tid=%0d npc=0x%08x",
+  //                $time, csr_data_li, ctx_npc_write_virtual_context_id_o, ctx_npc_write_npc_o);
+  //   end
+  // end
+
+endmodule

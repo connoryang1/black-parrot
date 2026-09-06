@@ -26,8 +26,10 @@ module bp_be_calculator_top
 
    // Generated parameters
    , localparam cfg_bus_width_lp        = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
+   , localparam csr_context_csrs_lp     = 26
+   , localparam csr_context_width_lp    = csr_context_csrs_lp*dword_width_gp + rv64_priv_width_gp
    )
-  (input                                             clk_i
+  (input                                            clk_i
    , input                                           reset_i
 
    , input [cfg_bus_width_lp-1:0]                    cfg_bus_i
@@ -87,6 +89,55 @@ module bp_be_calculator_top
    , input [dcache_stat_mem_pkt_width_lp-1:0]        stat_mem_pkt_i
    , output logic                                    stat_mem_pkt_yumi_o
    , output logic [dcache_stat_info_width_lp-1:0]    stat_mem_o
+
+   // Current thread selects the active per-thread CSR instance.
+   , input [thread_id_width_p-1:0]                   current_physical_thread_id_i
+   // Software-visible virtual context ID returned by CSR 0x800.
+   , input [context_id_width_p-1:0]                  current_virtual_context_id_i
+   // Retire thread owns the instruction currently committing in the backend.
+   , input [thread_id_width_p-1:0]                   retire_thread_id_i
+
+   // Save/restore physical CSR state for nonresident virtual contexts.
+   , input                                           csr_context_restore_v_i
+   , input                                           csr_context_restore_reset_i
+   , input [thread_id_width_p-1:0]                   csr_context_restore_physical_thread_id_i
+   , input [csr_context_width_lp-1:0]                csr_context_restore_data_i
+   , input [vaddr_width_p-1:0]                       csr_context_restore_npc_i
+   , input [thread_id_width_p-1:0]                   csr_context_save_physical_thread_id_i
+   , output logic [csr_context_width_lp-1:0]         csr_context_save_data_o
+
+   // Bootstrap: write target NPC for a virtual context (CSR 0x801)
+   , output logic                                    ctx_npc_write_v_o
+   , output logic [context_id_width_p-1:0]           ctx_npc_write_virtual_context_id_o
+   , output logic [vaddr_width_p-1:0]                ctx_npc_write_npc_o
+
+   // CSR 0x802 remote register write into a virtual context
+   , output logic                                    ctx_rpush_v_o
+   , output logic                                    ctx_rpush_fp_v_o
+   , output logic [context_id_width_p-1:0]           ctx_rpush_virtual_context_id_o
+   , output logic [reg_addr_width_gp-1:0]            ctx_rpush_reg_o
+   , output logic [dpath_width_gp-1:0]               ctx_rpush_data_o
+
+   // Serialized context-cache L1 D$ service path.
+   , input                                           context_cache_dcache_v_i
+   , input                                           context_cache_dcache_w_i
+   , input [reg_addr_width_gp-1:0]                   context_cache_dcache_id_i
+   , input [paddr_width_p-1:0]                       context_cache_dcache_paddr_i
+   , input [dword_width_gp-1:0]                      context_cache_dcache_data_i
+   , output logic                                    context_cache_dcache_yumi_o
+   , output logic                                    context_cache_dcache_ready_o
+   , output logic                                    context_cache_dcache_resp_v_o
+   , output logic [reg_addr_width_gp-1:0]            context_cache_dcache_resp_id_o
+   , output logic [dword_width_gp-1:0]               context_cache_dcache_resp_data_o
+
+   // Early classified ctxtsw event. Observable only until BE context state
+   // consumes it as an architectural mini-commit.
+   , output logic                                    fast_ctxtsw_v_o
+   , output logic [thread_id_width_p-1:0]            fast_ctxtsw_old_physical_thread_id_o
+   , output logic [context_id_width_p-1:0]           fast_ctxtsw_virtual_context_id_o
+   , output logic [vaddr_width_p-1:0]                fast_ctxtsw_resume_npc_o
+
+   , output logic                                    context_cache_drain_ready_o
    );
 
   // Declare parameterizable structs
@@ -109,6 +160,53 @@ module bp_be_calculator_top
   bp_be_wb_pkt_s [pipe_stage_els_lp-1:0] comp_stage_r;
 
   rv64_frm_e frm_dyn_lo;
+  bp_be_trans_info_s reservation_trans_info_lo;
+  logic ctx_l1_cmd_v_lo, ctx_l1_cmd_w_lo;
+  logic [paddr_width_p-1:0] ctx_l1_cmd_paddr_lo;
+  logic [dword_width_gp-1:0] ctx_l1_cmd_data_lo;
+  logic ctx_l1_cmd_pending_r;
+  logic pipe_mem_context_cache_dcache_v_li;
+  logic pipe_mem_context_cache_dcache_w_li;
+  logic [reg_addr_width_gp-1:0] pipe_mem_context_cache_dcache_id_li;
+  logic [paddr_width_p-1:0] pipe_mem_context_cache_dcache_paddr_li;
+  logic [dword_width_gp-1:0] pipe_mem_context_cache_dcache_data_li;
+  logic pipe_mem_context_cache_dcache_yumi_lo;
+  logic pipe_mem_context_cache_dcache_ready_lo;
+  logic pipe_mem_context_cache_dcache_resp_v_lo;
+  logic [reg_addr_width_gp-1:0] pipe_mem_context_cache_dcache_resp_id_lo;
+  logic [dword_width_gp-1:0] pipe_mem_context_cache_dcache_resp_data_lo;
+  wire ctx_l1_ready_li = pipe_mem_context_cache_dcache_ready_lo & ~context_cache_dcache_v_i;
+  wire ctx_l1_cmd_fire_li = ctx_l1_cmd_v_lo & pipe_mem_context_cache_dcache_yumi_lo;
+  wire ctx_l1_resp_v_li = ctx_l1_cmd_pending_r & pipe_mem_context_cache_dcache_resp_v_lo;
+  assign pipe_mem_context_cache_dcache_v_li = context_cache_dcache_v_i
+                                              | (ctx_l1_cmd_v_lo & ctx_l1_ready_li);
+  assign pipe_mem_context_cache_dcache_w_li = context_cache_dcache_v_i
+                                              ? context_cache_dcache_w_i
+                                              : ctx_l1_cmd_w_lo;
+  assign pipe_mem_context_cache_dcache_id_li = context_cache_dcache_v_i
+                                               ? context_cache_dcache_id_i
+                                               : '0;
+  assign pipe_mem_context_cache_dcache_paddr_li = context_cache_dcache_v_i
+                                                  ? context_cache_dcache_paddr_i
+                                                  : ctx_l1_cmd_paddr_lo;
+  assign pipe_mem_context_cache_dcache_data_li = context_cache_dcache_v_i
+                                                 ? context_cache_dcache_data_i
+                                                 : ctx_l1_cmd_data_lo;
+  assign context_cache_dcache_yumi_o = context_cache_dcache_v_i
+                                       & pipe_mem_context_cache_dcache_yumi_lo;
+  assign context_cache_dcache_ready_o = pipe_mem_context_cache_dcache_ready_lo;
+  assign context_cache_dcache_resp_v_o = pipe_mem_context_cache_dcache_resp_v_lo
+                                         & ~ctx_l1_cmd_pending_r;
+  assign context_cache_dcache_resp_id_o = pipe_mem_context_cache_dcache_resp_id_lo;
+  assign context_cache_dcache_resp_data_o = pipe_mem_context_cache_dcache_resp_data_lo;
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ctx_l1_cmd_pending_r <= 1'b0;
+    else if (ctx_l1_cmd_fire_li)
+      ctx_l1_cmd_pending_r <= 1'b1;
+    else if (ctx_l1_resp_v_li)
+      ctx_l1_cmd_pending_r <= 1'b0;
 
   bp_be_wb_pkt_s pipe_long_iwb_pkt, pipe_long_fwb_pkt;
 
@@ -135,17 +233,23 @@ module bp_be_calculator_top
 
   bp_be_wb_pkt_s pipe_mem_late_wb_pkt;
   logic pipe_mem_late_wb_v, pipe_mem_late_wb_yumi;
+  logic calculator_pipe_active_lo;
+  wire pipe_flush_v = commit_pkt_cast_o.npc_w_v | commit_pkt_cast_o.ctxtsw;
 
   // Generating match vector for bypass
   logic [2:0][pipe_stage_els_lp-1:0] match_rs;
   logic [pipe_stage_els_lp-1:0][dpath_width_gp-1:0] forward_data;
   for (genvar i = 0; i < pipe_stage_els_lp; i++)
     begin : forward_match
-      assign match_rs[0][i] = ((i < 4) & dispatch_pkt_cast_i.decode.irs1_r_v & comp_stage_r[i].ird_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs1_addr == comp_stage_r[i].rd_addr))
-                              || (dispatch_pkt_cast_i.decode.frs1_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs1_addr == comp_stage_r[i].rd_addr));
-      assign match_rs[1][i] = ((i < 4) & dispatch_pkt_cast_i.decode.irs2_r_v & comp_stage_r[i].ird_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs2_addr == comp_stage_r[i].rd_addr))
-                              || (dispatch_pkt_cast_i.decode.frs2_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs2_addr == comp_stage_r[i].rd_addr));
-      assign match_rs[2][i] = (dispatch_pkt_cast_i.decode.frs3_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs3_addr == comp_stage_r[i].rd_addr));
+      wire same_thread_li = dispatch_pkt_cast_i.thread_id[0 +: thread_id_width_p] == comp_stage_r[i].thread_id;
+      assign match_rs[0][i] = same_thread_li
+                              & (((i < 4) & dispatch_pkt_cast_i.decode.irs1_r_v & comp_stage_r[i].ird_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs1_addr == comp_stage_r[i].rd_addr))
+                                 || (dispatch_pkt_cast_i.decode.frs1_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs1_addr == comp_stage_r[i].rd_addr)));
+      assign match_rs[1][i] = same_thread_li
+                              & (((i < 4) & dispatch_pkt_cast_i.decode.irs2_r_v & comp_stage_r[i].ird_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs2_addr == comp_stage_r[i].rd_addr))
+                                 || (dispatch_pkt_cast_i.decode.frs2_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs2_addr == comp_stage_r[i].rd_addr)));
+      assign match_rs[2][i] = same_thread_li
+                              & (dispatch_pkt_cast_i.decode.frs3_r_v & comp_stage_r[i].frd_w_v & (dispatch_pkt_cast_i.instr.t.fmatype.rs3_addr == comp_stage_r[i].rd_addr));
 
       assign forward_data[i] = comp_stage_n[i+1].rd_data;
     end
@@ -194,7 +298,7 @@ module bp_be_calculator_top
      ,.cfg_bus_i(cfg_bus_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
 
      ,.retire_v_i(exc_stage_r[2].v)
      ,.retire_queue_v_i(exc_stage_r[2].queue_v)
@@ -219,7 +323,35 @@ module bp_be_calculator_top
 
      ,.decode_info_o(decode_info_o)
      ,.trans_info_o(trans_info_o)
+     ,.reservation_trans_info_o(reservation_trans_info_lo)
      ,.frm_dyn_o(frm_dyn_lo)
+
+     // Context switching
+     ,.current_physical_thread_id_i(current_physical_thread_id_i)
+     ,.current_virtual_context_id_i(current_virtual_context_id_i)
+     ,.retire_thread_id_i(retire_thread_id_i)
+     ,.csr_context_restore_v_i(csr_context_restore_v_i)
+     ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
+     ,.csr_context_restore_physical_thread_id_i(csr_context_restore_physical_thread_id_i)
+     ,.csr_context_restore_data_i(csr_context_restore_data_i)
+     ,.csr_context_restore_npc_i(csr_context_restore_npc_i)
+     ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_i)
+     ,.csr_context_save_data_o(csr_context_save_data_o)
+     ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
+     ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_o)
+     ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
+     ,.ctx_rpush_v_o(ctx_rpush_v_o)
+     ,.ctx_rpush_fp_v_o(ctx_rpush_fp_v_o)
+     ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_o)
+     ,.ctx_rpush_reg_o(ctx_rpush_reg_o)
+     ,.ctx_rpush_data_o(ctx_rpush_data_o)
+     ,.ctx_l1_ready_i(ctx_l1_ready_li)
+     ,.ctx_l1_resp_v_i(ctx_l1_resp_v_li)
+     ,.ctx_l1_resp_data_i(pipe_mem_context_cache_dcache_resp_data_lo)
+     ,.ctx_l1_cmd_v_o(ctx_l1_cmd_v_lo)
+     ,.ctx_l1_cmd_w_o(ctx_l1_cmd_w_lo)
+     ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_lo)
+     ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_lo)
      );
 
   // Integer pipe: 1 cycle latency
@@ -231,7 +363,7 @@ module bp_be_calculator_top
 
      ,.en_i(~exc_stage_r[0].ispec_v)
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
 
      ,.data_o(pipe_int_early_data_lo)
      ,.v_o(pipe_int_early_data_v_lo)
@@ -246,6 +378,13 @@ module bp_be_calculator_top
   assign br_pkt_cast_o.btaken = br_pkt_cast_o.v & pipe_int_early_btaken_lo;
   assign br_pkt_cast_o.bspec  = br_pkt_cast_o.v & exc_stage_r[0].ispec_v;
   assign br_pkt_cast_o.npc    = pipe_int_early_npc_lo;
+
+  assign fast_ctxtsw_v_o = reservation_r.v
+                            & reservation_r.ctxtsw_v
+                            & ~pipe_flush_v;
+  assign fast_ctxtsw_old_physical_thread_id_o = reservation_r.thread_id[0 +: thread_id_width_p];
+  assign fast_ctxtsw_virtual_context_id_o = reservation_r.ctxtsw_target_tid;
+  assign fast_ctxtsw_resume_npc_o = reservation_r.pc + (reservation_r.size << 1'b1);
 
   logic [dword_width_gp-1:0] rs2_val_r;
   if (integer_support_p[e_catchup])
@@ -297,7 +436,7 @@ module bp_be_calculator_top
 
          ,.en_i(exc_stage_r[1].ispec_v)
          ,.reservation_i(catchup_reservation_r)
-         ,.flush_i(commit_pkt_cast_o.npc_w_v)
+         ,.flush_i(pipe_flush_v)
 
          ,.data_o(pipe_int_catchup_data_lo)
          ,.v_o(pipe_int_catchup_data_v_lo)
@@ -337,7 +476,7 @@ module bp_be_calculator_top
      ,.reset_i(reset_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.frm_dyn_i(frm_dyn_lo)
 
      ,.data_o(pipe_aux_data_lo)
@@ -354,7 +493,7 @@ module bp_be_calculator_top
 
      ,.cfg_bus_i(cfg_bus_i)
 
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.sfence_i(commit_pkt_cast_o.sfence)
 
      ,.busy_o(mem_busy_o)
@@ -412,7 +551,18 @@ module bp_be_calculator_top
      ,.late_wb_pkt_o(pipe_mem_late_wb_pkt)
      ,.late_wb_v_o(pipe_mem_late_wb_v)
 
-     ,.trans_info_i(trans_info_o)
+     ,.trans_info_i(reservation_trans_info_lo)
+
+     ,.context_cache_dcache_v_i(pipe_mem_context_cache_dcache_v_li)
+     ,.context_cache_dcache_w_i(pipe_mem_context_cache_dcache_w_li)
+     ,.context_cache_dcache_id_i(pipe_mem_context_cache_dcache_id_li)
+     ,.context_cache_dcache_paddr_i(pipe_mem_context_cache_dcache_paddr_li)
+     ,.context_cache_dcache_data_i(pipe_mem_context_cache_dcache_data_li)
+     ,.context_cache_dcache_yumi_o(pipe_mem_context_cache_dcache_yumi_lo)
+     ,.context_cache_dcache_ready_o(pipe_mem_context_cache_dcache_ready_lo)
+     ,.context_cache_dcache_resp_v_o(pipe_mem_context_cache_dcache_resp_v_lo)
+     ,.context_cache_dcache_resp_id_o(pipe_mem_context_cache_dcache_resp_id_lo)
+     ,.context_cache_dcache_resp_data_o(pipe_mem_context_cache_dcache_resp_data_lo)
      );
 
   // Floating point pipe: 3/4 cycle latency
@@ -423,7 +573,7 @@ module bp_be_calculator_top
      ,.reset_i(reset_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.frm_dyn_i(frm_dyn_lo)
 
      ,.imul_data_o(pipe_mul_data_lo)
@@ -441,7 +591,7 @@ module bp_be_calculator_top
      ,.reset_i(reset_i)
 
      ,.reservation_i(reservation_r)
-     ,.flush_i(commit_pkt_cast_o.npc_w_v)
+     ,.flush_i(pipe_flush_v)
      ,.ibusy_o(idiv_busy_o)
      ,.fbusy_o(fdiv_busy_o)
      ,.frm_dyn_i(frm_dyn_lo)
@@ -483,6 +633,24 @@ module bp_be_calculator_top
   assign late_wb_v_o = |late_wb_grants_lo;
   assign late_wb_force_o = pipe_mem_late_wb_v;
 
+  always_comb begin
+    calculator_pipe_active_lo = reservation_r.v | dispatch_pkt_cast_i.v;
+    for (int i = 0; i < pipe_stage_els_lp; i++) begin
+      calculator_pipe_active_lo |= exc_stage_r[i].v;
+      calculator_pipe_active_lo |= comp_stage_r[i].ird_w_v | comp_stage_r[i].frd_w_v;
+    end
+  end
+
+  assign context_cache_drain_ready_o = ~calculator_pipe_active_lo
+                                        & ~mem_busy_o
+                                        & mem_ordered_o
+                                        & ~idiv_busy_o
+                                        & ~fdiv_busy_o
+                                        & ~pipe_mem_late_wb_v
+                                        & ~pipe_long_idata_v_lo
+                                        & ~pipe_long_fdata_v_lo
+                                        & ~late_wb_v_o;
+
   // If a pipeline has completed an instruction (pipe_xxx_v), then mux in the calculated result.
   // Else, mux in the previous stage of the completion pipe. Since we are single issue and have
   //   static latencies, we cannot have two pipelines complete at the same time.
@@ -493,7 +661,8 @@ module bp_be_calculator_top
         begin : comp_stage
           // Normally, shift down in the pipe
           comp_stage_n[i] = (i == 0)
-            ? '{ird_w_v    : dispatch_pkt_cast_i.decode.irf_w_v
+            ? '{thread_id  : dispatch_pkt_cast_i.thread_id[0 +: thread_id_width_p]
+                ,ird_w_v   : dispatch_pkt_cast_i.decode.irf_w_v
                 ,frd_w_v   : dispatch_pkt_cast_i.decode.frf_w_v
                 ,rd_addr   : dispatch_pkt_cast_i.instr.t.rtype.rd_addr
                 ,default: '0
@@ -563,14 +732,18 @@ module bp_be_calculator_top
           exc_stage_n[0].spec                     |= dispatch_pkt_cast_i.special;
           exc_stage_n[0].exc                      |= dispatch_pkt_cast_i.exception;
 
-          exc_stage_n[0].v                        &= ~commit_pkt_cast_o.npc_w_v | dispatch_pkt_cast_i.nspec_v;
-          exc_stage_n[1].v                        &= ~commit_pkt_cast_o.npc_w_v | exc_stage_r[0].nspec_v;
-          exc_stage_n[2].v                        &= ~commit_pkt_cast_o.npc_w_v | exc_stage_r[1].nspec_v;
-          exc_stage_n[3].v                        &=  commit_pkt_cast_o.instret | exc_stage_r[2].nspec_v;
+          exc_stage_n[0].v                        &= (~pipe_flush_v | dispatch_pkt_cast_i.nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
+          exc_stage_n[1].v                        &= (~pipe_flush_v | exc_stage_r[0].nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
+          exc_stage_n[2].v                        &= (~pipe_flush_v | exc_stage_r[1].nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
+          exc_stage_n[3].v                        &= (commit_pkt_cast_o.instret | exc_stage_r[2].nspec_v)
+                                                     & ~commit_pkt_cast_o.ctxtsw;
 
-          exc_stage_n[0].queue_v                  &= ~commit_pkt_cast_o.npc_w_v;
-          exc_stage_n[1].queue_v                  &= ~commit_pkt_cast_o.npc_w_v;
-          exc_stage_n[2].queue_v                  &= ~commit_pkt_cast_o.npc_w_v;
+          exc_stage_n[0].queue_v                  &= ~pipe_flush_v;
+          exc_stage_n[1].queue_v                  &= ~pipe_flush_v;
+          exc_stage_n[2].queue_v                  &= ~pipe_flush_v;
 
           exc_stage_n[1].exc.illegal_instr        |= pipe_sys_illegal_instr_lo;
 
@@ -603,4 +776,3 @@ module bp_be_calculator_top
      );
 
 endmodule
-

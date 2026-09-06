@@ -72,4 +72,3 @@ module bp_be_cmd_queue
   assign full_n_o  = (full_lo | (almost_full & enq)) & ~deq;
 
 endmodule
-

@@ -37,6 +37,7 @@ module bp_be_director
    , output logic                       clear_iss_o
    , output logic                       suppress_iss_o
    , output logic                       resume_o
+   , output logic                       ctxtsw_launch_o
    , input                              irq_waiting_i
    , input                              mem_busy_i
    , output logic                       cmd_full_n_o
@@ -49,6 +50,38 @@ module bp_be_director
 
    , input [branch_pkt_width_lp-1:0]    br_pkt_i
    , input [commit_pkt_width_lp-1:0]    commit_pkt_i
+
+   // Context NPC for thread switch redirects
+   , input [vaddr_width_p-1:0]           context_npc_i
+
+   // Current thread ID for normal FE metadata generation
+   , input [thread_id_width_p-1:0]       current_physical_thread_id_i
+
+   // Current thread ASID for embedding in ctxtsw fe_cmd (for FE shadow_asid)
+   , input [asid_width_p-1:0]            context_asid_i
+
+   // Target thread privilege mode for embedding in ctxtsw fe_cmd
+   , input [1:0]                         context_priv_i
+
+   // Target thread translation-enable state for ctxtsw restore
+   , input                               context_translation_en_i
+
+   // Early-classified target context bundle for future first-class ctxtsw restart
+   , input                               dispatch_ctxtsw_v_i
+   , input [vaddr_width_p-1:0]           dispatch_ctxtsw_target_npc_i
+   , input [thread_id_width_p-1:0]       dispatch_ctxtsw_target_physical_thread_id_i
+   , input [asid_width_p-1:0]            dispatch_ctxtsw_target_asid_i
+   , input [1:0]                         dispatch_ctxtsw_target_priv_i
+   , input                               dispatch_ctxtsw_target_translation_en_i
+   , input                               pending_ctxtsw_v_i
+   , input                               pending_ctxtsw_sent_i
+   , input                               ctxtsw_launch_pending_i
+   , input [vaddr_width_p-1:0]           ctxtsw_target_npc_i
+   , input [thread_id_width_p-1:0]       ctxtsw_target_physical_thread_id_i
+   , input [asid_width_p-1:0]            ctxtsw_target_asid_i
+   , input [1:0]                         ctxtsw_target_priv_i
+   , input                               ctxtsw_target_translation_en_i
+   , input                               fe_ctxtsw_ready_i
    );
 
   // Declare parameterized structures
@@ -63,6 +96,8 @@ module bp_be_director
 
   bp_fe_cmd_s fe_cmd_li;
   bp_fe_cmd_pc_redirect_operands_s fe_cmd_pc_redirect_operands;
+  wire [branch_metadata_fwd_width_p-1:0] current_thread_metadata_li =
+    branch_metadata_fwd_width_p'({current_physical_thread_id_i, {(branch_metadata_fwd_width_p-thread_id_width_p){1'b0}}});
   logic fe_cmd_v_li;
   logic cmd_empty_n_lo, cmd_empty_r_lo;
   logic cmd_full_n_lo, cmd_full_r_lo;
@@ -78,10 +113,14 @@ module bp_be_director
   // Module instantiations
   // Update the NPC on a valid instruction in ex1 or upon commit
   logic [vaddr_width_p-1:0] npc_n, npc_r;
-  wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v;
+  wire npc_w_v = commit_pkt_cast_i.npc_w_v | br_pkt_cast_i.v | commit_pkt_cast_i.ctxtsw;
 
-  assign npc_n = commit_pkt_cast_i.npc_w_v ? commit_pkt_cast_i.npc : br_pkt_cast_i.bspec ? issue_pkt_cast_i.pc : br_pkt_cast_i.npc;
-  bsg_dff_reset_en_bypass
+  assign npc_n = commit_pkt_cast_i.ctxtsw ? context_npc_i
+               : commit_pkt_cast_i.npc_w_v ? commit_pkt_cast_i.npc
+               : br_pkt_cast_i.bspec ? issue_pkt_cast_i.pc
+               : br_pkt_cast_i.npc;
+
+   bsg_dff_reset_en_bypass
    #(.width_p(vaddr_width_p))
    npc_reg
     (.clk_i(clk_i)
@@ -95,7 +134,30 @@ module bp_be_director
 
   wire npc_mismatch_v = issue_pkt_cast_i.v & (expected_npc_o != issue_pkt_cast_i.pc);
   wire npc_match_v    = issue_pkt_cast_i.v & (expected_npc_o == issue_pkt_cast_i.pc);
-  assign poison_isd_o = npc_mismatch_v;
+  wire ctxtsw_detected_v      = dispatch_ctxtsw_v_i;
+  wire ctxtsw_prepared_v      = pending_ctxtsw_v_i;
+  wire ctxtsw_launch_token_v  = ctxtsw_launch_pending_i;
+  wire ctxtsw_fe_ready_v      = fe_ctxtsw_ready_i;
+  wire switch_commit_v = commit_pkt_cast_i.ctxtsw;
+  wire switch_commit_fe_control_v = switch_commit_v & ~pending_ctxtsw_sent_i;
+  wire ctxtsw_finalize_v      = switch_commit_v;
+  wire ctxtsw_cancel_v        = commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw;
+  wire wait_v          = commit_pkt_cast_i.wfi;
+  wire fencei_v        = commit_pkt_cast_i.fencei;
+  wire npc_redirect_v  = commit_pkt_cast_i.npc_w_v;
+  wire issue_fence_v   = !is_run || cmd_full_r_lo || npc_redirect_v;
+  wire issue_clear_v   = is_cmd_fence & cmd_empty_r_lo;
+  wire ctxtsw_launch_allowed_v = ctxtsw_prepared_v
+                                 & ctxtsw_launch_token_v
+                                 & ctxtsw_fe_ready_v
+                                 & ~pending_ctxtsw_sent_i
+                                 & ~cmd_full_r_lo
+                                 & is_run
+                                 & ~ctxtsw_finalize_v
+                                 & ~ctxtsw_cancel_v;
+
+  assign poison_isd_o = npc_mismatch_v | switch_commit_fe_control_v;
+  assign ctxtsw_launch_o = ctxtsw_launch_allowed_v;
 
   logic btaken_pending, attaboy_pending;
   bsg_dff_reset_set_clear
@@ -120,11 +182,11 @@ module bp_be_director
       unique casez (state_r)
         e_run   : state_n = freeze_li
                             ? e_freeze
-                            : commit_pkt_cast_i.wfi
+                            : wait_v
                               ? e_wait
-                              : commit_pkt_cast_i.fencei
+                              : fencei_v
                                 ? e_fencei
-                                : fe_cmd_nonattaboy_v
+                                : (fe_cmd_nonattaboy_v | switch_commit_fe_control_v)
                                   ? e_cmd_fence
                                   : state_r;
         e_freeze
@@ -142,8 +204,8 @@ module bp_be_director
     else
       state_r <= state_n;
 
-  assign suppress_iss_o = !is_run || cmd_full_r_lo || commit_pkt_cast_i.npc_w_v;
-  assign clear_iss_o    = is_cmd_fence & cmd_empty_r_lo;
+  assign suppress_iss_o = issue_fence_v;
+  assign clear_iss_o    = issue_clear_v;
   assign resume_o       = (is_freeze & ~freeze_li)
                           || (is_wait & irq_waiting_i)
                           || (is_fencei & ~mem_busy_i);
@@ -188,12 +250,38 @@ module bp_be_director
           fe_cmd_li.opcode                            = e_op_pc_redirection;
           fe_cmd_li.npc                               = commit_pkt_cast_i.npc;
           fe_cmd_pc_redirect_operands.subopcode       = e_subop_translation_switch;
+          fe_cmd_pc_redirect_operands.branch_metadata_fwd = current_thread_metadata_li;
           fe_cmd_pc_redirect_operands.translation_en  = commit_pkt_cast_i.translation_en_n;
           fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
 
           fe_cmd_v_li = 1'b1;
         end
-      else if (commit_pkt_cast_i.wfi)
+      else if (switch_commit_v)
+        begin
+          fe_cmd_li.opcode                            = e_op_state_reset;
+          fe_cmd_li.npc                               = ctxtsw_target_npc_i;
+          fe_cmd_pc_redirect_operands.priv            = ctxtsw_target_priv_i;
+          fe_cmd_pc_redirect_operands.translation_en  = ctxtsw_target_translation_en_i;
+          fe_cmd_pc_redirect_operands.asid            = ctxtsw_target_asid_i;
+          fe_cmd_pc_redirect_operands.context_switch_thread_id = ctxtsw_target_physical_thread_id_i;
+          fe_cmd_li.operands.pc_redirect_operands     = fe_cmd_pc_redirect_operands;
+
+          fe_cmd_v_li = switch_commit_fe_control_v;
+        end
+      // Only a launched resident redirect needs an explicit FE resume.  A
+      // speculative nonresident miss is canceled inside the context-cache FSM
+      // before it has redirected FE.
+      else if (ctxtsw_cancel_v & pending_ctxtsw_sent_i & pending_ctxtsw_v_i)
+        begin
+          fe_cmd_li.opcode                                 = e_op_pc_redirection;
+          fe_cmd_li.npc                                    = commit_pkt_cast_i.npc;
+          fe_cmd_pc_redirect_operands.subopcode            = e_subop_resume;
+          fe_cmd_pc_redirect_operands.branch_metadata_fwd  = current_thread_metadata_li;
+          fe_cmd_li.operands.pc_redirect_operands          = fe_cmd_pc_redirect_operands;
+
+          fe_cmd_v_li = 1'b1;
+        end
+      else if (wait_v)
         begin
           fe_cmd_li.opcode = e_op_wait;
           fe_cmd_li.npc = commit_pkt_cast_i.npc;
@@ -281,4 +369,3 @@ module bp_be_director
   assign cmd_full_r_o = cmd_full_r_lo;
 
 endmodule
-

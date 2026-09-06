@@ -19,6 +19,8 @@ module bp_be_top
 
    // Default parameters
    , localparam cfg_bus_width_lp = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
+   , localparam csr_context_csrs_lp = 26
+   , localparam csr_context_width_lp = csr_context_csrs_lp*dword_width_gp + rv64_priv_width_gp
   )
   (input                                             clk_i
    , input                                           reset_i
@@ -35,6 +37,14 @@ module bp_be_top
    , output logic [fe_cmd_width_lp-1:0]              fe_cmd_o
    , output logic                                    fe_cmd_v_o
    , input                                           fe_cmd_yumi_i
+   , input                                           fe_ctxtsw_ready_i
+   , output logic                                    fe_ctxtsw_v_o
+   , input                                           fe_ctxtsw_yumi_i
+   , output logic [vaddr_width_p-1:0]                fe_ctxtsw_npc_o
+   , output logic [thread_id_width_p-1:0]            fe_ctxtsw_thread_id_o
+   , output logic [rv64_priv_width_gp-1:0]           fe_ctxtsw_priv_o
+   , output logic                                    fe_ctxtsw_translation_en_o
+   , output logic [asid_width_p-1:0]                 fe_ctxtsw_asid_o
 
    // D$-LCE Interface
    // signals to LCE
@@ -93,6 +103,89 @@ module bp_be_top
   bp_be_decode_info_s decode_info_lo;
   bp_be_trans_info_s trans_info_lo;
 
+  // Multi-threaded context storage signals
+  logic [vaddr_width_p-1:0] context_npc_lo;
+  logic [1:0] context_priv_mode_lo;
+  logic context_translation_en_lo;
+  logic [asid_width_p-1:0] context_asid_lo;
+  logic [vaddr_width_p-1:0] ctxtsw_target_npc_lo;
+  logic [1:0] ctxtsw_target_priv_mode_lo;
+  logic ctxtsw_target_translation_en_lo;
+  logic [asid_width_p-1:0] ctxtsw_target_asid_lo;
+  logic pending_ctxtsw_v_r;
+  logic pending_ctxtsw_sent_r;
+  logic ctxtsw_launch_pending_r;
+  enum logic [2:0] {
+    e_ctxtsw_idle
+    ,e_ctxtsw_prepared
+    ,e_ctxtsw_launched
+    ,e_ctxtsw_finalized
+    ,e_ctxtsw_canceled
+  } spec_ctxtsw_state_r;
+  enum logic [3:0] {
+    e_context_cache_idle
+    ,e_context_cache_wait_ctxtsw_commit
+    ,e_context_cache_wait_drain
+    ,e_context_cache_save_restore_regs
+    ,e_context_cache_save_restore_regs_tail
+    ,e_context_cache_save_restore_fp_regs
+    ,e_context_cache_save_restore_fp_regs_tail
+    ,e_context_cache_save_npc
+    ,e_context_cache_restore_npc
+    ,e_context_cache_install_slot
+    ,e_context_cache_launch_fe
+    ,e_context_cache_done
+  } context_cache_state_r;
+  logic [thread_id_width_p-1:0] pending_ctxtsw_prev_physical_thread_id_r;
+  logic [context_id_width_p-1:0] pending_ctxtsw_virtual_context_id_r;
+  logic [thread_id_width_p-1:0] pending_ctxtsw_physical_thread_id_r;
+  logic [vaddr_width_p-1:0] pending_ctxtsw_resume_npc_r;
+  logic [vaddr_width_p-1:0] pending_ctxtsw_npc_r;
+  logic [1:0] pending_ctxtsw_priv_mode_r;
+  logic pending_ctxtsw_translation_en_r;
+  logic [asid_width_p-1:0] pending_ctxtsw_asid_r;
+  logic ctxtsw_launch_lo;
+  logic [num_contexts_p-1:0] virtual_context_resident_v_r;
+  logic [num_contexts_p-1:0][thread_id_width_p-1:0] virtual_context_slot_r;
+  logic [num_threads_p-1:0][context_id_width_p-1:0] physical_thread_context_id_r;
+  logic [context_id_width_p-1:0] current_virtual_context_id_r;
+  logic [thread_id_width_p-1:0] current_physical_thread_id_lo;
+  logic fast_ctxtsw_v_lo;
+  logic [thread_id_width_p-1:0] fast_ctxtsw_old_physical_thread_id_lo;
+  logic [context_id_width_p-1:0] fast_ctxtsw_virtual_context_id_lo;
+  logic [thread_id_width_p-1:0] fast_ctxtsw_physical_thread_id_lo;
+  logic [vaddr_width_p-1:0] fast_ctxtsw_resume_npc_lo;
+  logic [vaddr_width_p-1:0] fast_ctxtsw_target_npc_lo;
+  logic [1:0] fast_ctxtsw_target_priv_mode_lo;
+  logic fast_ctxtsw_target_translation_en_lo;
+  logic [asid_width_p-1:0] fast_ctxtsw_target_asid_lo;
+  logic context_cache_miss_pending_r;
+  logic [context_id_width_p-1:0] context_cache_target_virtual_context_id_r;
+  logic [context_id_width_p-1:0] context_cache_victim_virtual_context_id_r;
+  logic [thread_id_width_p-1:0] context_cache_victim_physical_thread_id_r;
+  logic [vaddr_width_p-1:0] context_cache_resume_npc_r;
+  logic [15:0] context_cache_state_cycles_r;
+  logic [dword_width_gp-1:0] context_cache_miss_count_r;
+  logic context_cache_int_restore_phase_r;
+  logic context_cache_fp_restore_phase_r;
+  logic [num_threads_p-1:0][vaddr_width_p-1:0] context_npc_r;
+  logic [num_threads_p-1:0][1:0] context_priv_mode_r;
+  logic [num_threads_p-1:0] context_translation_en_r;
+  logic [num_threads_p-1:0][asid_width_p-1:0] context_asid_r;
+  logic [num_contexts_p-1:0][vaddr_width_p-1:0] virtual_context_npc_r;
+  logic [num_contexts_p-1:0][1:0] virtual_context_priv_mode_r;
+  logic [num_contexts_p-1:0] virtual_context_translation_en_r;
+  logic [num_contexts_p-1:0][asid_width_p-1:0] virtual_context_asid_r;
+  logic [num_contexts_p-1:0] virtual_context_csr_valid_r;
+  logic [num_contexts_p-1:0][csr_context_width_lp-1:0] virtual_context_csr_state_r;
+  logic [num_threads_p-1:0][(2**reg_addr_width_gp)-1:0] physical_thread_fp_dirty_r;
+  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0] virtual_context_fp_dirty_r;
+  logic [num_threads_p-1:0][(2**reg_addr_width_gp)-1:0] physical_thread_int_dirty_r;
+  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0] virtual_context_int_dirty_r;
+  logic [(2**reg_addr_width_gp)-1:0] context_cache_int_save_mask_r, context_cache_int_restore_mask_r;
+  logic [(2**reg_addr_width_gp)-1:0] context_cache_fp_save_mask_r, context_cache_fp_restore_mask_r;
+  logic [thread_id_width_p-1:0] retire_thread_id_lo;
+
   logic [wb_pkt_width_lp-1:0] late_wb_pkt;
   logic late_wb_v_lo, late_wb_force_lo, late_wb_yumi_li;
 
@@ -102,6 +195,944 @@ module bp_be_top
 
   logic cmd_full_n_lo, cmd_full_r_lo, cmd_empty_n_lo, cmd_empty_r_lo;
   logic mem_ordered_lo, mem_busy_lo, idiv_busy_lo, fdiv_busy_lo;
+  logic ctxtsw_target_resident_v_li;
+  logic [thread_id_width_p-1:0] ctxtsw_target_physical_thread_id_li;
+  logic fast_ctxtsw_resident_v_li;
+  logic context_cache_miss_v_li;
+  logic [context_id_width_p-1:0] context_cache_miss_virtual_context_id_li;
+  logic [vaddr_width_p-1:0] context_cache_miss_resume_npc_li;
+  logic context_cache_commit_v_li;
+  logic context_cache_launch_v_li;
+  logic context_cache_active_li;
+  logic context_cache_scheduler_drain_ready_lo;
+  logic context_cache_calculator_drain_ready_lo;
+  logic context_cache_drain_safe_li;
+  logic context_cache_dcache_v_li;
+  logic context_cache_dcache_w_li;
+  logic [reg_addr_width_gp-1:0] context_cache_dcache_id_li;
+  logic [paddr_width_p-1:0] context_cache_dcache_paddr_li;
+  logic [dword_width_gp-1:0] context_cache_dcache_data_li;
+  logic context_cache_dcache_yumi_lo;
+  logic context_cache_dcache_ready_lo;
+  logic context_cache_dcache_resp_v_lo;
+  logic [reg_addr_width_gp-1:0] context_cache_dcache_resp_id_lo;
+  logic [dword_width_gp-1:0] context_cache_dcache_resp_data_lo;
+  logic context_cache_int_l1_req_v_r;
+  logic context_cache_int_l1_req_w_r;
+  logic context_cache_int_l1_wait_resp_r;
+  logic context_cache_int_l1_restore_w_v_r;
+  logic [1:0] context_cache_int_l1_restore_shadow_v_li;
+  logic context_cache_int_l1_phase_active_li;
+  logic context_cache_int_l1_restore_from_l1_li;
+  logic [reg_addr_width_gp-1:0] context_cache_int_l1_reg_r;
+  logic [reg_addr_width_gp-1:0] context_cache_int_l1_resp_id_r;
+  logic [dword_width_gp-1:0] context_cache_int_l1_data_r;
+  logic [paddr_width_p-1:0] context_cache_int_l1_paddr_r;
+  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0] context_cache_int_l1_valid_r;
+  logic [1:0] context_cache_scan_r_v_li;
+  logic [1:0] context_cache_scan_w_v_li;
+  logic [thread_id_width_p-1:0] context_cache_scan_physical_thread_id_li;
+  logic [1:0][reg_addr_width_gp-1:0] context_cache_scan_r_addr_li;
+  logic [1:0][reg_addr_width_gp-1:0] context_cache_scan_w_addr_li;
+  logic [1:0][dpath_width_gp-1:0] context_cache_scan_w_data_li;
+  logic [1:0][dpath_width_gp-1:0] context_cache_scan_r_data_lo;
+  logic [1:0] context_cache_fp_scan_r_v_li;
+  logic [1:0] context_cache_fp_scan_w_v_li;
+  logic [thread_id_width_p-1:0] context_cache_fp_scan_physical_thread_id_li;
+  logic [1:0][reg_addr_width_gp-1:0] context_cache_fp_scan_r_addr_li;
+  logic [1:0][reg_addr_width_gp-1:0] context_cache_fp_scan_w_addr_li;
+  logic [1:0][dpath_width_gp-1:0] context_cache_fp_scan_w_data_li;
+  logic [1:0][dpath_width_gp-1:0] context_cache_fp_scan_r_data_lo;
+  logic [1:0] context_cache_scan_save_v_r;
+  logic [1:0] context_cache_fp_scan_save_v_r;
+  logic [1:0][reg_addr_width_gp-1:0] context_cache_scan_save_idx_r;
+  logic [1:0][reg_addr_width_gp-1:0] context_cache_fp_scan_save_idx_r;
+  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_int_shadow_r;
+  logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_fp_shadow_r;
+  localparam int reg_count_lp = 2**reg_addr_width_gp;
+  localparam int context_mem_regs_per_line_lp = 16;
+  localparam int context_mem_line_count_lp = reg_count_lp / context_mem_regs_per_line_lp;
+  localparam int context_mem_line_index_width_lp = $clog2(context_mem_line_count_lp);
+  // GPR-only context-cache experiment. Nonresident FP execution is outside
+  // this phase's contract and must remain disabled until separately tested.
+  localparam bit context_cache_fp_enable_lp = 1'b0;
+  logic [1:0] context_mem_int_w_v_li;
+  logic [1:0][context_id_width_p-1:0] context_mem_int_w_context_id_li;
+  logic [1:0][reg_addr_width_gp-1:0] context_mem_int_w_reg_addr_li;
+  logic [1:0][dpath_width_gp-1:0] context_mem_int_w_data_li;
+  logic context_mem_int_r_v_li;
+  logic [context_id_width_p-1:0] context_mem_int_r_context_id_li;
+  logic [context_mem_line_index_width_lp-1:0] context_mem_int_r_line_index_li;
+  logic context_mem_int_r_v_lo;
+  logic [context_id_width_p-1:0] context_mem_int_r_context_id_lo;
+  logic [context_mem_line_index_width_lp-1:0] context_mem_int_r_line_index_lo;
+  logic [context_mem_regs_per_line_lp*dpath_width_gp-1:0] context_mem_int_r_data_lo;
+  logic context_cache_bulk_swap_v_li;
+  logic [(2**reg_addr_width_gp)-1:0] context_cache_bulk_swap_w_mask_li;
+  logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_bulk_swap_w_data_li;
+  logic [(2**reg_addr_width_gp)-1:0][dpath_width_gp-1:0] context_cache_bulk_swap_r_data_lo;
+  logic context_cache_line_w_v_li;
+  logic [context_mem_line_index_width_lp-1:0] context_cache_line_index_li;
+  logic [context_mem_regs_per_line_lp-1:0][dpath_width_gp-1:0] context_cache_line_data_li;
+  logic context_mem_int_restore_issue_done_r;
+  logic [context_mem_line_index_width_lp-1:0] context_mem_int_restore_issue_line_r;
+  logic [context_mem_line_index_width_lp-1:0] context_mem_int_restore_install_line_r;
+  logic [context_mem_line_count_lp-1:0] context_mem_int_restore_line_v_r;
+  logic [context_mem_line_count_lp-1:0][context_mem_regs_per_line_lp*dpath_width_gp-1:0]
+    context_mem_int_restore_line_data_r;
+  logic ctx_npc_write_resident_v_li;
+  logic [thread_id_width_p-1:0] ctx_npc_write_physical_thread_id_li;
+  logic ctx_rpush_resident_v_li;
+  logic [thread_id_width_p-1:0] ctx_rpush_physical_thread_id_li;
+  logic scheduler_rpush_v_li;
+  logic scheduler_rpush_fp_v_li;
+  logic [(2**reg_addr_width_gp)-1:0] context_cache_victim_fp_dirty_li, context_cache_target_fp_dirty_li;
+  logic context_cache_fp_copy_v_li;
+  logic [1:0] context_cache_int_save_pick_v_li, context_cache_int_restore_pick_v_li;
+  logic [1:0][reg_addr_width_gp-1:0] context_cache_int_save_pick_addr_li, context_cache_int_restore_pick_addr_li;
+  logic [1:0] context_cache_fp_save_pick_v_li, context_cache_fp_restore_pick_v_li;
+  logic [1:0][reg_addr_width_gp-1:0] context_cache_fp_save_pick_addr_li, context_cache_fp_restore_pick_addr_li;
+  logic [(2**reg_addr_width_gp)-1:0] context_cache_int_save_mask_n_li, context_cache_int_restore_mask_n_li;
+  logic [(2**reg_addr_width_gp)-1:0] context_cache_fp_save_mask_n_li, context_cache_fp_restore_mask_n_li;
+  logic context_cache_int_save_done_n_li, context_cache_int_restore_done_n_li;
+  logic context_cache_fp_save_done_n_li, context_cache_fp_restore_done_n_li;
+  logic [csr_context_width_lp-1:0] csr_context_save_data_lo;
+  wire [thread_id_width_p-1:0] csr_context_save_physical_thread_id_li =
+    context_cache_commit_v_li
+    ? context_cache_victim_physical_thread_id_r
+    : pending_ctxtsw_sent_r ? pending_ctxtsw_prev_physical_thread_id_r : current_physical_thread_id_lo;
+  wire csr_context_restore_v_li = context_cache_state_r == e_context_cache_launch_fe;
+  wire csr_context_restore_reset_li =
+    ~virtual_context_csr_valid_r[context_cache_target_virtual_context_id_r];
+  wire [csr_context_width_lp-1:0] csr_context_restore_data_li =
+    virtual_context_csr_state_r[context_cache_target_virtual_context_id_r];
+  wire [vaddr_width_p-1:0] csr_context_restore_npc_li =
+    virtual_context_npc_r[context_cache_target_virtual_context_id_r];
+  localparam [paddr_width_p-1:0] context_cache_image_base_lp = paddr_width_p'(64'h0000000087f00000);
+  localparam int context_cache_image_stride_bytes_lp = 512;
+  localparam int context_cache_image_gpr_base_word_lp = 8;
+  function automatic [paddr_width_p-1:0] context_cache_gpr_paddr
+   (input [context_id_width_p-1:0] virtual_context_id_i
+    , input [reg_addr_width_gp-1:0] reg_addr_i
+    );
+    context_cache_gpr_paddr = context_cache_image_base_lp
+                              + (paddr_width_p'(virtual_context_id_i)
+                                 * paddr_width_p'(context_cache_image_stride_bytes_lp))
+                              + (paddr_width_p'(context_cache_image_gpr_base_word_lp
+                                                + int'(reg_addr_i))
+                                 * paddr_width_p'(dword_width_gp/8));
+  endfunction
+
+  // Keep the private context image coherent with the physical register cache.
+  // This makes eviction free: a miss only installs the incoming image. Port 0
+  // mirrors ordinary integer writeback and port 1 mirrors CSR remote writes.
+  assign context_mem_int_w_v_li[0] = iwb_pkt.ird_w_v
+                                     & (iwb_pkt.rd_addr != '0)
+                                     & (iwb_pkt.thread_id < num_threads_p)
+                                     & (physical_thread_context_id_r[iwb_pkt.thread_id] < num_contexts_p);
+  assign context_mem_int_w_context_id_li[0] = physical_thread_context_id_r[iwb_pkt.thread_id];
+  assign context_mem_int_w_reg_addr_li[0] = iwb_pkt.rd_addr;
+  assign context_mem_int_w_data_li[0] = iwb_pkt.rd_data;
+
+  assign context_mem_int_w_v_li[1] = ctx_rpush_v_lo
+                                     & (ctx_rpush_virtual_context_id_lo < num_contexts_p)
+                                     & (ctx_rpush_reg_lo != '0);
+  assign context_mem_int_w_context_id_li[1] = ctx_rpush_virtual_context_id_lo;
+  assign context_mem_int_w_reg_addr_li[1] = ctx_rpush_reg_lo;
+  assign context_mem_int_w_data_li[1] = ctx_rpush_data_lo;
+  // Fetch the nonresident image while the switching instruction commits and
+  // the victim drains.  Responses remain speculative in private line buffers;
+  // the physical register bank is not modified until drain safety is proven.
+  assign context_mem_int_r_v_li = ((context_cache_state_r == e_context_cache_wait_ctxtsw_commit)
+                                   || (context_cache_state_r == e_context_cache_wait_drain))
+                                  & ~context_mem_int_restore_issue_done_r;
+  assign context_mem_int_r_context_id_li = context_cache_target_virtual_context_id_r;
+  assign context_mem_int_r_line_index_li = context_mem_int_restore_issue_line_r;
+
+  bp_be_context_mem
+   #(.context_count_p(num_contexts_p)
+     ,.context_id_width_p(context_id_width_p)
+     ,.reg_count_p(reg_count_lp)
+     ,.reg_addr_width_p(reg_addr_width_gp)
+     ,.data_width_p(dpath_width_gp)
+     ,.regs_per_line_p(context_mem_regs_per_line_lp)
+     ,.line_count_p(context_mem_line_count_lp)
+     ,.line_index_width_p(context_mem_line_index_width_lp)
+     )
+   int_context_mem
+    (.clk_i(clk_i)
+     ,.reset_i(reset_i)
+     ,.w_v_i(context_mem_int_w_v_li)
+     ,.w_context_id_i(context_mem_int_w_context_id_li)
+     ,.w_reg_addr_i(context_mem_int_w_reg_addr_li)
+     ,.w_data_i(context_mem_int_w_data_li)
+     ,.r_v_i(context_mem_int_r_v_li)
+     ,.r_context_id_i(context_mem_int_r_context_id_li)
+     ,.r_line_index_i(context_mem_int_r_line_index_li)
+     ,.r_v_o(context_mem_int_r_v_lo)
+     ,.r_context_id_o(context_mem_int_r_context_id_lo)
+     ,.r_line_index_o(context_mem_int_r_line_index_lo)
+     ,.r_data_o(context_mem_int_r_data_lo)
+     );
+  assign context_cache_bulk_swap_v_li = 1'b0;
+  assign context_cache_bulk_swap_w_mask_li = '0;
+  assign context_cache_bulk_swap_w_data_li = '0;
+  assign context_cache_line_w_v_li = (context_cache_state_r == e_context_cache_save_restore_regs)
+                                     & context_mem_int_restore_line_v_r[context_mem_int_restore_install_line_r];
+  assign context_cache_line_index_li = context_mem_int_restore_install_line_r;
+  assign context_cache_line_data_li =
+    context_mem_int_restore_line_data_r[context_mem_int_restore_install_line_r];
+  wire ctxtsw_token_create_v_li = fast_ctxtsw_v_lo
+                                  & fast_ctxtsw_resident_v_li
+                                  & ~cfg_bus_cast_i.freeze
+                                  & ~commit_pkt.resume;
+  wire ctxtsw_token_finalize_v_li = commit_pkt.ctxtsw;
+  wire ctxtsw_token_cancel_v_li = cfg_bus_cast_i.freeze | commit_pkt.resume | (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw);
+  wire ctxtsw_token_clear_v_li = ctxtsw_token_cancel_v_li | ctxtsw_token_finalize_v_li;
+  wire ctxtsw_capture_v_li = ctxtsw_token_create_v_li;
+  wire fast_ctxtsw_launch_v_li = ctxtsw_token_create_v_li
+                                  & fe_ctxtsw_ready_i
+                                  & ~pending_ctxtsw_v_r;
+  assign context_cache_commit_v_li = commit_pkt.ctxtsw & context_cache_miss_pending_r;
+  assign context_cache_launch_v_li = context_cache_state_r == e_context_cache_launch_fe;
+  assign context_cache_active_li = context_cache_state_r != e_context_cache_idle;
+  assign context_cache_dcache_v_li = context_cache_int_l1_req_v_r;
+  assign context_cache_dcache_w_li = context_cache_int_l1_req_w_r;
+  assign context_cache_dcache_id_li = context_cache_int_l1_reg_r;
+  assign context_cache_dcache_paddr_li = context_cache_int_l1_paddr_r;
+  assign context_cache_dcache_data_li = context_cache_int_l1_data_r;
+  assign context_cache_int_l1_phase_active_li = 1'b0;
+  assign context_cache_drain_safe_li = context_cache_calculator_drain_ready_lo
+                                       & ~dispatch_pkt.v
+                                       & ~late_wb_v_lo
+                                       & ~(iwb_pkt.ird_w_v | fwb_pkt.frd_w_v)
+                                       & ~mem_busy_lo
+                                       & mem_ordered_lo
+                                       & ~idiv_busy_lo
+                                       & ~fdiv_busy_lo;
+  always_comb begin
+    int save_cnt;
+    int restore_cnt;
+
+    context_cache_int_save_pick_v_li = '0;
+    context_cache_int_save_pick_addr_li = '0;
+    context_cache_int_restore_pick_v_li = '0;
+    context_cache_int_restore_pick_addr_li = '0;
+    save_cnt = 0;
+    restore_cnt = 0;
+    for (int i = 0; i < reg_count_lp; i++) begin
+      if (context_cache_int_save_mask_r[i] && (save_cnt < 2)) begin
+        context_cache_int_save_pick_v_li[save_cnt] = 1'b1;
+        context_cache_int_save_pick_addr_li[save_cnt] = reg_addr_width_gp'(i);
+        save_cnt++;
+      end
+      if (context_cache_int_restore_mask_r[i] && (restore_cnt < 2)) begin
+        context_cache_int_restore_pick_v_li[restore_cnt] = 1'b1;
+        context_cache_int_restore_pick_addr_li[restore_cnt] = reg_addr_width_gp'(i);
+        restore_cnt++;
+      end
+    end
+  end
+
+  always_comb begin
+    int save_cnt;
+    int restore_cnt;
+
+    context_cache_fp_save_pick_v_li = '0;
+    context_cache_fp_save_pick_addr_li = '0;
+    context_cache_fp_restore_pick_v_li = '0;
+    context_cache_fp_restore_pick_addr_li = '0;
+    save_cnt = 0;
+    restore_cnt = 0;
+    for (int i = 0; i < reg_count_lp; i++) begin
+      if (context_cache_fp_save_mask_r[i] && (save_cnt < 2)) begin
+        context_cache_fp_save_pick_v_li[save_cnt] = 1'b1;
+        context_cache_fp_save_pick_addr_li[save_cnt] = reg_addr_width_gp'(i);
+        save_cnt++;
+      end
+      if (context_cache_fp_restore_mask_r[i] && (restore_cnt < 2)) begin
+        context_cache_fp_restore_pick_v_li[restore_cnt] = 1'b1;
+        context_cache_fp_restore_pick_addr_li[restore_cnt] = reg_addr_width_gp'(i);
+        restore_cnt++;
+      end
+    end
+  end
+
+  always_comb begin
+    context_cache_int_save_mask_n_li = context_cache_int_save_mask_r;
+    context_cache_int_restore_mask_n_li = context_cache_int_restore_mask_r;
+    for (int i = 0; i < 2; i++)
+      if (context_cache_scan_r_v_li[i])
+        context_cache_int_save_mask_n_li[context_cache_int_save_pick_addr_li[i]] = 1'b0;
+    for (int i = 0; i < 2; i++)
+      if (context_cache_int_l1_restore_shadow_v_li[i])
+        context_cache_int_restore_mask_n_li[context_cache_int_restore_pick_addr_li[i]] = 1'b0;
+  end
+
+  always_comb begin
+    context_cache_fp_save_mask_n_li = context_cache_fp_save_mask_r;
+    context_cache_fp_restore_mask_n_li = context_cache_fp_restore_mask_r;
+    for (int i = 0; i < 2; i++) begin
+      if (context_cache_fp_scan_r_v_li[i])
+        context_cache_fp_save_mask_n_li[context_cache_fp_save_pick_addr_li[i]] = 1'b0;
+      if (context_cache_fp_scan_w_v_li[i])
+        context_cache_fp_restore_mask_n_li[context_cache_fp_restore_pick_addr_li[i]] = 1'b0;
+    end
+  end
+
+  assign context_cache_int_save_done_n_li = ~(|context_cache_int_save_mask_n_li);
+  assign context_cache_int_restore_done_n_li = ~(|context_cache_int_restore_mask_n_li);
+  assign context_cache_fp_save_done_n_li = ~(|context_cache_fp_save_mask_n_li);
+  assign context_cache_fp_restore_done_n_li = ~(|context_cache_fp_restore_mask_n_li);
+
+  assign context_cache_scan_r_v_li = '0;
+  assign context_cache_int_l1_restore_from_l1_li = 1'b0;
+  assign context_cache_int_l1_restore_shadow_v_li = '0;
+  assign context_cache_scan_w_v_li = context_cache_int_l1_restore_shadow_v_li;
+  assign context_cache_scan_physical_thread_id_li = context_cache_victim_physical_thread_id_r;
+  assign context_cache_scan_r_addr_li = context_cache_int_save_pick_addr_li;
+  for (genvar i = 0; i < 2; i++) begin : gen_context_cache_int_restore
+    assign context_cache_scan_w_addr_li[i] = context_cache_int_restore_pick_addr_li[i];
+    assign context_cache_scan_w_data_li[i] =
+      virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r][context_cache_scan_w_addr_li[i]]
+      ? context_mem_int_restore_line_data_r[context_cache_scan_w_addr_li[i] / context_mem_regs_per_line_lp]
+                                           [dpath_width_gp*(context_cache_scan_w_addr_li[i] % context_mem_regs_per_line_lp) +: dpath_width_gp]
+      : '0;
+  end
+  assign context_cache_fp_scan_r_v_li = context_cache_fp_save_pick_v_li
+                                        & {2{context_cache_state_r == e_context_cache_save_restore_fp_regs}}
+                                        & {2{~context_cache_fp_restore_phase_r}};
+  assign context_cache_fp_scan_w_v_li = context_cache_fp_restore_pick_v_li
+                                        & {2{context_cache_state_r == e_context_cache_save_restore_fp_regs}}
+                                        & {2{context_cache_fp_restore_phase_r}};
+  assign context_cache_fp_scan_physical_thread_id_li = context_cache_victim_physical_thread_id_r;
+  assign context_cache_fp_scan_r_addr_li = context_cache_fp_save_pick_addr_li;
+  assign context_cache_fp_scan_w_addr_li = context_cache_fp_restore_pick_addr_li;
+  assign context_cache_fp_scan_w_data_li[0] =
+    virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[0]]
+    ? context_cache_fp_shadow_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[0]]
+    : '0;
+  assign context_cache_fp_scan_w_data_li[1] =
+    virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[1]]
+    ? context_cache_fp_shadow_r[context_cache_target_virtual_context_id_r][context_cache_fp_scan_w_addr_li[1]]
+    : '0;
+  assign retire_thread_id_lo = pending_ctxtsw_sent_r ? pending_ctxtsw_prev_physical_thread_id_r : current_physical_thread_id_lo;
+  wire [thread_id_width_p-1:0] scheduler_current_physical_thread_id_li =
+    (commit_pkt.ctxtsw & pending_ctxtsw_sent_r) ? pending_ctxtsw_physical_thread_id_r : current_physical_thread_id_lo;
+
+  always_comb begin
+    ctx_npc_write_resident_v_li = 1'b0;
+    ctx_npc_write_physical_thread_id_li = '0;
+    if (ctx_npc_write_v_lo && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)) begin
+      ctx_npc_write_resident_v_li = virtual_context_resident_v_r[ctx_npc_write_virtual_context_id_lo];
+      ctx_npc_write_physical_thread_id_li = virtual_context_slot_r[ctx_npc_write_virtual_context_id_lo];
+    end
+  end
+
+  always_comb begin
+    ctx_rpush_resident_v_li = 1'b0;
+    ctx_rpush_physical_thread_id_li = '0;
+    if ((ctx_rpush_v_lo | ctx_rpush_fp_v_lo) && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
+      ctx_rpush_resident_v_li = virtual_context_resident_v_r[ctx_rpush_virtual_context_id_lo];
+      ctx_rpush_physical_thread_id_li = virtual_context_slot_r[ctx_rpush_virtual_context_id_lo];
+    end
+  end
+
+  assign scheduler_rpush_v_li = ctx_rpush_v_lo & ctx_rpush_resident_v_li;
+  assign scheduler_rpush_fp_v_li = ctx_rpush_fp_v_lo & ctx_rpush_resident_v_li;
+
+  assign fe_ctxtsw_v_o = context_cache_launch_v_li | fast_ctxtsw_launch_v_li | ctxtsw_launch_lo;
+  assign fe_ctxtsw_npc_o = context_cache_launch_v_li
+                            ? virtual_context_npc_r[context_cache_target_virtual_context_id_r]
+                            : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_npc_lo : pending_ctxtsw_npc_r;
+  assign fe_ctxtsw_thread_id_o = context_cache_launch_v_li
+                                  ? context_cache_victim_physical_thread_id_r
+                                  : fast_ctxtsw_launch_v_li ? fast_ctxtsw_physical_thread_id_lo : pending_ctxtsw_physical_thread_id_r;
+  assign fe_ctxtsw_priv_o = context_cache_launch_v_li
+                             ? virtual_context_priv_mode_r[context_cache_target_virtual_context_id_r]
+                             : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_priv_mode_lo : pending_ctxtsw_priv_mode_r;
+  assign fe_ctxtsw_translation_en_o = context_cache_launch_v_li
+                                      ? virtual_context_translation_en_r[context_cache_target_virtual_context_id_r]
+                                      : fast_ctxtsw_launch_v_li
+                                      ? fast_ctxtsw_target_translation_en_lo
+                                      : pending_ctxtsw_translation_en_r;
+  assign fe_ctxtsw_asid_o = context_cache_launch_v_li
+                             ? virtual_context_asid_r[context_cache_target_virtual_context_id_r]
+                             : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_asid_lo : pending_ctxtsw_asid_r;
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      for (int i = 0; i < num_contexts_p; i++) begin
+        virtual_context_resident_v_r[i] <= (i < num_threads_p);
+        virtual_context_slot_r[i] <= thread_id_width_p'(i);
+      end
+      for (int i = 0; i < num_threads_p; i++)
+        physical_thread_context_id_r[i] <= context_id_width_p'(i);
+    end else if (context_cache_state_r == e_context_cache_launch_fe) begin
+      virtual_context_resident_v_r[context_cache_victim_virtual_context_id_r] <= 1'b0;
+      virtual_context_resident_v_r[context_cache_target_virtual_context_id_r] <= 1'b1;
+      virtual_context_slot_r[context_cache_target_virtual_context_id_r] <= context_cache_victim_physical_thread_id_r;
+      physical_thread_context_id_r[context_cache_victim_physical_thread_id_r] <= context_cache_target_virtual_context_id_r;
+    end
+  end
+
+  // Bootstrap: write a target NPC for a virtual context (CSR 0x801)
+  logic ctx_npc_write_v_lo;
+  logic [context_id_width_p-1:0] ctx_npc_write_virtual_context_id_lo;
+  logic [vaddr_width_p-1:0] ctx_npc_write_npc_lo;
+
+  // CSR 0x802 remote register write into a virtual context
+  logic ctx_rpush_v_lo;
+  logic ctx_rpush_fp_v_lo;
+  logic [context_id_width_p-1:0] ctx_rpush_virtual_context_id_lo;
+  logic [reg_addr_width_gp-1:0] ctx_rpush_reg_lo;
+  logic [dpath_width_gp-1:0] ctx_rpush_data_lo;
+
+  // Active hardware thread ID selected by CTXT CSR writes.
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      current_physical_thread_id_lo <= '0;
+      current_virtual_context_id_r <= '0;
+    end
+    else if (context_cache_state_r == e_context_cache_launch_fe) begin
+      current_physical_thread_id_lo <= context_cache_victim_physical_thread_id_r;
+      current_virtual_context_id_r <= context_cache_target_virtual_context_id_r;
+    end
+    else if (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw & pending_ctxtsw_v_r)
+      current_physical_thread_id_lo <= pending_ctxtsw_prev_physical_thread_id_r;
+    else if (commit_pkt.ctxtsw & pending_ctxtsw_v_r) begin
+      current_physical_thread_id_lo <= pending_ctxtsw_physical_thread_id_r;
+      current_virtual_context_id_r <= pending_ctxtsw_virtual_context_id_r;
+    end
+  end
+
+  // Stage a prepared ctxtsw target bundle when ctxtsw is first classified in the BE.
+  // This is not yet consumed by the FE restart path, but it gives the first-class
+  // ctxtsw flow an explicit latched handoff state to build on.
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      pending_ctxtsw_v_r <= 1'b0;
+      pending_ctxtsw_sent_r <= 1'b0;
+      ctxtsw_launch_pending_r <= 1'b0;
+      spec_ctxtsw_state_r <= e_ctxtsw_idle;
+      pending_ctxtsw_prev_physical_thread_id_r <= '0;
+      pending_ctxtsw_virtual_context_id_r <= '0;
+      pending_ctxtsw_physical_thread_id_r <= '0;
+      pending_ctxtsw_resume_npc_r <= '0;
+      pending_ctxtsw_npc_r <= '0;
+      pending_ctxtsw_priv_mode_r <= 2'b11;
+      pending_ctxtsw_translation_en_r <= 1'b0;
+      pending_ctxtsw_asid_r <= '0;
+    end else begin
+      if (ctxtsw_token_clear_v_li) begin
+        pending_ctxtsw_v_r <= 1'b0;
+        pending_ctxtsw_sent_r <= 1'b0;
+        ctxtsw_launch_pending_r <= 1'b0;
+        spec_ctxtsw_state_r <= ctxtsw_token_finalize_v_li ? e_ctxtsw_finalized : e_ctxtsw_canceled;
+      end
+
+      if (ctxtsw_capture_v_li) begin
+        pending_ctxtsw_v_r <= 1'b1;
+        pending_ctxtsw_sent_r <= 1'b0;
+        ctxtsw_launch_pending_r <= 1'b1;
+        spec_ctxtsw_state_r <= e_ctxtsw_prepared;
+        pending_ctxtsw_prev_physical_thread_id_r <= current_physical_thread_id_lo;
+        pending_ctxtsw_virtual_context_id_r <= fast_ctxtsw_virtual_context_id_lo;
+        pending_ctxtsw_physical_thread_id_r <= fast_ctxtsw_physical_thread_id_lo;
+        pending_ctxtsw_resume_npc_r <= fast_ctxtsw_resume_npc_lo;
+        pending_ctxtsw_npc_r <= fast_ctxtsw_target_npc_lo;
+        pending_ctxtsw_priv_mode_r <= fast_ctxtsw_target_priv_mode_lo;
+        pending_ctxtsw_translation_en_r <= fast_ctxtsw_target_translation_en_lo;
+        pending_ctxtsw_asid_r <= fast_ctxtsw_target_asid_lo;
+      end
+
+      if (ctxtsw_launch_lo)
+        spec_ctxtsw_state_r <= e_ctxtsw_launched;
+
+      if (fe_ctxtsw_yumi_i && !context_cache_launch_v_li) begin
+        pending_ctxtsw_sent_r <= 1'b1;
+        ctxtsw_launch_pending_r <= 1'b0;
+        spec_ctxtsw_state_r <= e_ctxtsw_launched;
+      end
+    end
+  end
+
+  // Per-thread context storage for resume state.
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      for (int i = 0; i < num_threads_p; i++) begin
+        context_npc_r[i] <= '0;
+        context_priv_mode_r[i] <= 2'b11;
+        context_translation_en_r[i] <= 1'b0;
+        context_asid_r[i] <= '0;
+      end
+      for (int i = 0; i < num_contexts_p; i++) begin
+        virtual_context_npc_r[i] <= '0;
+        virtual_context_priv_mode_r[i] <= 2'b11;
+        virtual_context_translation_en_r[i] <= 1'b0;
+        virtual_context_asid_r[i] <= '0;
+        virtual_context_csr_valid_r[i] <= 1'b0;
+        virtual_context_csr_state_r[i] <= '0;
+      end
+    end else begin
+      if (commit_pkt.ctxtsw) begin
+        logic [thread_id_width_p-1:0] save_physical_thread_id_li;
+        logic [context_id_width_p-1:0] save_virtual_context_id_li;
+        logic [vaddr_width_p-1:0] save_resume_npc_li;
+        save_physical_thread_id_li = context_cache_commit_v_li
+                            ? context_cache_victim_physical_thread_id_r
+                            : pending_ctxtsw_prev_physical_thread_id_r;
+        save_virtual_context_id_li = context_cache_commit_v_li
+                             ? context_cache_victim_virtual_context_id_r
+                             : current_virtual_context_id_r;
+        save_resume_npc_li = context_cache_commit_v_li
+                             ? context_cache_resume_npc_r
+                             : pending_ctxtsw_resume_npc_r;
+
+        if (save_physical_thread_id_li < num_threads_p) begin
+          context_npc_r[save_physical_thread_id_li] <= save_resume_npc_li;
+          context_priv_mode_r[save_physical_thread_id_li] <= commit_pkt.priv_n;
+          context_translation_en_r[save_physical_thread_id_li] <= commit_pkt.translation_en_n;
+          context_asid_r[save_physical_thread_id_li] <= trans_info_lo.asid;
+        end
+
+        if (save_virtual_context_id_li < num_contexts_p) begin
+          virtual_context_npc_r[save_virtual_context_id_li] <= save_resume_npc_li;
+          virtual_context_priv_mode_r[save_virtual_context_id_li] <= commit_pkt.priv_n;
+          virtual_context_translation_en_r[save_virtual_context_id_li] <= commit_pkt.translation_en_n;
+          virtual_context_asid_r[save_virtual_context_id_li] <= trans_info_lo.asid;
+          virtual_context_csr_state_r[save_virtual_context_id_li] <= csr_context_save_data_lo;
+          virtual_context_csr_valid_r[save_virtual_context_id_li] <= 1'b1;
+        end
+      end
+
+      if (ctx_npc_write_v_lo && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)) begin
+        virtual_context_npc_r[ctx_npc_write_virtual_context_id_lo] <= ctx_npc_write_npc_lo;
+        virtual_context_priv_mode_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.priv_n;
+        virtual_context_translation_en_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.translation_en_n;
+        virtual_context_asid_r[ctx_npc_write_virtual_context_id_lo] <= trans_info_lo.asid;
+
+        if (!virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]) begin
+          // A bootstrap target has no prior CSR image.  Clone the seeding
+          // context's architectural CSR state so a first nonresident launch
+          // preserves the caller's privilege mode and SATP translation root.
+          // Never overwrite CSR state when only reseeding an existing NPC.
+          virtual_context_csr_state_r[ctx_npc_write_virtual_context_id_lo]
+            <= csr_context_save_data_lo;
+          virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo] <= 1'b1;
+        end
+
+        if (ctx_npc_write_resident_v_li && (ctx_npc_write_physical_thread_id_li < num_threads_p)) begin
+          context_npc_r[ctx_npc_write_physical_thread_id_li] <= ctx_npc_write_npc_lo;
+          context_priv_mode_r[ctx_npc_write_physical_thread_id_li] <= commit_pkt.priv_n;
+          context_translation_en_r[ctx_npc_write_physical_thread_id_li] <= commit_pkt.translation_en_n;
+          context_asid_r[ctx_npc_write_physical_thread_id_li] <= trans_info_lo.asid;
+        end
+      end
+
+      if (context_cache_state_r == e_context_cache_launch_fe) begin
+        context_npc_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_npc_r[context_cache_target_virtual_context_id_r];
+        context_priv_mode_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_priv_mode_r[context_cache_target_virtual_context_id_r];
+        context_translation_en_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_translation_en_r[context_cache_target_virtual_context_id_r];
+        context_asid_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_asid_r[context_cache_target_virtual_context_id_r];
+      end
+    end
+  end
+
+  wire [thread_id_width_p-1:0] context_read_physical_thread_id_li =
+    commit_pkt.ctxtsw
+    ? (context_cache_commit_v_li ? current_physical_thread_id_lo : pending_ctxtsw_physical_thread_id_r)
+    : current_physical_thread_id_lo;
+  wire [thread_id_width_p-1:0] context_write_physical_thread_id_li =
+    ctx_npc_write_resident_v_li ? ctx_npc_write_physical_thread_id_li
+    : commit_pkt.ctxtsw ? pending_ctxtsw_prev_physical_thread_id_r
+    : current_physical_thread_id_lo;
+  wire context_fwd_v = (commit_pkt.ctxtsw | ctx_npc_write_resident_v_li)
+                       && (context_write_physical_thread_id_li == context_read_physical_thread_id_li)
+                       && (context_write_physical_thread_id_li < num_threads_p)
+                       && (context_read_physical_thread_id_li < num_threads_p);
+  wire [context_id_width_p-1:0] ctxtsw_target_virtual_context_id_li = dispatch_pkt.ctxtsw_target_tid;
+  wire [thread_id_width_p-1:0] fast_ctxtsw_target_physical_thread_id_li = fast_ctxtsw_physical_thread_id_lo;
+  wire ctxtsw_target_fwd_v =
+    ctx_npc_write_v_lo
+    && (ctx_npc_write_virtual_context_id_lo == ctxtsw_target_virtual_context_id_li)
+    && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
+    && ctxtsw_target_resident_v_li
+    && (ctxtsw_target_physical_thread_id_li < num_threads_p);
+  wire fast_ctxtsw_target_fwd_v =
+    ctx_npc_write_v_lo
+    && (ctx_npc_write_virtual_context_id_lo == fast_ctxtsw_virtual_context_id_lo)
+    && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
+    && fast_ctxtsw_resident_v_li
+    && (fast_ctxtsw_target_physical_thread_id_li < num_threads_p);
+
+  always_comb begin
+    ctxtsw_target_resident_v_li = 1'b0;
+    ctxtsw_target_physical_thread_id_li = '0;
+    if (ctxtsw_target_virtual_context_id_li < num_contexts_p) begin
+      ctxtsw_target_resident_v_li = virtual_context_resident_v_r[ctxtsw_target_virtual_context_id_li];
+      ctxtsw_target_physical_thread_id_li = virtual_context_slot_r[ctxtsw_target_virtual_context_id_li];
+    end
+  end
+
+  always_comb begin
+    fast_ctxtsw_resident_v_li = 1'b0;
+    fast_ctxtsw_physical_thread_id_lo = '0;
+    if (fast_ctxtsw_virtual_context_id_lo < num_contexts_p) begin
+      fast_ctxtsw_resident_v_li = virtual_context_resident_v_r[fast_ctxtsw_virtual_context_id_lo];
+      fast_ctxtsw_physical_thread_id_lo = virtual_context_slot_r[fast_ctxtsw_virtual_context_id_lo];
+    end
+  end
+
+  assign context_cache_victim_fp_dirty_li = physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r];
+  assign context_cache_target_fp_dirty_li = virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r];
+  assign context_cache_fp_copy_v_li = context_cache_fp_enable_lp
+                                      & ((|context_cache_victim_fp_dirty_li)
+                                         | (|context_cache_target_fp_dirty_li));
+
+  always_comb begin
+    context_cache_miss_v_li = 1'b0;
+    context_cache_miss_virtual_context_id_li = '0;
+    context_cache_miss_resume_npc_li = '0;
+
+    if (fast_ctxtsw_v_lo && !fast_ctxtsw_resident_v_li) begin
+      context_cache_miss_v_li = 1'b1;
+      context_cache_miss_virtual_context_id_li = fast_ctxtsw_virtual_context_id_lo;
+      context_cache_miss_resume_npc_li = fast_ctxtsw_resume_npc_lo;
+    end else if (dispatch_pkt.ctxtsw_v && !ctxtsw_target_resident_v_li) begin
+      context_cache_miss_v_li = 1'b1;
+      context_cache_miss_virtual_context_id_li = ctxtsw_target_virtual_context_id_li;
+      context_cache_miss_resume_npc_li = dispatch_pkt.pc + (dispatch_pkt.size << 1'b1);
+    end
+  end
+
+  // Passive context-cache FSM skeleton. The first active implementation will
+  // replace the unsupported nonresident fatal with this FSM's save/restore path.
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      context_cache_state_r <= e_context_cache_idle;
+      context_cache_miss_pending_r <= 1'b0;
+      context_cache_target_virtual_context_id_r <= '0;
+      context_cache_victim_virtual_context_id_r <= '0;
+      context_cache_victim_physical_thread_id_r <= '0;
+      context_cache_resume_npc_r <= '0;
+      context_cache_state_cycles_r <= '0;
+      context_cache_miss_count_r <= '0;
+      context_cache_int_restore_phase_r <= 1'b0;
+      context_cache_fp_restore_phase_r <= 1'b0;
+      context_cache_scan_save_v_r <= '0;
+      context_cache_fp_scan_save_v_r <= '0;
+      context_cache_scan_save_idx_r <= '0;
+      context_cache_fp_scan_save_idx_r <= '0;
+      context_cache_int_save_mask_r <= '0;
+      context_cache_int_restore_mask_r <= '0;
+      context_cache_fp_save_mask_r <= '0;
+      context_cache_fp_restore_mask_r <= '0;
+      context_cache_int_l1_req_v_r <= 1'b0;
+      context_cache_int_l1_req_w_r <= 1'b0;
+      context_cache_int_l1_wait_resp_r <= 1'b0;
+      context_cache_int_l1_restore_w_v_r <= 1'b0;
+      context_cache_int_l1_reg_r <= '0;
+      context_cache_int_l1_resp_id_r <= '0;
+      context_cache_int_l1_data_r <= '0;
+      context_cache_int_l1_paddr_r <= '0;
+      context_mem_int_restore_issue_done_r <= 1'b0;
+      context_mem_int_restore_issue_line_r <= '0;
+      context_mem_int_restore_install_line_r <= '0;
+      context_mem_int_restore_line_v_r <= '0;
+      context_mem_int_restore_line_data_r <= '0;
+      physical_thread_fp_dirty_r <= '0;
+      virtual_context_fp_dirty_r <= '0;
+      physical_thread_int_dirty_r <= '0;
+      virtual_context_int_dirty_r <= '0;
+      context_cache_int_l1_valid_r <= '0;
+      for (int i = 0; i < num_contexts_p; i++)
+        for (int j = 0; j < 2**reg_addr_width_gp; j++) begin
+          context_cache_int_shadow_r[i][j] <= '0;
+          context_cache_fp_shadow_r[i][j] <= '0;
+        end
+    end else begin
+      context_cache_state_cycles_r <= (context_cache_state_r == e_context_cache_idle)
+                                      ? '0
+                                      : context_cache_state_cycles_r + 16'd1;
+      context_cache_int_l1_restore_w_v_r <= 1'b0;
+      context_cache_scan_save_v_r <= context_cache_scan_r_v_li;
+      context_cache_fp_scan_save_v_r <= context_cache_fp_scan_r_v_li;
+      context_cache_scan_save_idx_r[0] <= context_cache_scan_r_addr_li[0];
+      context_cache_scan_save_idx_r[1] <= context_cache_scan_r_addr_li[1];
+      context_cache_fp_scan_save_idx_r[0] <= context_cache_fp_scan_r_addr_li[0];
+      context_cache_fp_scan_save_idx_r[1] <= context_cache_fp_scan_r_addr_li[1];
+      if (context_cache_scan_save_v_r[0])
+        context_cache_int_shadow_r[context_cache_victim_virtual_context_id_r][context_cache_scan_save_idx_r[0]]
+          <= context_cache_scan_r_data_lo[0];
+      if (context_cache_scan_save_v_r[1])
+        context_cache_int_shadow_r[context_cache_victim_virtual_context_id_r][context_cache_scan_save_idx_r[1]]
+          <= context_cache_scan_r_data_lo[1];
+      if (context_cache_fp_scan_save_v_r[0])
+        context_cache_fp_shadow_r[context_cache_victim_virtual_context_id_r][context_cache_fp_scan_save_idx_r[0]]
+          <= context_cache_fp_scan_r_data_lo[0];
+      if (context_cache_fp_scan_save_v_r[1])
+        context_cache_fp_shadow_r[context_cache_victim_virtual_context_id_r][context_cache_fp_scan_save_idx_r[1]]
+          <= context_cache_fp_scan_r_data_lo[1];
+      if (context_mem_int_r_v_lo) begin
+        context_mem_int_restore_line_v_r[context_mem_int_r_line_index_lo] <= 1'b1;
+        context_mem_int_restore_line_data_r[context_mem_int_r_line_index_lo] <= context_mem_int_r_data_lo;
+      end
+      if (context_mem_int_r_v_li) begin
+        if (context_mem_int_r_line_index_li == context_mem_line_index_width_lp'(context_mem_line_count_lp-1))
+          context_mem_int_restore_issue_done_r <= 1'b1;
+        else
+          context_mem_int_restore_issue_line_r <= context_mem_int_restore_issue_line_r + 1'b1;
+      end
+
+      if (ctx_rpush_v_lo && !ctx_rpush_resident_v_li && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
+        context_cache_int_shadow_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= ctx_rpush_data_lo;
+        if (ctx_rpush_reg_lo != '0)
+          virtual_context_int_dirty_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= 1'b1;
+      end
+      if (ctx_rpush_v_lo && ctx_rpush_resident_v_li && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
+        if (ctx_rpush_reg_lo != '0) begin
+          virtual_context_int_dirty_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= 1'b1;
+          physical_thread_int_dirty_r[ctx_rpush_physical_thread_id_li][ctx_rpush_reg_lo] <= 1'b1;
+        end
+      end
+      if (ctx_rpush_fp_v_lo && !ctx_rpush_resident_v_li && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
+        context_cache_fp_shadow_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= ctx_rpush_data_lo;
+        virtual_context_fp_dirty_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= 1'b1;
+      end
+      if (ctx_rpush_fp_v_lo && ctx_rpush_resident_v_li && (ctx_rpush_virtual_context_id_lo < num_contexts_p)) begin
+        virtual_context_fp_dirty_r[ctx_rpush_virtual_context_id_lo][ctx_rpush_reg_lo] <= 1'b1;
+        physical_thread_fp_dirty_r[ctx_rpush_physical_thread_id_li][ctx_rpush_reg_lo] <= 1'b1;
+      end
+      if (fwb_pkt.frd_w_v && (fwb_pkt.thread_id < num_threads_p)) begin
+        physical_thread_fp_dirty_r[fwb_pkt.thread_id][fwb_pkt.rd_addr] <= 1'b1;
+        if (physical_thread_context_id_r[fwb_pkt.thread_id] < num_contexts_p)
+          virtual_context_fp_dirty_r[physical_thread_context_id_r[fwb_pkt.thread_id]][fwb_pkt.rd_addr] <= 1'b1;
+      end
+      if (iwb_pkt.ird_w_v && (iwb_pkt.thread_id < num_threads_p) && (iwb_pkt.rd_addr != '0)) begin
+        physical_thread_int_dirty_r[iwb_pkt.thread_id][iwb_pkt.rd_addr] <= 1'b1;
+        if (physical_thread_context_id_r[iwb_pkt.thread_id] < num_contexts_p)
+          virtual_context_int_dirty_r[physical_thread_context_id_r[iwb_pkt.thread_id]][iwb_pkt.rd_addr] <= 1'b1;
+      end
+      if (context_cache_state_r == e_context_cache_launch_fe) begin
+        physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r];
+        physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
+          <= virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r];
+      end
+
+      unique case (context_cache_state_r)
+        e_context_cache_idle: begin
+          context_cache_int_restore_phase_r <= 1'b0;
+          context_cache_fp_restore_phase_r <= 1'b0;
+          context_cache_int_save_mask_r <= '0;
+          context_cache_int_restore_mask_r <= '0;
+          context_cache_fp_save_mask_r <= '0;
+          context_cache_fp_restore_mask_r <= '0;
+          if (context_cache_miss_v_li) begin
+            context_cache_state_r <= e_context_cache_wait_ctxtsw_commit;
+            context_cache_miss_pending_r <= 1'b1;
+            context_cache_target_virtual_context_id_r <= context_cache_miss_virtual_context_id_li;
+            context_cache_victim_virtual_context_id_r <= current_virtual_context_id_r;
+            context_cache_victim_physical_thread_id_r <= current_physical_thread_id_lo;
+            context_cache_resume_npc_r <= context_cache_miss_resume_npc_li;
+            context_cache_miss_count_r <= context_cache_miss_count_r + dword_width_gp'(1);
+            context_mem_int_restore_issue_done_r <= 1'b0;
+            context_mem_int_restore_issue_line_r <= '0;
+            context_mem_int_restore_install_line_r <= '0;
+            context_mem_int_restore_line_v_r <= '0;
+          end
+        end
+
+        e_context_cache_wait_ctxtsw_commit: begin
+          if (commit_pkt.ctxtsw)
+            context_cache_state_r <= e_context_cache_wait_drain;
+          else if (commit_pkt.npc_w_v) begin
+            // A redirect from an older instruction squashes the speculative
+            // context switch before any architectural state is installed.
+            context_cache_state_r <= e_context_cache_idle;
+            context_cache_miss_pending_r <= 1'b0;
+          end
+        end
+
+        e_context_cache_wait_drain: begin
+          context_cache_int_restore_phase_r <= 1'b0;
+          context_cache_fp_restore_phase_r <= 1'b0;
+          context_cache_int_save_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r];
+          context_cache_int_restore_mask_r <= physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
+                                              | virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r];
+          context_cache_fp_save_mask_r <= context_cache_fp_copy_v_li
+                                         ? physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
+                                         : '0;
+          context_cache_fp_restore_mask_r <= context_cache_fp_copy_v_li
+                                            ? (physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
+                                               | virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r])
+                                            : '0;
+          context_cache_state_r <= context_cache_drain_safe_li
+                                   ? ((!context_cache_fp_copy_v_li)
+                                      && !((|physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r])
+                                           || (|virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r])
+                                           || (context_cache_fp_copy_v_li
+                                               & ((|physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r])
+                                                  | (|virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r]))))
+                                      ? e_context_cache_launch_fe
+                                      : e_context_cache_save_restore_regs)
+                                   : context_cache_state_r;
+        end
+
+        e_context_cache_save_restore_regs: begin
+          // Install the two prefetched lines only after the victim is drained.
+          // The final line is written on the same edge that advances the FSM,
+          // so frontend launch still cannot observe partial register state.
+          if (context_cache_line_w_v_li) begin
+            if (context_mem_int_restore_install_line_r
+                == context_mem_line_index_width_lp'(context_mem_line_count_lp-1))
+              context_cache_state_r <= (|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
+                                       ? e_context_cache_save_restore_fp_regs
+                                       : e_context_cache_launch_fe;
+            else
+              context_mem_int_restore_install_line_r
+                <= context_mem_int_restore_install_line_r + 1'b1;
+          end
+        end
+
+        e_context_cache_save_restore_fp_regs: begin
+          if (!context_cache_fp_restore_phase_r) begin
+            context_cache_fp_save_mask_r <= context_cache_fp_save_mask_n_li;
+            if (context_cache_fp_save_done_n_li)
+              context_cache_fp_restore_phase_r <= 1'b1;
+            context_cache_state_r <= context_cache_fp_save_done_n_li
+                                     ? (context_cache_fp_restore_done_n_li
+                                        ? e_context_cache_save_restore_fp_regs_tail
+                                        : context_cache_state_r)
+                                     : context_cache_state_r;
+          end else begin
+            context_cache_fp_restore_mask_r <= context_cache_fp_restore_mask_n_li;
+            context_cache_state_r <= context_cache_fp_restore_done_n_li
+                                     ? e_context_cache_save_restore_fp_regs_tail
+                                     : context_cache_state_r;
+          end
+        end
+
+        e_context_cache_save_restore_regs_tail:
+          context_cache_state_r <= e_context_cache_launch_fe;
+
+        e_context_cache_save_restore_fp_regs_tail:
+          context_cache_state_r <= e_context_cache_save_restore_regs_tail;
+
+        e_context_cache_save_npc: begin
+          context_cache_state_r <= e_context_cache_launch_fe;
+        end
+
+        e_context_cache_restore_npc:
+          context_cache_state_r <= e_context_cache_launch_fe;
+
+        e_context_cache_install_slot:
+          context_cache_state_r <= e_context_cache_launch_fe;
+
+        e_context_cache_launch_fe:
+          context_cache_state_r <= fe_ctxtsw_yumi_i
+                                   ? e_context_cache_done
+                                   : context_cache_state_r;
+
+        e_context_cache_done: begin
+          // ctxtsw_yumi only acknowledges FE payload capture.  Keep issue
+          // suppressed until FE has consumed the pending redirect and can
+          // accept another request; otherwise source-context instructions may
+          // execute before the target-context redirect takes effect.
+          if (fe_ctxtsw_ready_i) begin
+            context_cache_state_r <= e_context_cache_idle;
+            context_cache_miss_pending_r <= 1'b0;
+          end
+        end
+
+        default:
+          context_cache_state_r <= e_context_cache_idle;
+      endcase
+    end
+  end
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk_i) begin
+    if (!reset_i) begin
+      if (context_cache_miss_v_li
+          && context_cache_active_li
+          && (context_cache_miss_virtual_context_id_li != context_cache_target_virtual_context_id_r))
+        $fatal(1, "Nested nonresident context switch target %0d is not supported", context_cache_miss_virtual_context_id_li);
+
+      // The frontend must not refill the backend issue queue with sequential
+      // source-context instructions while a nonresident switch is in flight.
+      if (context_cache_active_li && fe_queue_ready_and_o)
+        $fatal(1, "Frontend queue reopened during a nonresident context switch");
+    end
+  end
+`endif
+
+  always_comb begin
+    if (context_cache_commit_v_li) begin
+      context_npc_lo = virtual_context_npc_r[context_cache_target_virtual_context_id_r];
+      context_priv_mode_lo = virtual_context_priv_mode_r[context_cache_target_virtual_context_id_r];
+      context_translation_en_lo = virtual_context_translation_en_r[context_cache_target_virtual_context_id_r];
+      context_asid_lo = virtual_context_asid_r[context_cache_target_virtual_context_id_r];
+    end else if (context_fwd_v) begin
+      context_npc_lo = ctx_npc_write_v_lo ? ctx_npc_write_npc_lo : commit_pkt.npc;
+      context_priv_mode_lo = commit_pkt.priv_n;
+      context_translation_en_lo = commit_pkt.translation_en_n;
+      context_asid_lo = trans_info_lo.asid;
+    end else if (context_read_physical_thread_id_li < num_threads_p) begin
+      context_npc_lo = context_npc_r[context_read_physical_thread_id_li];
+      context_priv_mode_lo = context_priv_mode_r[context_read_physical_thread_id_li];
+      context_translation_en_lo = context_translation_en_r[context_read_physical_thread_id_li];
+      context_asid_lo = context_asid_r[context_read_physical_thread_id_li];
+    end else begin
+      context_npc_lo = '0;
+      context_priv_mode_lo = 2'b11;
+      context_translation_en_lo = 1'b0;
+      context_asid_lo = '0;
+    end
+  end
+
+  always_comb begin
+    if (ctxtsw_target_fwd_v) begin
+      ctxtsw_target_npc_lo = ctx_npc_write_npc_lo;
+      ctxtsw_target_priv_mode_lo = commit_pkt.priv_n;
+      ctxtsw_target_translation_en_lo = commit_pkt.translation_en_n;
+      ctxtsw_target_asid_lo = trans_info_lo.asid;
+    end else if (ctxtsw_target_resident_v_li && (ctxtsw_target_physical_thread_id_li < num_threads_p)) begin
+      ctxtsw_target_npc_lo = context_npc_r[ctxtsw_target_physical_thread_id_li];
+      ctxtsw_target_priv_mode_lo = context_priv_mode_r[ctxtsw_target_physical_thread_id_li];
+      ctxtsw_target_translation_en_lo = context_translation_en_r[ctxtsw_target_physical_thread_id_li];
+      ctxtsw_target_asid_lo = context_asid_r[ctxtsw_target_physical_thread_id_li];
+    end else begin
+      ctxtsw_target_npc_lo = '0;
+      ctxtsw_target_priv_mode_lo = 2'b11;
+      ctxtsw_target_translation_en_lo = 1'b0;
+      ctxtsw_target_asid_lo = '0;
+    end
+  end
+
+  always_comb begin
+    if (fast_ctxtsw_target_fwd_v) begin
+      fast_ctxtsw_target_npc_lo = ctx_npc_write_npc_lo;
+      fast_ctxtsw_target_priv_mode_lo = commit_pkt.priv_n;
+      fast_ctxtsw_target_translation_en_lo = commit_pkt.translation_en_n;
+      fast_ctxtsw_target_asid_lo = trans_info_lo.asid;
+    end else if (fast_ctxtsw_resident_v_li && (fast_ctxtsw_target_physical_thread_id_li < num_threads_p)) begin
+      fast_ctxtsw_target_npc_lo = context_npc_r[fast_ctxtsw_target_physical_thread_id_li];
+      fast_ctxtsw_target_priv_mode_lo = context_priv_mode_r[fast_ctxtsw_target_physical_thread_id_li];
+      fast_ctxtsw_target_translation_en_lo = context_translation_en_r[fast_ctxtsw_target_physical_thread_id_li];
+      fast_ctxtsw_target_asid_lo = context_asid_r[fast_ctxtsw_target_physical_thread_id_li];
+    end else begin
+      fast_ctxtsw_target_npc_lo = '0;
+      fast_ctxtsw_target_priv_mode_lo = 2'b11;
+      fast_ctxtsw_target_translation_en_lo = 1'b0;
+      fast_ctxtsw_target_asid_lo = '0;
+    end
+  end
 
   bp_be_director
    #(.bp_params_p(bp_params_p))
@@ -109,6 +1140,27 @@ module bp_be_top
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
      ,.cfg_bus_i(cfg_bus_i)
+     ,.context_npc_i(context_npc_lo)
+     ,.current_physical_thread_id_i(current_physical_thread_id_lo)
+     ,.context_asid_i(context_asid_lo)
+     ,.context_priv_i(context_priv_mode_lo)
+     ,.context_translation_en_i(context_translation_en_lo)
+     ,.dispatch_ctxtsw_v_i(dispatch_pkt.ctxtsw_v)
+     ,.dispatch_ctxtsw_target_npc_i(ctxtsw_target_npc_lo)
+     ,.dispatch_ctxtsw_target_physical_thread_id_i(ctxtsw_target_physical_thread_id_li)
+     ,.dispatch_ctxtsw_target_asid_i(ctxtsw_target_asid_lo)
+     ,.dispatch_ctxtsw_target_priv_i(ctxtsw_target_priv_mode_lo)
+     ,.dispatch_ctxtsw_target_translation_en_i(ctxtsw_target_translation_en_lo)
+     ,.pending_ctxtsw_v_i(pending_ctxtsw_v_r)
+     ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r | context_cache_miss_pending_r)
+     ,.ctxtsw_launch_pending_i(ctxtsw_launch_pending_r)
+     ,.ctxtsw_target_npc_i(pending_ctxtsw_npc_r)
+     ,.ctxtsw_target_physical_thread_id_i(pending_ctxtsw_physical_thread_id_r)
+     ,.ctxtsw_target_asid_i(pending_ctxtsw_asid_r)
+     ,.ctxtsw_target_priv_i(pending_ctxtsw_priv_mode_r)
+     ,.ctxtsw_target_translation_en_i(pending_ctxtsw_translation_en_r)
+     ,.fe_ctxtsw_ready_i(fe_ctxtsw_ready_i)
+     ,.ctxtsw_launch_o(ctxtsw_launch_lo)
 
      ,.issue_pkt_i(issue_pkt)
      ,.expected_npc_o(expected_npc_lo)
@@ -144,6 +1196,8 @@ module bp_be_top
      ,.mem_ordered_i(mem_ordered_lo)
      ,.fdiv_busy_i(fdiv_busy_lo)
      ,.idiv_busy_i(idiv_busy_lo)
+     ,.current_physical_thread_id_i(scheduler_current_physical_thread_id_li)
+     ,.retire_thread_id_i(retire_thread_id_lo)
      ,.ispec_v_o(ispec_v)
      ,.hazard_v_o(hazard_v)
      ,.ordered_v_o(ordered_v)
@@ -165,13 +1219,15 @@ module bp_be_top
      ,.decode_info_i(decode_info_lo)
      ,.trans_info_i(trans_info_lo)
      ,.issue_pkt_o(issue_pkt)
-     ,.suppress_iss_i(suppress_iss_lo)
+     ,.suppress_iss_i(suppress_iss_lo | context_cache_active_li)
      ,.clear_iss_i(clear_iss_lo)
      ,.expected_npc_i(expected_npc_lo)
      ,.hazard_v_i(hazard_v)
      ,.ispec_v_i(ispec_v)
      ,.irq_pending_i(irq_pending_lo)
      ,.ordered_v_i(ordered_v)
+     ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r | context_cache_active_li)
+     ,.context_cache_active_i(context_cache_active_li)
 
      ,.fe_queue_i(fe_queue_i)
      ,.fe_queue_v_i(fe_queue_v_i)
@@ -186,6 +1242,40 @@ module bp_be_top
      ,.late_wb_v_i(late_wb_v_lo)
      ,.late_wb_force_i(late_wb_force_lo)
      ,.late_wb_yumi_o(late_wb_yumi_li)
+
+     ,.current_physical_thread_id_i(scheduler_current_physical_thread_id_li)
+     ,.current_virtual_context_id_i(current_virtual_context_id_r)
+     ,.retire_thread_id_i(retire_thread_id_lo)
+
+     ,.rpush_w_v_i(scheduler_rpush_v_li)
+     ,.rpush_fp_w_v_i(scheduler_rpush_fp_v_li)
+     ,.rpush_tid_i(ctx_rpush_physical_thread_id_li)
+     ,.rpush_reg_i(ctx_rpush_reg_lo)
+     ,.rpush_data_i(ctx_rpush_data_lo)
+     ,.context_cache_scan_r_v_i(context_cache_scan_r_v_li)
+     ,.context_cache_scan_w_v_i(context_cache_scan_w_v_li)
+     ,.context_cache_scan_physical_thread_id_i(context_cache_scan_physical_thread_id_li)
+     ,.context_cache_scan_r_addr_i(context_cache_scan_r_addr_li)
+     ,.context_cache_scan_w_addr_i(context_cache_scan_w_addr_li)
+     ,.context_cache_scan_w_data_i(context_cache_scan_w_data_li)
+     ,.context_cache_scan_r_data_o(context_cache_scan_r_data_lo)
+     ,.context_cache_bulk_swap_v_i(context_cache_bulk_swap_v_li)
+     ,.context_cache_bulk_swap_physical_thread_id_i(context_cache_victim_physical_thread_id_r)
+     ,.context_cache_bulk_swap_w_mask_i(context_cache_bulk_swap_w_mask_li)
+     ,.context_cache_bulk_swap_w_data_i(context_cache_bulk_swap_w_data_li)
+     ,.context_cache_bulk_swap_r_data_o(context_cache_bulk_swap_r_data_lo)
+     ,.context_cache_line_w_v_i(context_cache_line_w_v_li)
+     ,.context_cache_line_physical_thread_id_i(context_cache_victim_physical_thread_id_r)
+     ,.context_cache_line_index_i(context_cache_line_index_li)
+     ,.context_cache_line_data_i(context_cache_line_data_li)
+     ,.context_cache_fp_scan_r_v_i(context_cache_fp_scan_r_v_li)
+     ,.context_cache_fp_scan_w_v_i(context_cache_fp_scan_w_v_li)
+     ,.context_cache_fp_scan_physical_thread_id_i(context_cache_fp_scan_physical_thread_id_li)
+     ,.context_cache_fp_scan_r_addr_i(context_cache_fp_scan_r_addr_li)
+     ,.context_cache_fp_scan_w_addr_i(context_cache_fp_scan_w_addr_li)
+     ,.context_cache_fp_scan_w_data_i(context_cache_fp_scan_w_data_li)
+     ,.context_cache_fp_scan_r_data_o(context_cache_fp_scan_r_data_lo)
+     ,.context_cache_drain_ready_o(context_cache_scheduler_drain_ready_lo)
      );
 
   bp_be_calculator_top
@@ -248,7 +1338,40 @@ module bp_be_top
      ,.irq_pending_o(irq_pending_lo)
      ,.irq_waiting_o(irq_waiting_lo)
      ,.cmd_full_n_i(cmd_full_n_lo)
+     // Context switching
+     ,.current_physical_thread_id_i(current_physical_thread_id_lo)
+     ,.current_virtual_context_id_i(current_virtual_context_id_r)
+     ,.retire_thread_id_i(retire_thread_id_lo)
+     ,.csr_context_restore_v_i(csr_context_restore_v_li)
+     ,.csr_context_restore_reset_i(csr_context_restore_reset_li)
+     ,.csr_context_restore_physical_thread_id_i(context_cache_victim_physical_thread_id_r)
+     ,.csr_context_restore_data_i(csr_context_restore_data_li)
+     ,.csr_context_restore_npc_i(csr_context_restore_npc_li)
+     ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_li)
+     ,.csr_context_save_data_o(csr_context_save_data_lo)
+     ,.ctx_npc_write_v_o(ctx_npc_write_v_lo)
+     ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_lo)
+     ,.ctx_npc_write_npc_o(ctx_npc_write_npc_lo)
+     ,.ctx_rpush_v_o(ctx_rpush_v_lo)
+     ,.ctx_rpush_fp_v_o(ctx_rpush_fp_v_lo)
+     ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_lo)
+     ,.ctx_rpush_reg_o(ctx_rpush_reg_lo)
+     ,.ctx_rpush_data_o(ctx_rpush_data_lo)
+     ,.context_cache_dcache_v_i(context_cache_dcache_v_li)
+     ,.context_cache_dcache_w_i(context_cache_dcache_w_li)
+     ,.context_cache_dcache_id_i(context_cache_dcache_id_li)
+     ,.context_cache_dcache_paddr_i(context_cache_dcache_paddr_li)
+     ,.context_cache_dcache_data_i(context_cache_dcache_data_li)
+     ,.context_cache_dcache_yumi_o(context_cache_dcache_yumi_lo)
+     ,.context_cache_dcache_ready_o(context_cache_dcache_ready_lo)
+     ,.context_cache_dcache_resp_v_o(context_cache_dcache_resp_v_lo)
+     ,.context_cache_dcache_resp_id_o(context_cache_dcache_resp_id_lo)
+     ,.context_cache_dcache_resp_data_o(context_cache_dcache_resp_data_lo)
+     ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
+     ,.fast_ctxtsw_old_physical_thread_id_o(fast_ctxtsw_old_physical_thread_id_lo)
+     ,.fast_ctxtsw_virtual_context_id_o(fast_ctxtsw_virtual_context_id_lo)
+     ,.fast_ctxtsw_resume_npc_o(fast_ctxtsw_resume_npc_lo)
+     ,.context_cache_drain_ready_o(context_cache_calculator_drain_ready_lo)
      );
 
 endmodule
-

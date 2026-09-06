@@ -22,8 +22,10 @@ module bp_be_pipe_sys
    // Generated parameters
    , localparam exception_width_lp    = $bits(bp_be_exception_s)
    , localparam special_width_lp      = $bits(bp_be_special_s)
+   , localparam csr_context_csrs_lp   = 26
+   , localparam csr_context_width_lp  = csr_context_csrs_lp*dword_width_gp + rv64_priv_width_gp
    )
-  (input                                     clk_i
+  (input                                    clk_i
    , input                                   reset_i
 
    , input [cfg_bus_width_lp-1:0]            cfg_bus_i
@@ -55,7 +57,45 @@ module bp_be_pipe_sys
 
    , output logic [decode_info_width_lp-1:0] decode_info_o
    , output logic [trans_info_width_lp-1:0]  trans_info_o
+   , output logic [trans_info_width_lp-1:0]  reservation_trans_info_o
    , output rv64_frm_e                       frm_dyn_o
+
+   // Current thread selects the active per-thread CSR instance.
+   , input [thread_id_width_p-1:0]           current_physical_thread_id_i
+   // Software-visible virtual context ID returned by CSR 0x800.
+   , input [context_id_width_p-1:0]          current_virtual_context_id_i
+   // Retire thread owns the instruction currently committing in the backend.
+   , input [thread_id_width_p-1:0]           retire_thread_id_i
+
+   // Save/restore physical CSR state for nonresident virtual contexts.
+   , input                                   csr_context_restore_v_i
+   , input                                   csr_context_restore_reset_i
+   , input [thread_id_width_p-1:0]           csr_context_restore_physical_thread_id_i
+   , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
+   , input [vaddr_width_p-1:0]               csr_context_restore_npc_i
+   , input [thread_id_width_p-1:0]           csr_context_save_physical_thread_id_i
+   , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
+
+   // Bootstrap: write target NPC for a virtual context (CSR 0x801)
+   , output logic                            ctx_npc_write_v_o
+   , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
+   , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
+
+   // rpush: write arbitrary register of a virtual context (CSR 0x802)
+   , output logic                            ctx_rpush_v_o
+   , output logic                            ctx_rpush_fp_v_o
+   , output logic [context_id_width_p-1:0]   ctx_rpush_virtual_context_id_o
+   , output logic [reg_addr_width_gp-1:0]    ctx_rpush_reg_o
+   , output logic [dpath_width_gp-1:0]       ctx_rpush_data_o
+
+   // Context-cache L1 D$ service CSR path.
+   , input                                   ctx_l1_ready_i
+   , input                                   ctx_l1_resp_v_i
+   , input [dword_width_gp-1:0]              ctx_l1_resp_data_i
+   , output logic                            ctx_l1_cmd_v_o
+   , output logic                            ctx_l1_cmd_w_o
+   , output logic [paddr_width_p-1:0]        ctx_l1_cmd_paddr_o
+   , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
    );
 
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
@@ -68,22 +108,24 @@ module bp_be_pipe_sys
   `bp_cast_o(bp_be_commit_pkt_s, commit_pkt);
   `bp_cast_o(bp_be_decode_info_s, decode_info);
   `bp_cast_o(bp_be_trans_info_s, trans_info);
+  `bp_cast_o(bp_be_trans_info_s, reservation_trans_info);
 
   assign reservation = reservation_i;
   assign decode = reservation.decode;
   assign instr  = reservation.instr;
+  wire [thread_id_width_p-1:0] reservation_physical_thread_id = reservation.thread_id[0 +: thread_id_width_p];
   wire [vaddr_width_p-1:0] pc  = reservation.pc;
   wire [dword_width_gp-1:0] rs1 = reservation.isrc1;
   wire [dword_width_gp-1:0] rs2 = reservation.isrc2;
   wire [dword_width_gp-1:0] imm = reservation.isrc3;
 
-  wire csr_v_li = reservation.decode.csr_r_v | reservation.decode.csr_w_v;
+  wire csr_v_li = (reservation.decode.csr_r_v | reservation.decode.csr_w_v) & ~reservation.ctxtsw_v;
   wire [rv64_csr_addr_width_gp-1:0] csr_addr_li = instr.t.itype.imm12;
 
   bp_be_retire_pkt_s retire_pkt;
   logic [dword_width_gp-1:0] csr_data_lo;
   wire [4:0] fflags_acc_li = iwb_pkt_cast_i.fflags | fwb_pkt_cast_i.fflags;
-  bp_be_csr
+  bp_be_csr_wrapper_mt
    #(.bp_params_p(bp_params_p))
     csr
     (.clk_i(clk_i)
@@ -108,10 +150,40 @@ module bp_be_pipe_sys
      ,.irq_waiting_o(irq_waiting_o)
 
      ,.retire_pkt_i(retire_pkt)
+     ,.retire_ctxtsw_v_i(retire_ctxtsw_r)
      ,.commit_pkt_o(commit_pkt_cast_o)
      ,.decode_info_o(decode_info_cast_o)
      ,.trans_info_o(trans_info_cast_o)
+     ,.reservation_trans_info_o(reservation_trans_info_cast_o)
      ,.frm_dyn_o(frm_dyn_o)
+     // Current selects slow CSR state; reservation thread owns CSR reads
+     // and memory translation information.
+     ,.current_physical_thread_id_i(current_physical_thread_id_i)
+     ,.current_virtual_context_id_i(current_virtual_context_id_i)
+     ,.csr_thread_id_i(reservation_physical_thread_id)
+     ,.retire_thread_id_i(retire_thread_id_i)
+     ,.csr_context_restore_v_i(csr_context_restore_v_i)
+     ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
+     ,.csr_context_restore_physical_thread_id_i(csr_context_restore_physical_thread_id_i)
+     ,.csr_context_restore_data_i(csr_context_restore_data_i)
+     ,.csr_context_restore_npc_i(csr_context_restore_npc_i)
+     ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_i)
+     ,.csr_context_save_data_o(csr_context_save_data_o)
+     ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
+     ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_o)
+     ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
+     ,.ctx_rpush_v_o(ctx_rpush_v_o)
+     ,.ctx_rpush_fp_v_o(ctx_rpush_fp_v_o)
+     ,.ctx_rpush_virtual_context_id_o(ctx_rpush_virtual_context_id_o)
+     ,.ctx_rpush_reg_o(ctx_rpush_reg_o)
+     ,.ctx_rpush_data_o(ctx_rpush_data_o)
+     ,.ctx_l1_ready_i(ctx_l1_ready_i)
+     ,.ctx_l1_resp_v_i(ctx_l1_resp_v_i)
+     ,.ctx_l1_resp_data_i(ctx_l1_resp_data_i)
+     ,.ctx_l1_cmd_v_o(ctx_l1_cmd_v_o)
+     ,.ctx_l1_cmd_w_o(ctx_l1_cmd_w_o)
+     ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_o)
+     ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_o)
      );
 
   logic [vaddr_width_p-1:0] retire_npc_r;
@@ -123,6 +195,7 @@ module bp_be_pipe_sys
   logic retire_niscore_r, retire_iscore_r;
   logic retire_nfscore_r, retire_fscore_r;
   logic retire_nspec_w_r, retire_spec_w_r;
+  logic retire_nctxtsw_r, retire_ctxtsw_r;
   always_ff @(posedge clk_i)
     begin
       retire_npc_r <= reservation.pc;
@@ -150,6 +223,16 @@ module bp_be_pipe_sys
 
       retire_nspec_w_r <= reservation.decode.score_v & reservation.decode.spec_w_v;
       retire_spec_w_r  <= retire_nspec_w_r;
+
+    end
+
+  always_ff @(posedge clk_i)
+    if (reset_i) begin
+      retire_nctxtsw_r <= 1'b0;
+      retire_ctxtsw_r  <= 1'b0;
+    end else begin
+      retire_nctxtsw_r <= reservation.v & reservation.ctxtsw_v & ~flush_i;
+      retire_ctxtsw_r  <= retire_nctxtsw_r;
     end
 
   // Compute input CSR data
@@ -192,4 +275,3 @@ module bp_be_pipe_sys
   assign data_o = csr_data_lo;
 
 endmodule
-
