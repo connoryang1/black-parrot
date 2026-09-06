@@ -57,6 +57,7 @@ module bp_be_csr
    , input                                   csr_context_restore_v_i
    , input                                   csr_context_restore_reset_i
    , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
+   , input [vaddr_width_p-1:0]               csr_context_restore_npc_i
    , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
 
    // Bootstrap: write a target NPC for a virtual context (CSR 0x801)
@@ -399,7 +400,13 @@ module bp_be_csr
         ? retire_pkt_cast_i.npc
         : apc_r;
 
-  assign apc_n = (enter_debug | cfg_bus_cast_i.freeze) ? debug_halt_pc : core_npc;
+  // APC is pipeline bookkeeping rather than an architectural CSR, but it is
+  // nevertheless context-specific: replay and exception paths use it when no
+  // instruction retires.  Restore it alongside the selected physical CSR bank
+  // so a newly installed virtual context cannot inherit its victim's PC.
+  assign apc_n = (enter_debug | cfg_bus_cast_i.freeze)
+                 ? debug_halt_pc
+                 : csr_context_restore_v_i ? csr_context_restore_npc_i : core_npc;
 
   assign translation_en_n = ((priv_mode_n < `PRIV_MODE_M) & (satp_li.mode == 4'd8));
   bsg_dff_reset

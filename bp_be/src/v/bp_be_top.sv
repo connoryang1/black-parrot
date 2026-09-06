@@ -306,6 +306,8 @@ module bp_be_top
     ~virtual_context_csr_valid_r[context_cache_target_virtual_context_id_r];
   wire [csr_context_width_lp-1:0] csr_context_restore_data_li =
     virtual_context_csr_state_r[context_cache_target_virtual_context_id_r];
+  wire [vaddr_width_p-1:0] csr_context_restore_npc_li =
+    virtual_context_npc_r[context_cache_target_virtual_context_id_r];
   localparam [paddr_width_p-1:0] context_cache_image_base_lp = paddr_width_p'(64'h0000000087f00000);
   localparam int context_cache_image_stride_bytes_lp = 512;
   localparam int context_cache_image_gpr_base_word_lp = 8;
@@ -946,10 +948,16 @@ module bp_be_top
           end
         end
 
-        e_context_cache_wait_ctxtsw_commit:
-          context_cache_state_r <= commit_pkt.ctxtsw
-                                   ? e_context_cache_wait_drain
-                                   : context_cache_state_r;
+        e_context_cache_wait_ctxtsw_commit: begin
+          if (commit_pkt.ctxtsw)
+            context_cache_state_r <= e_context_cache_wait_drain;
+          else if (commit_pkt.npc_w_v) begin
+            // A redirect from an older instruction squashes the speculative
+            // context switch before any architectural state is installed.
+            context_cache_state_r <= e_context_cache_idle;
+            context_cache_miss_pending_r <= 1'b0;
+          end
+        end
 
         e_context_cache_wait_drain: begin
           context_cache_int_restore_phase_r <= 1'b0;
@@ -1049,23 +1057,12 @@ module bp_be_top
   end
 
 `ifndef SYNTHESIS
-  logic context_cache_wait_for_fe_r;
   always_ff @(posedge clk_i) begin
-    if (reset_i) begin
-      context_cache_wait_for_fe_r <= 1'b0;
-    end else begin
+    if (!reset_i) begin
       if (context_cache_miss_v_li
           && context_cache_active_li
           && (context_cache_miss_virtual_context_id_li != context_cache_target_virtual_context_id_r))
         $fatal(1, "Nested nonresident context switch target %0d is not supported", context_cache_miss_virtual_context_id_li);
-
-      // A captured redirect remains pending while FE deasserts ready.  The
-      // context-cache FSM must continue suppressing source-context issue until
-      // that pending redirect has actually been consumed.
-      if (context_cache_wait_for_fe_r && (context_cache_state_r != e_context_cache_done))
-        $fatal(1, "Context-cache issue suppression ended before FE consumed its redirect");
-      context_cache_wait_for_fe_r <= (context_cache_state_r == e_context_cache_done)
-                                     && !fe_ctxtsw_ready_i;
 
       // The frontend must not refill the backend issue queue with sequential
       // source-context instructions while a nonresident switch is in flight.
@@ -1349,6 +1346,7 @@ module bp_be_top
      ,.csr_context_restore_reset_i(csr_context_restore_reset_li)
      ,.csr_context_restore_physical_thread_id_i(context_cache_victim_physical_thread_id_r)
      ,.csr_context_restore_data_i(csr_context_restore_data_li)
+     ,.csr_context_restore_npc_i(csr_context_restore_npc_li)
      ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_li)
      ,.csr_context_save_data_o(csr_context_save_data_lo)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_lo)

@@ -268,7 +268,10 @@ module bp_be_director
 
           fe_cmd_v_li = switch_commit_fe_control_v;
         end
-      else if (ctxtsw_cancel_v & pending_ctxtsw_sent_i)
+      // Only a launched resident redirect needs an explicit FE resume.  A
+      // speculative nonresident miss is canceled inside the context-cache FSM
+      // before it has redirected FE.
+      else if (ctxtsw_cancel_v & pending_ctxtsw_sent_i & pending_ctxtsw_v_i)
         begin
           fe_cmd_li.opcode                                 = e_op_pc_redirection;
           fe_cmd_li.npc                                    = commit_pkt_cast_i.npc;

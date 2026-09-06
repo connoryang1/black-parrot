@@ -102,6 +102,7 @@ module bp_be_calculator_top
    , input                                           csr_context_restore_reset_i
    , input [thread_id_width_p-1:0]                   csr_context_restore_physical_thread_id_i
    , input [csr_context_width_lp-1:0]                csr_context_restore_data_i
+   , input [vaddr_width_p-1:0]                       csr_context_restore_npc_i
    , input [thread_id_width_p-1:0]                   csr_context_save_physical_thread_id_i
    , output logic [csr_context_width_lp-1:0]         csr_context_save_data_o
 
@@ -333,6 +334,7 @@ module bp_be_calculator_top
      ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
      ,.csr_context_restore_physical_thread_id_i(csr_context_restore_physical_thread_id_i)
      ,.csr_context_restore_data_i(csr_context_restore_data_i)
+     ,.csr_context_restore_npc_i(csr_context_restore_npc_i)
      ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_i)
      ,.csr_context_save_data_o(csr_context_save_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
