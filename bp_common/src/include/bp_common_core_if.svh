@@ -52,8 +52,9 @@
      * bp_fe_cmd_pc_redirect_operands_s provides the information needed during the pc              \
      * redirection.  command_queue_subopcode provides the reasons for pc redirection.              \
      * branch_metadata_fwd provides the information of branch misprediction.                       \
-     * translation_en tells whether the pc is virtual or physical in the case of context switch.   \
+     * translation_en tells whether the pc is virtual or physical in the case of context switch.  \
      * priv is the privilege mode being switched to.                                               \
+     * context_switch_thread_id identifies the target hardware thread on ctxtsw.                   \
     */                                                                                             \
     typedef struct packed                                                                          \
     {                                                                                              \
@@ -62,6 +63,8 @@
       bp_fe_misprediction_reason_e             misprediction_reason;                               \
       logic                                    translation_en;                                     \
       logic [1:0]                              priv;                                               \
+      logic [asid_width_mp-1:0]                asid;                                               \
+      logic [thread_id_width_p-1:0]            context_switch_thread_id;                           \
                                                                                                    \
       logic [`bp_fe_cmd_pc_redirect_operands_padding_width(vaddr_width_mp, paddr_width_mp, asid_width_mp, branch_metadata_fwd_width_mp)-1:0] \
                                                padding;                                            \
@@ -204,9 +207,9 @@
   `define bp_fe_exception_width_no_padding(vaddr_width_mp) \
     (vaddr_width_mp + instr_width_gp + $bits(bp_fe_exception_code_e) + 1)
 
-  `define bp_fe_cmd_pc_redirect_operands_width_no_padding(branch_metadata_fwd_width_mp) \
+  `define bp_fe_cmd_pc_redirect_operands_width_no_padding(branch_metadata_fwd_width_mp, asid_width_mp) \
     ($bits(bp_fe_command_queue_subopcodes_e)                                            \
-     + branch_metadata_fwd_width_mp + $bits(bp_fe_misprediction_reason_e) + 3)
+     + branch_metadata_fwd_width_mp + $bits(bp_fe_misprediction_reason_e) + 3 + asid_width_mp + thread_id_width_p)
 
   `define bp_fe_cmd_attaboy_width_no_padding(branch_metadata_fwd_width_mp) \
     (        1+branch_metadata_fwd_width_mp)
@@ -221,7 +224,7 @@
     (asid_width_mp + 2)
 
   `define bp_fe_cmd_operands_u_width(vaddr_width_mp, paddr_width_mp, asid_width_mp, branch_metadata_fwd_width_mp) \
-    (1+`BSG_MAX(`bp_fe_cmd_pc_redirect_operands_width_no_padding(branch_metadata_fwd_width_mp)     \
+    (1+`BSG_MAX(`bp_fe_cmd_pc_redirect_operands_width_no_padding(branch_metadata_fwd_width_mp, asid_width_mp)     \
                 ,`BSG_MAX(`bp_fe_cmd_attaboy_width_no_padding(branch_metadata_fwd_width_mp)        \
                           ,`BSG_MAX(`bp_fe_cmd_itlb_fill_width_no_padding(vaddr_width_mp, paddr_width_mp) \
                                     ,`BSG_MAX(`bp_fe_cmd_itlb_fence_width_no_padding(asid_width_mp)\
@@ -234,7 +237,7 @@
 
   `define bp_fe_cmd_pc_redirect_operands_padding_width(vaddr_width_mp, paddr_width_mp, asid_width_mp, branch_metadata_fwd_width_mp) \
     (`bp_fe_cmd_operands_u_width(vaddr_width_mp, paddr_width_mp, asid_width_mp, branch_metadata_fwd_width_mp) \
-     - `bp_fe_cmd_pc_redirect_operands_width_no_padding(branch_metadata_fwd_width_mp)                         \
+     - `bp_fe_cmd_pc_redirect_operands_width_no_padding(branch_metadata_fwd_width_mp, asid_width_mp)          \
      )
 
   `define bp_fe_cmd_attaboy_padding_width(vaddr_width_mp, paddr_width_mp, asid_width_mp, branch_metadata_fwd_width_mp) \
@@ -258,4 +261,3 @@
      )
 
 `endif
-

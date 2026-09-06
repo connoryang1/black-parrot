@@ -59,6 +59,19 @@ module bp_be_pipe_mem
 
    , input [trans_info_width_lp-1:0]          trans_info_i
 
+   // Serialized context-cache service path. The request address is physical
+   // and cacheable, so this bypasses the DMMU while still using the L1 D$.
+   , input                                           context_cache_dcache_v_i
+   , input                                           context_cache_dcache_w_i
+   , input [reg_addr_width_gp-1:0]                   context_cache_dcache_id_i
+   , input [paddr_width_p-1:0]                       context_cache_dcache_paddr_i
+   , input [dword_width_gp-1:0]                      context_cache_dcache_data_i
+   , output logic                                    context_cache_dcache_yumi_o
+   , output logic                                    context_cache_dcache_ready_o
+   , output logic                                    context_cache_dcache_resp_v_o
+   , output logic [reg_addr_width_gp-1:0]            context_cache_dcache_resp_id_o
+   , output logic [dword_width_gp-1:0]               context_cache_dcache_resp_data_o
+
    // D$-LCE Interface
    // signals to LCE
    , output logic [dcache_req_width_lp-1:0]          cache_req_o
@@ -116,6 +129,7 @@ module bp_be_pipe_mem
   wire [dword_width_gp-1:0] rs1 = reservation.isrc1;
   wire [dword_width_gp-1:0] rs2 = reservation.isrc2;
   wire [dword_width_gp-1:0] imm = reservation.isrc3;
+  wire [thread_id_width_p-1:0] reservation_thread_id = reservation.thread_id[0 +: thread_id_width_p];
 
   wire is_req = reservation.v & (decode.pipe_mem_early_v | decode.pipe_mem_final_v);
   wire [rv64_eaddr_width_gp-1:0] eaddr = rs1 + imm;
@@ -178,6 +192,7 @@ module bp_be_pipe_mem
      ,.flush_i(flush_i)
      ,.fence_i(sfence_i)
      ,.priv_mode_i(trans_info_cast_i.priv_mode)
+     ,.asid_i(trans_info_cast_i.asid)
      ,.sum_i(trans_info_cast_i.mstatus_sum)
      ,.mxr_i(trans_info_cast_i.mstatus_mxr)
      ,.trans_en_i(trans_info_cast_i.translation_en)
@@ -217,12 +232,40 @@ module bp_be_pipe_mem
      ,.r_store_page_fault_o(store_page_fault_v_o)
      );
 
+  // A context request first needs its physical tag in the D$ TV stage, then
+  // remains outstanding until the D$ returns its load data or store ordering
+  // acknowledgement. Keep those lifetimes distinct: a future load window
+  // needs to accept a new TL request while an older load still awaits data.
+  logic context_cache_dcache_ptag_v_r;
+  logic context_cache_dcache_resp_pending_r;
+  logic context_cache_dcache_store_r;
+  logic [paddr_width_p-1:0] context_cache_dcache_paddr_r;
+  logic [dword_width_gp-1:0] context_cache_dcache_data_r;
+  wire context_cache_dcache_accept_li = context_cache_dcache_v_i
+                                        & context_cache_dcache_ready_o;
+  assign context_cache_dcache_yumi_o = context_cache_dcache_accept_li;
+  assign context_cache_dcache_ready_o = ~context_cache_dcache_resp_pending_r
+                                        & ~is_req
+                                        & ~dcache_busy_lo;
+
   bp_be_dcache_pkt_s dcache_pkt;
-  wire dcache_pkt_v = is_req;
-  assign dcache_pkt = '{rd_addr : instr.t.rtype.rd_addr
-                        ,opcode : decode.fu_op.t.dcache_fu_op
-                        ,vaddr  : eaddr
-                        };
+  wire dcache_pkt_v = context_cache_dcache_accept_li | is_req;
+  assign dcache_pkt = context_cache_dcache_accept_li
+                          ? '{thread_id : '0
+                          ,rd_addr : context_cache_dcache_id_i
+                          ,opcode : context_cache_dcache_w_i ? e_dcache_op_sd : e_dcache_op_ld
+                          // Some FPGA configurations use a physical address
+                          // narrower than the virtual address.  A sized cast
+                          // preserves the old low-bit mapping while allowing
+                          // Vivado to zero-extend instead of selecting bits
+                          // beyond the input width.
+                          ,vaddr  : vaddr_width_p'(context_cache_dcache_paddr_i)
+                          }
+                      : '{thread_id : reservation_thread_id
+                          ,rd_addr : instr.t.rtype.rd_addr
+                          ,opcode : decode.fu_op.t.dcache_fu_op
+                          ,vaddr  : eaddr
+                          };
   logic frs2_r_v_r;
   bsg_dff
    #(.width_p(1))
@@ -233,15 +276,29 @@ module bp_be_pipe_mem
      );
 
   // D$ can't handle misaligned accesses
-  wire dcache_ptag_v = dtlb_v_lo & ~load_misaligned_v_o & ~store_misaligned_v_o;
+  wire dcache_ptag_v = context_cache_dcache_ptag_v_r
+                       | (dtlb_v_lo & ~load_misaligned_v_o & ~store_misaligned_v_o);
+  wire [ptag_width_p-1:0] dcache_ptag_li =
+    context_cache_dcache_ptag_v_r
+    ? context_cache_dcache_paddr_r[page_offset_width_gp+:ptag_width_p]
+    : dtlb_ptag_lo;
+  wire dcache_ptag_uncached_li = context_cache_dcache_ptag_v_r
+                                 ? 1'b0
+                                 : dtlb_ptag_uncached_lo;
+  wire dcache_ptag_dram_li = context_cache_dcache_ptag_v_r
+                             ? 1'b1
+                             : dtlb_ptag_dram_lo;
 
   logic dcache_v;
   logic [dword_width_gp-1:0] dcache_data;
   logic [$bits(bp_be_int_tag_e)-1:0] dcache_tag;
   logic [reg_addr_width_gp-1:0] dcache_rd_addr;
+  logic [thread_id_width_p-1:0] dcache_thread_id;
   logic dcache_unsigned, dcache_int, dcache_float, dcache_ptw, dcache_ret, dcache_late;
   logic dcache_busy_lo, dcache_ordered_lo;
-  wire [dword_width_gp-1:0] dcache_st_data = rs2_val_i;
+  wire [dword_width_gp-1:0] dcache_st_data = context_cache_dcache_ptag_v_r
+                                             ? context_cache_dcache_data_r
+                                             : rs2_val_i;
   bp_be_dcache
    #(.bp_params_p(bp_params_p))
    dcache
@@ -255,9 +312,9 @@ module bp_be_pipe_mem
      ,.dcache_pkt_i(dcache_pkt)
 
      ,.ptag_v_i(dcache_ptag_v)
-     ,.ptag_i(dtlb_ptag_lo)
-     ,.ptag_uncached_i(dtlb_ptag_uncached_lo)
-     ,.ptag_dram_i(dtlb_ptag_dram_lo)
+     ,.ptag_i(dcache_ptag_li)
+     ,.ptag_uncached_i(dcache_ptag_uncached_li)
+     ,.ptag_dram_i(dcache_ptag_dram_li)
 
      ,.st_data_i(dcache_st_data)
      ,.flush_i(flush_i)
@@ -265,6 +322,7 @@ module bp_be_pipe_mem
      ,.v_o(dcache_v)
      ,.data_o(dcache_data)
      ,.rd_addr_o(dcache_rd_addr)
+     ,.thread_id_o(dcache_thread_id)
      ,.unsigned_o(dcache_unsigned)
      ,.tag_o(dcache_tag)
      ,.int_o(dcache_int)
@@ -310,8 +368,10 @@ module bp_be_pipe_mem
      ,.data_o(early_v_o)
      );
 
-  assign cache_miss_v_o   = early_v_r & ~(dcache_v |  dcache_late) &  cache_req_yumi_i;
-  assign cache_replay_v_o = early_v_r & ~(dcache_v & ~dcache_late) & ~cache_req_yumi_i;
+  assign cache_miss_v_o   = ~context_cache_dcache_resp_pending_r
+                             & early_v_r & ~(dcache_v |  dcache_late) &  cache_req_yumi_i;
+  assign cache_replay_v_o = ~context_cache_dcache_resp_pending_r
+                             & early_v_r & ~(dcache_v & ~dcache_late) & ~cache_req_yumi_i;
 
   bp_be_int_reg_s dcache_idata;
   bp_be_int_box
@@ -335,13 +395,14 @@ module bp_be_pipe_mem
 
   logic [dpath_width_gp-1:0] dcache_data_r;
   logic [reg_addr_width_gp-1:0] dcache_rd_addr_r;
+  logic [thread_id_width_p-1:0] dcache_thread_id_r;
   wire [dpath_width_gp-1:0] dcache_data_n = dcache_float ? dcache_fdata : dcache_idata;
   bsg_dff
-  #(.width_p(dpath_width_gp+reg_addr_width_gp))
+  #(.width_p(dpath_width_gp+reg_addr_width_gp+thread_id_width_p))
   data_reg
    (.clk_i(negedge_clk)
-    ,.data_i({dcache_data_n, dcache_rd_addr})
-    ,.data_o({dcache_data_r, dcache_rd_addr_r})
+    ,.data_i({dcache_data_n, dcache_rd_addr, dcache_thread_id})
+    ,.data_o({dcache_data_r, dcache_rd_addr_r, dcache_thread_id_r})
     );
 
   logic dcache_v_r, dcache_int_r, dcache_float_r, dcache_ptw_r, dcache_late_r, dcache_ret_r;
@@ -373,14 +434,44 @@ module bp_be_pipe_mem
      ,.data_o({ordered_o, busy_o})
      );
 
-  assign late_wb_v_o = dcache_v_r & dcache_ret_r & (dcache_late_r | dcache_ptw_r);
+  assign late_wb_v_o = ~context_cache_dcache_resp_pending_r
+                       & dcache_v_r & dcache_ret_r & (dcache_late_r | dcache_ptw_r);
   assign late_wb_pkt_cast_o = '{ird_w_v  : dcache_int_r
                                 ,frd_w_v : dcache_float_r
                                 ,ptw_w_v : dcache_ptw_r
+                                ,thread_id : dcache_thread_id_r
                                 ,rd_addr : dcache_rd_addr_r
                                 ,rd_data : dcache_data_r
                                 ,default : '0
                                 };
 
-endmodule
+  assign context_cache_dcache_resp_v_o = context_cache_dcache_resp_pending_r
+                                         & (context_cache_dcache_store_r
+                                            ? dcache_ordered_lo
+                                            : dcache_v);
+  assign context_cache_dcache_resp_data_o = dcache_data;
+  assign context_cache_dcache_resp_id_o = dcache_rd_addr;
 
+  always_ff @(posedge posedge_clk)
+    if (reset_i) begin
+      context_cache_dcache_ptag_v_r <= 1'b0;
+      context_cache_dcache_resp_pending_r <= 1'b0;
+      context_cache_dcache_store_r <= 1'b0;
+      context_cache_dcache_paddr_r <= '0;
+      context_cache_dcache_data_r <= '0;
+    end else begin
+      // The request accepted in this cycle is consumed by the D$ TL stage;
+      // its physical tag and store data are required in the following TV stage.
+      context_cache_dcache_ptag_v_r <= context_cache_dcache_accept_li;
+      if (context_cache_dcache_accept_li) begin
+        context_cache_dcache_resp_pending_r <= 1'b1;
+        context_cache_dcache_store_r <= context_cache_dcache_w_i;
+        context_cache_dcache_paddr_r <= context_cache_dcache_paddr_i;
+        context_cache_dcache_data_r <= context_cache_dcache_data_i;
+      end else if (context_cache_dcache_resp_v_o) begin
+        context_cache_dcache_resp_pending_r <= 1'b0;
+        context_cache_dcache_store_r <= 1'b0;
+      end
+    end
+
+endmodule

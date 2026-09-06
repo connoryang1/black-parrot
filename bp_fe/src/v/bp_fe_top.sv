@@ -24,6 +24,14 @@ module bp_fe_top
    , input [fe_cmd_width_lp-1:0]                      fe_cmd_i
    , input                                            fe_cmd_v_i
    , output logic                                     fe_cmd_yumi_o
+   , output logic                                     ctxtsw_ready_o
+   , input                                            ctxtsw_v_i
+   , output logic                                     ctxtsw_yumi_o
+   , input [vaddr_width_p-1:0]                        ctxtsw_npc_i
+   , input [thread_id_width_p-1:0]                    ctxtsw_thread_id_i
+   , input [rv64_priv_width_gp-1:0]                   ctxtsw_priv_i
+   , input                                            ctxtsw_translation_en_i
+   , input [asid_width_p-1:0]                         ctxtsw_asid_i
 
    , output logic [fe_queue_width_lp-1:0]             fe_queue_o
    , output logic                                     fe_queue_v_o
@@ -59,7 +67,7 @@ module bp_fe_top
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
   `declare_bp_cfg_bus_s(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p);
-  `declare_bp_fe_branch_metadata_fwd_s(ras_idx_width_p, btb_tag_width_p, btb_idx_width_p, bht_idx_width_p, ghist_width_p, bht_row_els_p);
+  `declare_bp_fe_branch_metadata_fwd_s(ras_idx_width_p, btb_tag_width_p, btb_idx_width_p, bht_idx_width_p, ghist_width_p, bht_row_els_p, thread_id_width_p);
   `bp_cast_i(bp_cfg_bus_s, cfg_bus);
 
   logic [rv64_priv_width_gp-1:0] shadow_priv_n, shadow_priv_r;
@@ -86,6 +94,18 @@ module bp_fe_top
      ,.data_o(shadow_translation_en_r)
      );
 
+  logic [asid_width_p-1:0] shadow_asid_n, shadow_asid_r;
+  logic shadow_asid_w;
+  bsg_dff_reset_en_bypass
+   #(.width_p(asid_width_p))
+   shadow_asid_reg
+    (.clk_i(clk_i)
+     ,.reset_i(reset_i)
+     ,.en_i(shadow_asid_w)
+     ,.data_i(shadow_asid_n)
+     ,.data_o(shadow_asid_r)
+     );
+
   logic attaboy_v_li, attaboy_force_li, attaboy_yumi_lo, attaboy_taken_li, attaboy_ntaken_li;
   logic [vaddr_width_p-1:0] attaboy_pc_li;
   bp_fe_branch_metadata_fwd_s attaboy_br_metadata_fwd_li;
@@ -96,6 +116,7 @@ module bp_fe_top
   bp_fe_branch_metadata_fwd_s redirect_br_metadata_fwd_li;
 
   logic pc_gen_init_done_lo;
+  logic state_reset_v_lo;
   logic [vaddr_width_p-1:0] next_pc_lo;
   logic ovr_lo;
 
@@ -107,9 +128,11 @@ module bp_fe_top
   `declare_bp_fe_icache_pkt_s(vaddr_width_p);
   bp_fe_icache_pkt_s icache_pkt_li;
   logic [icache_data_width_p-1:0] icache_data_lo;
-  logic icache_v_li, icache_force_li, icache_yumi_lo, tl_flush_lo;
+  logic icache_v_li, icache_force_li, icache_miss_abort_li, icache_yumi_lo, tl_flush_lo;
   logic icache_tv_we;
   logic icache_hit_v_lo, icache_miss_v_lo, icache_fence_v_lo, icache_hit_yumi_li, icache_yumi_li;
+  logic [thread_id_width_p-1:0] redirect_thread_id_li;
+  logic redirect_thread_id_v_li;
 
   logic fetch_v_lo, fetch_yumi_li;
   logic [vaddr_width_p-1:0] fetch_pc_lo;
@@ -126,6 +149,7 @@ module bp_fe_top
      ,.reset_i(reset_i)
 
      ,.init_done_o(pc_gen_init_done_lo)
+     ,.state_reset_v_i(state_reset_v_lo)
 
      ,.attaboy_v_i(attaboy_v_li)
      ,.attaboy_force_i(attaboy_force_li)
@@ -139,6 +163,8 @@ module bp_fe_top
      ,.redirect_pc_i(redirect_pc_li)
      ,.redirect_npc_i(redirect_npc_li)
      ,.redirect_br_v_i(redirect_br_v_li)
+     ,.redirect_thread_id_i(redirect_thread_id_li)
+     ,.redirect_thread_id_v_i(redirect_thread_id_v_li)
      ,.redirect_br_metadata_fwd_i(redirect_br_metadata_fwd_li)
      ,.redirect_br_taken_i(redirect_br_taken_li)
      ,.redirect_br_ntaken_i(redirect_br_ntaken_li)
@@ -203,6 +229,7 @@ module bp_fe_top
      ,.flush_i(tv_flush_lo)
      ,.fence_i(itlb_fence_v_li)
      ,.priv_mode_i(shadow_priv_r)
+     ,.asid_i(shadow_asid_r)
      ,.trans_en_i(shadow_translation_en_r)
      // Supervisor use of user memory is always disabled for immu
      ,.sum_i('0)
@@ -253,6 +280,7 @@ module bp_fe_top
      ,.icache_pkt_i(icache_pkt_li)
      ,.v_i(icache_v_li)
      ,.force_i(icache_force_li)
+     ,.miss_abort_i(icache_miss_abort_li)
      ,.yumi_o(icache_yumi_lo)
      ,.tl_flush_i(tl_flush_lo)
 
@@ -374,6 +402,14 @@ module bp_fe_top
      ,.fe_cmd_v_i(fe_cmd_v_i)
      ,.fe_cmd_yumi_o(fe_cmd_yumi_o)
 
+     ,.ctxtsw_v_i(ctxtsw_v_i)
+     ,.ctxtsw_yumi_o(ctxtsw_yumi_o)
+     ,.ctxtsw_npc_i(ctxtsw_npc_i)
+     ,.ctxtsw_thread_id_i(ctxtsw_thread_id_i)
+     ,.ctxtsw_priv_i(ctxtsw_priv_i)
+     ,.ctxtsw_translation_en_i(ctxtsw_translation_en_i)
+     ,.ctxtsw_asid_i(ctxtsw_asid_i)
+
      ,.fe_queue_o(fe_queue_o)
      ,.fe_queue_v_o(fe_queue_v_o)
      ,.fe_queue_ready_and_i(fe_queue_ready_and_i)
@@ -387,6 +423,8 @@ module bp_fe_top
      ,.redirect_br_taken_o(redirect_br_taken_li)
      ,.redirect_br_ntaken_o(redirect_br_ntaken_li)
      ,.redirect_br_nonbr_o(redirect_br_nonbr_li)
+     ,.redirect_thread_id_o(redirect_thread_id_li)
+     ,.redirect_thread_id_v_o(redirect_thread_id_v_li)
      ,.redirect_br_metadata_fwd_o(redirect_br_metadata_fwd_li)
 
      ,.attaboy_v_o(attaboy_v_li)
@@ -425,6 +463,7 @@ module bp_fe_top
 
      ,.icache_v_o(icache_v_li)
      ,.icache_force_o(icache_force_li)
+     ,.icache_miss_abort_o(icache_miss_abort_li)
      ,.icache_pkt_o(icache_pkt_li)
      ,.icache_yumi_i(icache_yumi_lo)
 
@@ -433,7 +472,12 @@ module bp_fe_top
 
      ,.shadow_translation_en_o(shadow_translation_en_n)
      ,.shadow_translation_en_w_o(shadow_translation_en_w)
+
+     ,.shadow_asid_o(shadow_asid_n)
+     ,.shadow_asid_w_o(shadow_asid_w)
+
+     ,.state_reset_v_o(state_reset_v_lo)
+     ,.ctxtsw_ready_o(ctxtsw_ready_o)
      );
 
 endmodule
-
