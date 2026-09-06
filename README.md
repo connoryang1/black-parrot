@@ -1,3 +1,5 @@
+This repository contains the BlackParrot processor RTL and platform documentation. This fork also carries an FPGA-validated software-controlled context-switch extension, introduced in [the context-switch guide](docs/context_switch.md).
+
 ![BlackParrot Logo](docs/bp_logo.png)
 # BlackParrot: A Linux-Capable Accelerator Host RISC-V Multicore [![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause) [![Gitlab CI](https://gitlab.com/bespoke-silicon-group/black-parrot/black-parrot/badges/master/pipeline.svg)](https://gitlab.com/bespoke-silicon-group/black-parrot/black-parrot/pipelines) [![Contributers](https://img.shields.io/github/contributors/black-parrot/black-parrot.svg?style=flat)]()
 
@@ -162,4 +164,3 @@ open-source project maintained by energetic but not inexhaustible volunteers).
 If used for academic research, please cite:
 
 D. Petrisko, F. Gilani, M. Wyse, D. C. Jung, S. Davidson, P. Gao, C. Zhao, Z. Azad, S. Canakci, B. Veluri, T. Guarino, A. J. Joshi, M. Oskin, M. B. Taylor, ["BlackParrot: An Agile Open Source RISC-V Multicore for Accelerator SoCs"](https://taylor-bsg.github.io/papers/BlackParrot_IEEE_Micro_2020.pdf), in *IEEE Micro Special Issue on Agile and Open-Source Hardware*, July/August, 2020. doi: 10.1109/MM.2020.2996145
-
