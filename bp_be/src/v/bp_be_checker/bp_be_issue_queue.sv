@@ -116,28 +116,30 @@ module bp_be_issue_queue
 
   logic [fetch_width_p-1:0] queue_instr, queue_instr_n;
   assign queue_instr = fe_queue_cast_i.instr;
+  bp_fe_branch_metadata_fwd_s enqueue_branch_metadata;
+  assign enqueue_branch_metadata = fe_queue_cast_i.branch_metadata_fwd;
+  logic [thread_id_width_p-1:0] queue_thread_id_n;
   wire preissue_v = (|read & ~empty_n) | roll_i | (|enq & (empty | clr_i));
   wire bypass_preissue = (wptr_r == rptr_n) | clr_enq;
   wire [mem_ptr_width_lp-1:0] wptr_mem_li = clr_enq ? '0 : wptr_r.mem;
   bsg_mem_1r1w
-   #(.width_p(fetch_width_p), .els_p(fe_queue_fifo_els_p))
+   #(.width_p(fetch_width_p+thread_id_width_p), .els_p(fe_queue_fifo_els_p))
    preissue_fifo_mem
     (.w_clk_i(clk_i)
      ,.w_reset_i(reset_i)
      ,.w_v_i(|enq)
      ,.w_addr_i(wptr_mem_li)
-     ,.w_data_i(queue_instr)
+     ,.w_data_i({enqueue_branch_metadata.thread_id, queue_instr})
      ,.r_v_i(~bypass_preissue)
      ,.r_addr_i(rptr_n.mem)
-     ,.r_data_o(queue_instr_n)
+     ,.r_data_o({queue_thread_id_n, queue_instr_n})
      );
 
   wire [entry_ptr_width_lp-1:0] preissue_entry_sel = bypass_preissue ? wptr_r.entry : rptr_n.entry;
-  wire [branch_metadata_fwd_width_p-1:0] preissue_branch_metadata_fwd =
-    bypass_preissue ? fe_queue_cast_i.branch_metadata_fwd : fe_queue_lo.branch_metadata_fwd;
-  bp_fe_branch_metadata_fwd_s preissue_branch_metadata_cast;
-  assign preissue_branch_metadata_cast = preissue_branch_metadata_fwd;
-  wire [thread_id_width_p-1:0] preissue_thread_id = preissue_branch_metadata_cast.thread_id;
+  // Preissue reads the next pointer, including on rollback. Keep its register
+  // bank tag beside the instruction; fe_queue_lo still names the old head.
+  wire [thread_id_width_p-1:0] preissue_thread_id =
+    bypass_preissue ? enqueue_branch_metadata.thread_id : queue_thread_id_n;
   logic [fetch_cinstr_p:0][cinstr_width_gp-1:0] queue_instr_raw;
   assign queue_instr_raw[0+:fetch_cinstr_p] = bypass_preissue ? queue_instr : queue_instr_n;
   assign queue_instr_raw[fetch_cinstr_p] = '0;

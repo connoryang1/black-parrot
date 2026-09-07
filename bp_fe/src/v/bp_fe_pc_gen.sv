@@ -115,6 +115,11 @@ module bp_fe_pc_gen
         next_pc    = redirect_npc_i;
 
         next_metadata = redirect_br_metadata_fwd_cast_i;
+        // Refill/translation commands reuse the FE-command operand union and
+        // do not carry a register-bank tag. Preserve the fetch owner's tag,
+        // just as the predictor selector does, unless this redirects contexts.
+        next_metadata.thread_id = (state_reset_v_i | redirect_thread_id_v_i)
+                                  ? redirect_thread_id_i : thread_id_r;
       end
     else if (ovr_o)
       begin
