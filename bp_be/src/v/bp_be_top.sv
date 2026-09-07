@@ -301,13 +301,31 @@ module bp_be_top
     context_cache_commit_v_li
     ? context_cache_victim_physical_thread_id_r
     : pending_ctxtsw_sent_r ? pending_ctxtsw_prev_physical_thread_id_r : current_physical_thread_id_lo;
-  wire csr_context_restore_v_li = context_cache_state_r == e_context_cache_launch_fe;
+  // First NPC seeding clones the caller's CSR image. A resident target never
+  // takes the context-cache install path, so initialize its inactive physical
+  // bank at that same committed seed. Existing contexts keep their own CSRs
+  // when reseeded; a self-seed must not restore over its retiring instruction.
+  wire csr_context_cache_restore_v_li = context_cache_state_r == e_context_cache_launch_fe;
+  wire csr_context_resident_init_v_li = ctx_npc_write_resident_v_li
+    && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
+    && (ctx_npc_write_physical_thread_id_li < num_threads_p)
+    && !virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]
+    && (ctx_npc_write_physical_thread_id_li != csr_context_save_physical_thread_id_li);
+  wire csr_context_restore_v_li = csr_context_cache_restore_v_li | csr_context_resident_init_v_li;
+  wire [thread_id_width_p-1:0] csr_context_restore_physical_thread_id_li =
+    csr_context_cache_restore_v_li ? context_cache_victim_physical_thread_id_r
+                                 : ctx_npc_write_physical_thread_id_li;
   wire csr_context_restore_reset_li =
-    ~virtual_context_csr_valid_r[context_cache_target_virtual_context_id_r];
+    csr_context_cache_restore_v_li
+    & ~virtual_context_csr_valid_r[context_cache_target_virtual_context_id_r];
   wire [csr_context_width_lp-1:0] csr_context_restore_data_li =
-    virtual_context_csr_state_r[context_cache_target_virtual_context_id_r];
+    csr_context_cache_restore_v_li
+    ? virtual_context_csr_state_r[context_cache_target_virtual_context_id_r]
+    : csr_context_save_data_lo;
   wire [vaddr_width_p-1:0] csr_context_restore_npc_li =
-    virtual_context_npc_r[context_cache_target_virtual_context_id_r];
+    csr_context_cache_restore_v_li
+    ? virtual_context_npc_r[context_cache_target_virtual_context_id_r]
+    : ctx_npc_write_npc_lo;
   localparam [paddr_width_p-1:0] context_cache_image_base_lp = paddr_width_p'(64'h0000000087f00000);
   localparam int context_cache_image_stride_bytes_lp = 512;
   localparam int context_cache_image_gpr_base_word_lp = 8;
@@ -714,7 +732,7 @@ module bp_be_top
 
         if (!virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]) begin
           // A bootstrap target has no prior CSR image.  Clone the seeding
-          // context's architectural CSR state so a first nonresident launch
+          // context's architectural CSR state so a first launch
           // preserves the caller's privilege mode and SATP translation root.
           // Never overwrite CSR state when only reseeding an existing NPC.
           virtual_context_csr_state_r[ctx_npc_write_virtual_context_id_lo]
@@ -1344,7 +1362,7 @@ module bp_be_top
      ,.retire_thread_id_i(retire_thread_id_lo)
      ,.csr_context_restore_v_i(csr_context_restore_v_li)
      ,.csr_context_restore_reset_i(csr_context_restore_reset_li)
-     ,.csr_context_restore_physical_thread_id_i(context_cache_victim_physical_thread_id_r)
+     ,.csr_context_restore_physical_thread_id_i(csr_context_restore_physical_thread_id_li)
      ,.csr_context_restore_data_i(csr_context_restore_data_li)
      ,.csr_context_restore_npc_i(csr_context_restore_npc_li)
      ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_li)
