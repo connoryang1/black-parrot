@@ -74,8 +74,10 @@ module bp_be_detector
   assign decode = issue_pkt_cast_i.decode;
   bp_be_dep_status_s [3:0] dep_status_r;
   logic [3:0][thread_id_width_p-1:0] dep_thread_id_r;
+  logic [3:0] dep_irf_w_r;
 
   logic fence_haz_v, cmd_haz_v, fflags_haz_v, csr_rs1_haz_v, csr_trans_haz_v, iscore_haz_v, fscore_haz_v;
+  logic ctxtsw_rs1_haz_v;
   logic data_haz_v, control_haz_v, struct_haz_v;
 
   wire [reg_addr_width_gp-1:0] score_rd_li  = commit_pkt_cast_i.instr.t.fmatype.rd_addr;
@@ -276,6 +278,20 @@ module bp_be_detector
                          | (rs1_match_vector[2]
 	                            & dep_status_r[2].long_iwb_v));
 
+      // Unlike ordinary execution operands, the early context target is not
+      // repaired by calculator forwarding. Wait through architectural GPR
+      // writeback, including injected load/divide completions with no pipe flag.
+      // Do not gate on issue.v: it depends on queue enable and hence hazard_v_o.
+      ctxtsw_rs1_haz_v = 1'b0;
+      for (int i = 0; i < 4; i++)
+        ctxtsw_rs1_haz_v |= dep_irf_w_r[i]
+                           & (check_thread_id_li == dep_thread_id_r[i])
+                           & (check_rs1_li == dep_status_r[i].rd_addr);
+      ctxtsw_rs1_haz_v &= issue_pkt_cast_i.csrw
+                         & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
+                         & (issue_pkt_cast_i.instr inside {`RV64_CSRRW, `RV64_CSRRS, `RV64_CSRRC})
+                         & (check_rs1_li != '0);
+
 	      /*
 	       * Memory operations consume trans_info_i directly from the CSR block.
 	       * Translation-affecting CSR writes must retire before a following
@@ -288,7 +304,7 @@ module bp_be_detector
 	                           | (dep_status_r[2].trans_info_v & (check_thread_id_li == dep_thread_id_r[2]))
 	                           | (dep_status_r[3].trans_info_v & (check_thread_id_li == dep_thread_id_r[3])));
 
-	      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v | csr_trans_haz_v;
+	      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v | csr_trans_haz_v | ctxtsw_rs1_haz_v;
 
       // Combine all data hazard information
       // TODO: Parameterize away floating point data hazards without hardware support
@@ -341,6 +357,14 @@ module bp_be_detector
 	                                     inside {`CSR_ADDR_MSTATUS, `CSR_ADDR_SSTATUS, `CSR_ADDR_SATP});
 	      dep_status_n.rd_addr     = dispatch_pkt_cast_i.instr.t.rtype.rd_addr;
 	    end
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      dep_irf_w_r <= '0;
+    else
+      // Age with the existing destination/thread tags even while issue stalls.
+      // Squashed producers may conservatively delay only this CSR, then expire.
+      dep_irf_w_r <= {dep_irf_w_r[2:0], dispatch_pkt_cast_i.v & dep_decode.irf_w_v};
 
   always_ff @(posedge clk_i)
     begin
