@@ -25,6 +25,10 @@ module bp_uce
     , parameter `BSG_INV_PARAM(data_width_p)
     , parameter `BSG_INV_PARAM(tag_width_p)
     , parameter `BSG_INV_PARAM(id_width_p)
+    // Noncoherent data-cache hints warm the next cache level. Each hint is a
+    // single-word read, so a banked L2 can begin the next line's miss before
+    // the preceding line has returned. Returned words are never architectural.
+    , parameter prefetch_p = writeback_p
 
     `declare_bp_cache_engine_generic_if_widths(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p, cache)
     )
@@ -105,6 +109,43 @@ module bp_uce
   `bp_cast_o(bp_cache_data_mem_pkt_s, data_mem_pkt);
   `bp_cast_o(bp_cache_stat_mem_pkt_s, stat_mem_pkt);
 
+  wire prefetch_v_li = prefetch_p & cache_req_v_i
+    & (cache_req_cast_i.msg_type == e_cache_prefetch);
+  logic [1:0] prefetch_valid_r, prefetch_sent_r;
+  logic [1:0][paddr_width_p-1:0] prefetch_addr_r;
+  logic prefetch_free_v, prefetch_free_slot, prefetch_issue_v, prefetch_issue_slot;
+  logic prefetch_duplicate, prefetch_demand_match;
+  logic prefetch_issue, prefetch_response;
+  wire prefetch_allocate = cache_req_yumi_o & prefetch_v_li & ~prefetch_duplicate;
+
+  // Slots remain reserved until the final response, including across context
+  // redirects. Physical line identity merges duplicate hints and orders a
+  // following demand behind a hint to that same line. No cached data is kept.
+  always_comb begin
+    prefetch_free_v = 1'b0;
+    prefetch_free_slot = 1'b0;
+    prefetch_issue_v = 1'b0;
+    prefetch_issue_slot = 1'b0;
+    prefetch_duplicate = 1'b0;
+    prefetch_demand_match = 1'b0;
+    for (int i = 1; i >= 0; i--) begin
+      if (!prefetch_valid_r[i]) begin
+        prefetch_free_v = 1'b1;
+        prefetch_free_slot = 1'(i);
+      end
+      if (prefetch_valid_r[i] & ~prefetch_sent_r[i]) begin
+        prefetch_issue_v = 1'b1;
+        prefetch_issue_slot = 1'(i);
+      end
+      prefetch_duplicate |= prefetch_valid_r[i]
+        & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
+           == cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp]);
+      prefetch_demand_match |= prefetch_valid_r[i]
+        & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
+           == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
+    end
+  end
+
   enum logic [4:0] {
     e_reset
     ,e_init
@@ -155,7 +196,7 @@ module bp_uce
      ,.reset_i(reset_i)
 
      ,.data_i(cache_req_cast_i)
-     ,.v_i(cache_req_yumi_o)
+     ,.v_i(cache_req_yumi_o & ~prefetch_v_li)
      ,.ready_param_o(cache_req_ready_lo)
 
      ,.data_o(cache_req_r)
@@ -303,7 +344,11 @@ module bp_uce
   wire nonblocking_v_li = cache_req_v_i & (uc_store_v_li | wt_store_v_li) & ~uc_evict_v_li;
 
   wire store_resp_v_li  = fsm_rev_v_li & fsm_rev_header_li.msg_type inside {e_bedrock_mem_wr};
-  wire load_resp_v_li   = fsm_rev_v_li & fsm_rev_header_li.msg_type inside {e_bedrock_mem_rd, e_bedrock_mem_amo};
+  wire load_resp_v_li   = fsm_rev_v_li & ~fsm_rev_header_li.payload.prefetch
+    & fsm_rev_header_li.msg_type inside {e_bedrock_mem_rd, e_bedrock_mem_amo};
+  assign prefetch_response = prefetch_p & fsm_rev_v_li
+    & fsm_rev_header_li.payload.prefetch
+    & (fsm_rev_header_li.msg_type == e_bedrock_mem_rd);
 
   wire miss_load_v_r   = cache_req_v_r & cache_req_r.msg_type inside {e_miss_load};
   wire miss_store_v_r  = cache_req_v_r & cache_req_r.msg_type inside {e_miss_store};
@@ -377,9 +422,15 @@ module bp_uce
      ,.yumi_i(fsm_rev_yumi_lo & fsm_rev_last_li)
      ,.count_o(credit_count_lo)
      );
-  assign cache_req_credits_full_o  = cache_req_v_r && (credit_count_lo == coh_noc_max_credits_p);
-  assign cache_req_credits_empty_o = ~cache_req_v_r && (credit_count_lo == 0);
+  assign cache_req_credits_full_o  = (credit_count_lo == coh_noc_max_credits_p);
+  assign cache_req_credits_empty_o = ~cache_req_v_r && (credit_count_lo == 0)
+    && !(|prefetch_valid_r);
   wire cache_req_credit_ready_lo = ~cache_req_credits_full_o | ~fsm_fwd_new_lo;
+  // Do not pass older demand/writeback traffic. Multiple hints may still be
+  // sent together: their own credits are not a barrier to the next hint.
+  wire prefetch_only_credits = credit_count_lo
+    == (`BSG_WIDTH(coh_noc_max_credits_p)'(prefetch_sent_r[0])
+        + `BSG_WIDTH(coh_noc_max_credits_p)'(prefetch_sent_r[1]));
 
   logic [fill_width_p-1:0] writeback_data;
   wire [fill_cnt_width_lp-1:0] dirty_data_select = fsm_fwd_addr_lo[fill_offset_width_lp+:fill_cnt_width_lp];
@@ -414,7 +465,9 @@ module bp_uce
 
   // We ack mem_revs for stores no matter what, so load_resp_yumi_lo is for other responses
   logic load_resp_yumi_lo;
-  assign fsm_rev_yumi_lo = load_resp_yumi_lo | store_resp_v_li;
+  // Drain hint replies in every FSM state, including a same-line demand wait.
+  assign fsm_rev_yumi_lo = load_resp_yumi_lo | store_resp_v_li | prefetch_response;
+  assign cache_req_id_o = cache_req_r.id;
   assign cache_req_lock_o = is_reset | is_init | inval_v_r | clean_v_r | flush_v_r;
   logic blocking_req_v_lo;
   always_comb
@@ -442,6 +495,7 @@ module bp_uce
       fsm_fwd_v_lo = '0;
 
       load_resp_yumi_lo = '0;
+      prefetch_issue = '0;
 
       state_n = state_r;
 
@@ -594,6 +648,9 @@ module bp_uce
 
         e_ready:
           begin
+            if (prefetch_v_li) begin
+              cache_req_yumi_o = ~cache_req_v_r & (prefetch_free_v | prefetch_duplicate);
+            end else begin
             cache_req_yumi_o = cache_req_v_i & cache_req_ready_lo & (~cache_req_v_r | nonblocking_v_li);
 
             state_n = cache_req_yumi_o
@@ -609,6 +666,7 @@ module bp_uce
                                 ? e_ready
                                 : e_send_critical
                       : cache_req_v_i ? e_backoff : state_r;
+            end
           end
 
         e_uc_writeback_evict:
@@ -656,7 +714,8 @@ module bp_uce
               fsm_fwd_header_lo.payload.way_id = lce_assoc_p'(cache_req_metadata.hit_or_repl_way);
               fsm_fwd_header_lo.payload.lce_id = lce_id_i;
               fsm_fwd_header_lo.payload.src_did = did_i;
-              fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo;
+              fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo
+                & ~prefetch_demand_match;
 
               state_n = (fsm_fwd_v_lo & fsm_fwd_last_lo)
                         ? cache_req_metadata.dirty
@@ -819,7 +878,59 @@ module bp_uce
 
           cache_req_done = fsm_fwd_v_lo & fsm_fwd_last_lo;
         end
+
+      // Demand traffic has priority. A waiting same-line demand also permits
+      // its queued hint to issue, preventing a request-before-issue deadlock.
+      // A word request releases the L2 command pump after one bank operation;
+      // the bank still fetches its complete cache line from backing memory.
+      if (prefetch_p & prefetch_issue_v
+          & ((is_ready & ~nonblocking_v_r)
+             | (is_send_critical & miss_v_r & prefetch_demand_match))
+          & prefetch_only_credits & ~cache_req_credits_full_o) begin
+        fsm_fwd_header_lo = '0;
+        fsm_fwd_header_lo.msg_type = e_bedrock_mem_rd;
+        fsm_fwd_header_lo.addr = prefetch_addr_r[prefetch_issue_slot];
+        fsm_fwd_header_lo.size = e_bedrock_msg_size_8;
+        fsm_fwd_header_lo.payload.prefetch = 1'b1;
+        fsm_fwd_header_lo.payload.way_id = lce_assoc_p'(prefetch_issue_slot);
+        fsm_fwd_header_lo.payload.lce_id = lce_id_i;
+        fsm_fwd_header_lo.payload.src_did = did_i;
+        fsm_fwd_data_lo = '0;
+        fsm_fwd_v_lo = fsm_fwd_ready_then_li;
+        prefetch_issue = fsm_fwd_v_lo & fsm_fwd_last_lo;
+      end
     end
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      prefetch_valid_r <= '0;
+      prefetch_sent_r <= '0;
+      prefetch_addr_r <= '0;
+    end else begin
+      if (prefetch_allocate) begin
+        prefetch_valid_r[prefetch_free_slot] <= 1'b1;
+        prefetch_sent_r[prefetch_free_slot] <= 1'b0;
+        prefetch_addr_r[prefetch_free_slot] <= {cache_req_cast_i.addr[paddr_width_p-1:3], 3'b0};
+      end
+      if (prefetch_issue)
+        prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
+      if (prefetch_response & fsm_rev_last_li) begin
+        prefetch_valid_r[fsm_rev_header_li.payload.way_id[0]] <= 1'b0;
+        prefetch_sent_r[fsm_rev_header_li.payload.way_id[0]] <= 1'b0;
+      end
+    end
+  end
+
+  // synopsys translate_off
+  always_ff @(negedge clk_i) if (!reset_i && prefetch_response) begin
+    assert (fsm_rev_header_li.payload.way_id < 2
+      && prefetch_valid_r[fsm_rev_header_li.payload.way_id[0]]
+      && prefetch_sent_r[fsm_rev_header_li.payload.way_id[0]]
+      && fsm_rev_header_li.size == e_bedrock_msg_size_8
+      && fsm_rev_header_li.addr == prefetch_addr_r[fsm_rev_header_li.payload.way_id[0]])
+      else $error("UCE prefetch response has no matching outstanding word request");
+  end
+  // synopsys translate_on
 
   // synopsys sync_set_reset "reset_i"
   always_ff @(posedge clk_i)

@@ -23,6 +23,7 @@
   {
     logic [$bits(bp_be_int_tag_e)-1:0] tag;
     logic                              load_op;
+    logic                              prefetch_op;
     logic                              ret_op;
     logic                              store_op;
     logic                              signed_op;

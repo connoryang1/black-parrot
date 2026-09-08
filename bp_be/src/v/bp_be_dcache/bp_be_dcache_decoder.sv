@@ -23,6 +23,8 @@ module bp_be_dcache_decoder
   always_comb begin
     decode_cast_o = '0;
 
+    decode_cast_o.prefetch_op = pkt_cast_i.opcode == e_dcache_op_prefetch;
+
     // Atomic op decoding
     decode_cast_o.lr_op = pkt_cast_i.opcode inside {e_dcache_op_lrw, e_dcache_op_lrd};
     decode_cast_o.sc_op = pkt_cast_i.opcode inside {e_dcache_op_scw, e_dcache_op_scd};
@@ -68,7 +70,7 @@ module bp_be_dcache_decoder
       {e_dcache_op_flw, e_dcache_op_fld
        ,e_dcache_op_ld, e_dcache_op_lw, e_dcache_op_lh, e_dcache_op_lb
        ,e_dcache_op_lwu, e_dcache_op_lhu, e_dcache_op_lbu
-       ,e_dcache_op_ptw
+       ,e_dcache_op_ptw, e_dcache_op_prefetch
        };
 
     decode_cast_o.store_op = (decode_cast_o.amo_op & ~decode_cast_o.lr_op) || pkt_cast_i.opcode inside
@@ -100,7 +102,8 @@ module bp_be_dcache_decoder
                                                        decode_cast_o.cache_op  = 1'b1;
       e_dcache_op_bzero, e_dcache_op_binval, e_dcache_op_bclean, e_dcache_op_bflush:
                                                        decode_cast_o.block_op  = 1'b1;
-      e_dcache_op_lb, e_dcache_op_lbu, e_dcache_op_sb: decode_cast_o.byte_op   = 1'b1;
+      e_dcache_op_lb, e_dcache_op_lbu, e_dcache_op_sb, e_dcache_op_prefetch:
+                                                       decode_cast_o.byte_op   = 1'b1;
       e_dcache_op_lh, e_dcache_op_lhu, e_dcache_op_sh: decode_cast_o.half_op   = 1'b1;
       e_dcache_op_amoswapw, e_dcache_op_amoaddw, e_dcache_op_amoxorw
       ,e_dcache_op_amoandw, e_dcache_op_amoorw, e_dcache_op_amominw
@@ -113,6 +116,7 @@ module bp_be_dcache_decoder
 
     // Signed op decoding
     decode_cast_o.signed_op = (decode_cast_o.byte_op | decode_cast_o.half_op | decode_cast_o.word_op)
+      && !decode_cast_o.prefetch_op
       && !(pkt_cast_i.opcode inside {e_dcache_op_lwu, e_dcache_op_lhu, e_dcache_op_lbu});
 
     // The destination register of the cache request
@@ -129,6 +133,7 @@ module bp_be_dcache_decoder
 
     // Return
     decode_cast_o.ret_op = decode_cast_o.load_op
+      & ~decode_cast_o.prefetch_op
       & (decode_cast_o.ptw_op
          | decode_cast_o.float_op
          | (decode_cast_o.int_op && (decode_cast_o.rd_addr != '0))

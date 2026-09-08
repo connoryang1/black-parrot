@@ -319,7 +319,9 @@ module bp_be_detector
       // Combine all structural hazard information
       struct_haz_v = cmd_haz_v
                      | fscore_haz_v | iscore_haz_v
-                     | (mem_busy_i & decode.pipe_mem_early_v)
+                     // A hint may be discarded when the memory pipe is busy.
+                     // Data and translation hazards above still apply.
+                     | (mem_busy_i & decode.pipe_mem_early_v & ~decode.dcache_prefetch_v)
                      | (mem_busy_i & decode.pipe_mem_final_v)
                      | (fdiv_busy_i & decode.pipe_long_v)
                      | (idiv_busy_i & decode.pipe_long_v);

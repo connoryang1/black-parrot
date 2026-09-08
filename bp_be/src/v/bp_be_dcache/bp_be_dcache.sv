@@ -499,9 +499,9 @@ module bp_be_dcache
 
   wire blocking_miss_tv    = blocking_req;
   wire nonblocking_miss_tv = nonblocking_req & ~cache_req_yumi_i;
-  wire engine_miss_tv      = cache_req_v_o & ~cache_req_yumi_i;
+  wire engine_miss_tv      = cache_req_v_o & ~cache_req_yumi_i & ~decode_tv_r.prefetch_op;
   wire any_miss_tv         = blocking_miss_tv | nonblocking_miss_tv | engine_miss_tv;
-  wire cache_hit_tv        = v_tv_r & ~any_miss_tv;
+  wire cache_hit_tv        = v_tv_r & ~any_miss_tv & ~decode_tv_r.prefetch_op;
 
   assign v_o        = cache_hit_tv;
   assign data_o     = sc_success_tv ? 1'b0 : sc_fail_tv ? 1'b1 : final_data_tv;
@@ -701,10 +701,10 @@ module bp_be_dcache
   `bp_cast_o(bp_be_dcache_req_s, cache_req);
   `bp_cast_o(bp_be_dcache_req_metadata_s, cache_req_metadata);
 
-  wire load_req            = v_tv_r & ~uncached_tv_r & load_miss_tv & ~snoop_tv_r;
+  wire load_req            = v_tv_r & ~uncached_tv_r & load_miss_tv & ~snoop_tv_r & ~decode_tv_r.prefetch_op;
   wire store_req           = v_tv_r & ~uncached_tv_r & store_miss_tv & ~snoop_tv_r;
   wire uncached_amo_req    = v_tv_r &  uncached_tv_r & decode_tv_r.amo_op & decode_tv_r.ret_op & ~snoop_tv_r;
-  wire uncached_load_req   = v_tv_r &  uncached_tv_r & ~decode_tv_r.amo_op & decode_tv_r.load_op & ~snoop_tv_r;
+  wire uncached_load_req   = v_tv_r &  uncached_tv_r & ~decode_tv_r.amo_op & decode_tv_r.load_op & ~snoop_tv_r & ~decode_tv_r.prefetch_op;
   wire uncached_store_req  = v_tv_r &  uncached_tv_r & decode_tv_r.store_op & ~decode_tv_r.ret_op & ~snoop_tv_r;
   wire binval_req          = v_tv_r & ~uncached_tv_r & decode_tv_r.binval_op & ~decode_tv_r.bclean_op & features_p[e_cfg_coherent] & ~snoop_tv_r;
   wire bclean_req          = v_tv_r & ~uncached_tv_r & decode_tv_r.bclean_op & (~decode_tv_r.binval_op | !features_p[e_cfg_coherent]) & (store_hit_tv | features_p[e_cfg_coherent]) & ~snoop_tv_r;
@@ -723,7 +723,13 @@ module bp_be_dcache
   assign nonblocking_sent  = nonblocking_req & cache_req_yumi_i;
   assign blocking_sent     = blocking_req & cache_req_yumi_i;
 
-  assign cache_req_v_o = is_ready & (blocking_req | nonblocking_req);
+  // Hints use a separate UCE request slot, never the demand MSHR. Drop a hint
+  // while a demand owns the cache or when the engine cannot accept it. Looking
+  // up L1 first avoids fetching stale backing data for a resident dirty line.
+  wire prefetch_req = v_tv_r & decode_tv_r.prefetch_op & ~load_hit_tv
+    & ~uncached_tv_r & ~snoop_tv_r
+    & features_p[e_cfg_writeback] & !features_p[e_cfg_coherent];
+  assign cache_req_v_o = is_ready & (blocking_req | nonblocking_req | prefetch_req);
 
   assign blocking_hazard    = cache_req_v_o & blocking_req;
   assign nonblocking_hazard = nonblocking_req & ~cache_req_yumi_i;
@@ -770,7 +776,9 @@ module bp_be_dcache
         default: cache_req_cast_o.subop = e_req_store;
       endcase
 
-      if (bflush_req)
+      if (prefetch_req)
+        cache_req_cast_o.msg_type = e_cache_prefetch;
+      else if (bflush_req)
         cache_req_cast_o.msg_type = e_cache_bflush;
       else if (bclean_req)
         cache_req_cast_o.msg_type = e_cache_bclean;
@@ -796,7 +804,7 @@ module bp_be_dcache
         cache_req_cast_o.msg_type = e_wt_store;
     end
 
-  wire cache_req_metadata_v_n = cache_req_yumi_i;
+  wire cache_req_metadata_v_n = cache_req_yumi_i & ~prefetch_req;
   bsg_dff_reset
    #(.width_p(1))
    cache_req_v_reg

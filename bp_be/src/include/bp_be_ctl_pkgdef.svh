@@ -82,6 +82,9 @@
     ,e_dcache_op_fsw      = 6'b100100
     ,e_dcache_op_fsd      = 6'b100101
 
+    // Zicbop read hint: cache allocation only, no architectural data return.
+    ,e_dcache_op_prefetch = 6'b100110
+
     ,e_dcache_op_amoswapw = 6'b010000
     ,e_dcache_op_amoaddw  = 6'b010001
     ,e_dcache_op_amoxorw  = 6'b010010
@@ -197,6 +200,7 @@
     logic                              jr_v;
     logic                              fence_v;
     logic                              dcache_r_v;
+    logic                              dcache_prefetch_v;
     logic                              dcache_w_v;
     logic                              dcache_cbo_v;
     logic                              dcache_mmu_v;

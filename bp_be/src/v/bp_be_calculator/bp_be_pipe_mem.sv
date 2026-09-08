@@ -132,7 +132,20 @@ module bp_be_pipe_mem
   wire [thread_id_width_p-1:0] reservation_thread_id = reservation.thread_id[0 +: thread_id_width_p];
 
   wire is_req = reservation.v & (decode.pipe_mem_early_v | decode.pipe_mem_final_v);
+  wire is_prefetch = is_req & decode.dcache_prefetch_v;
   wire [rv64_eaddr_width_gp-1:0] eaddr = rs1 + imm;
+
+  // Preserve the hint's identity at both the MMU response and early-retire
+  // stages. A dropped hint still retires, without a miss, replay, or trap.
+  logic prefetch_mmu_r, prefetch_early_r;
+  bsg_dff_reset
+   #(.width_p(2))
+   prefetch_pipe
+    (.clk_i(negedge_clk)
+     ,.reset_i(reset_i)
+     ,.data_i({is_prefetch, prefetch_mmu_r})
+     ,.data_o({prefetch_mmu_r, prefetch_early_r})
+     );
 
   logic early_v_r;
   bsg_dff_chain
@@ -145,7 +158,7 @@ module bp_be_pipe_mem
 
   // D-TLB connections
   wire dtlb_r_store  = is_req & (decode.dcache_w_v | decode.dcache_cbo_v);
-  wire dtlb_r_load   = is_req & decode.dcache_r_v;
+  wire dtlb_r_load   = is_req & (decode.dcache_r_v | decode.dcache_prefetch_v);
   wire dtlb_r_cbo    = is_req & decode.dcache_cbo_v;
   wire dtlb_r_ptw    = is_req & decode.dcache_mmu_v;
   wire dtlb_r_v      = dtlb_r_store | dtlb_r_load | dtlb_r_cbo | dtlb_r_ptw;
@@ -161,7 +174,8 @@ module bp_be_pipe_mem
   logic [1:0] dtlb_r_size;
   always_comb
     unique case (decode.fu_op)
-      e_dcache_op_lb, e_dcache_op_lbu, e_dcache_op_sb: dtlb_r_size = 2'b00;
+      e_dcache_op_lb, e_dcache_op_lbu, e_dcache_op_sb, e_dcache_op_prefetch:
+                                                   dtlb_r_size = 2'b00;
       e_dcache_op_lh, e_dcache_op_lhu, e_dcache_op_sh: dtlb_r_size = 2'b01;
       e_dcache_op_amoswapw, e_dcache_op_amoaddw, e_dcache_op_amoxorw
       ,e_dcache_op_amoandw, e_dcache_op_amoorw, e_dcache_op_amominw
@@ -174,7 +188,9 @@ module bp_be_pipe_mem
 
   logic dtlb_v_lo;
   logic [ptag_width_p-1:0] dtlb_ptag_lo;
-  logic dtlb_ptag_uncached_lo, dtlb_ptag_dram_lo;
+  logic dtlb_ptag_uncached_lo, dtlb_ptag_dram_lo, dtlb_ptag_nonidem_lo;
+  logic dtlb_load_miss_lo, dtlb_load_access_fault_lo;
+  logic dtlb_load_misaligned_lo, dtlb_load_page_fault_lo;
   wire uncached_mode_li = cfg_bus_cast_i.dcache_mode == e_lce_mode_uncached;
   wire nonspec_mode_li = cfg_bus_cast_i.dcache_mode == e_lce_mode_nonspec;
   bp_mmu
@@ -216,21 +232,30 @@ module bp_be_pipe_mem
      ,.r_v_o(dtlb_v_lo)
      ,.r_ptag_o(dtlb_ptag_lo)
      ,.r_instr_miss_o()
-     ,.r_load_miss_o(tlb_load_miss_v_o)
+     ,.r_load_miss_o(dtlb_load_miss_lo)
      ,.r_store_miss_o(tlb_store_miss_v_o)
      ,.r_uncached_o(dtlb_ptag_uncached_lo)
-     ,.r_nonidem_o(/* All D$ misses are non-speculative */)
+     ,.r_nonidem_o(dtlb_ptag_nonidem_lo)
      ,.r_dram_o(dtlb_ptag_dram_lo)
      ,.r_instr_access_fault_o()
-     ,.r_load_access_fault_o(load_access_fault_v_o)
+     ,.r_load_access_fault_o(dtlb_load_access_fault_lo)
      ,.r_store_access_fault_o(store_access_fault_v_o)
      ,.r_instr_misaligned_o()
-     ,.r_load_misaligned_o(load_misaligned_v_o)
+     ,.r_load_misaligned_o(dtlb_load_misaligned_lo)
      ,.r_store_misaligned_o(store_misaligned_v_o)
      ,.r_instr_page_fault_o()
-     ,.r_load_page_fault_o(load_page_fault_v_o)
+     ,.r_load_page_fault_o(dtlb_load_page_fault_lo)
      ,.r_store_page_fault_o(store_page_fault_v_o)
      );
+
+  // A hint never invokes the PTW or reports an architectural fault. Reusing
+  // the load-permission lookup is deliberately conservative: an unavailable
+  // translation or a denied read simply drops the hint. No A/D bits are
+  // checked or updated through a prefetch-triggered page walk.
+  assign tlb_load_miss_v_o     = dtlb_load_miss_lo & ~prefetch_mmu_r;
+  assign load_access_fault_v_o = dtlb_load_access_fault_lo & ~prefetch_mmu_r;
+  assign load_misaligned_v_o   = dtlb_load_misaligned_lo & ~prefetch_mmu_r;
+  assign load_page_fault_v_o   = dtlb_load_page_fault_lo & ~prefetch_mmu_r;
 
   // A context request first needs its physical tag in the D$ TV stage, then
   // remains outstanding until the D$ returns its load data or store ordering
@@ -249,7 +274,8 @@ module bp_be_pipe_mem
                                         & ~dcache_busy_lo;
 
   bp_be_dcache_pkt_s dcache_pkt;
-  wire dcache_pkt_v = context_cache_dcache_accept_li | is_req;
+  wire dcache_pkt_v = context_cache_dcache_accept_li
+                       | (is_req & (~is_prefetch | (~dcache_busy_lo & ~flush_i)));
   assign dcache_pkt = context_cache_dcache_accept_li
                           ? '{thread_id : '0
                           ,rd_addr : context_cache_dcache_id_i
@@ -276,8 +302,13 @@ module bp_be_pipe_mem
      );
 
   // D$ can't handle misaligned accesses
+  // Only a permitted cached, idempotent DRAM translation may issue a hint.
+  // In particular, do not turn MMIO or uncached addresses into real reads.
+  wire prefetch_ptag_allowed = dtlb_ptag_dram_lo
+                                & ~dtlb_ptag_uncached_lo & ~dtlb_ptag_nonidem_lo;
   wire dcache_ptag_v = context_cache_dcache_ptag_v_r
-                       | (dtlb_v_lo & ~load_misaligned_v_o & ~store_misaligned_v_o);
+                       | (dtlb_v_lo & ~dtlb_load_misaligned_lo & ~store_misaligned_v_o
+                          & (~prefetch_mmu_r | (prefetch_ptag_allowed & ~flush_i)));
   wire [ptag_width_p-1:0] dcache_ptag_li =
     context_cache_dcache_ptag_v_r
     ? context_cache_dcache_paddr_r[page_offset_width_gp+:ptag_width_p]
@@ -369,9 +400,11 @@ module bp_be_pipe_mem
      );
 
   assign cache_miss_v_o   = ~context_cache_dcache_resp_pending_r
-                             & early_v_r & ~(dcache_v |  dcache_late) &  cache_req_yumi_i;
+                             & early_v_r & ~prefetch_early_r
+                             & ~(dcache_v |  dcache_late) &  cache_req_yumi_i;
   assign cache_replay_v_o = ~context_cache_dcache_resp_pending_r
-                             & early_v_r & ~(dcache_v & ~dcache_late) & ~cache_req_yumi_i;
+                             & early_v_r & ~prefetch_early_r
+                             & ~(dcache_v & ~dcache_late) & ~cache_req_yumi_i;
 
   bp_be_int_reg_s dcache_idata;
   bp_be_int_box

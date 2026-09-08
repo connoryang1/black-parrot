@@ -13,6 +13,8 @@
     ,e_cache_clean      = 4'b0110
     ,e_cache_inval      = 4'b0111
     ,e_cache_flush      = 4'b1000
+    // Best-effort cacheable read hint; no architectural response or metadata.
+    ,e_cache_prefetch   = 4'b1001
     ,e_cache_bclean     = 4'b1011
     ,e_cache_binval     = 4'b1100
     ,e_cache_bflush     = 4'b1101
@@ -82,4 +84,3 @@
   } bp_cache_stat_mem_opcode_e;
 
 `endif
-

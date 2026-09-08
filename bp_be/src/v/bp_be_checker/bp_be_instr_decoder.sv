@@ -280,6 +280,21 @@ module bp_be_instr_decoder
               begin
                 decode_cast_o.carryin = 1'b1;
               end
+
+            // Zicbop uses an ORI-to-x0 encoding, not MISC-MEM. Unsupported
+            // cache topologies retain the ordinary, architecturally inert
+            // ORI behavior. Only the UCE writeback path accepts this request.
+            if ((instr inside {`RV64_CMO_PREFETCHR})
+                && dcache_features_p[e_cfg_enabled]
+                && dcache_features_p[e_cfg_writeback]
+                && !dcache_features_p[e_cfg_coherent])
+              begin
+                decode_cast_o.pipe_int_v        = 1'b0;
+                decode_cast_o.pipe_mem_early_v  = 1'b1;
+                decode_cast_o.dcache_prefetch_v = 1'b1;
+                decode_cast_o.mem_v             = 1'b1;
+                decode_cast_o.fu_op             = e_dcache_op_prefetch;
+              end
           end
         `RV64_LUI_OP:
           begin
@@ -454,18 +469,6 @@ module bp_be_instr_decoder
                   decode_cast_o.fu_op            = e_dcache_op_bflush;
                   // TODO: Implement for ucode
                   illegal_instr_o = (cce_type_p == e_cce_ucode);
-                end
-              `RV64_CMO_PREFETCHI:
-                begin
-                  // NOP for now
-                end
-              `RV64_CMO_PREFETCHR:
-                begin
-                  // NOP for now
-                end
-              `RV64_CMO_PREFETCHW:
-                begin
-                  // NOP for now
                 end
               default : illegal_instr_o = 1'b1;
             endcase
@@ -810,6 +813,9 @@ module bp_be_instr_decoder
 
       // Instruction-specific overrides
       unique casez (instr)
+        // The low five I-immediate bits select the hint, not its address.
+        `RV64_CMO_PREFETCHR:
+          imm_o = {{(dword_width_gp-12){instr[31]}}, instr[31:25], 5'b0};
         `RV64_SLTI, `RV64_SLTIU     : imm_o = ~`rv64_signext_i_imm(instr);
         `RV64_SH1ADD, `RV64_SH1ADDUW: imm_o = 3'd1;
         `RV64_SH2ADD, `RV64_SH2ADDUW: imm_o = 3'd2;
