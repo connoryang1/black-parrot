@@ -946,15 +946,4 @@ module bp_be_csr
     else if (ctx_l1_data_write_v_li)
       ctx_l1_data_r <= csr_data_li;
 
-  // Debug: trace every CSR write
-  // always @(posedge clk_i) begin
-  //   if (!reset_i && csr_w_v_li) begin
-  //     $display("[CSR @%0t] csrw: addr=0x%03x data=0x%016x csr_ctxt_write_v=%0b ctx_npc_write_v=%0b",
-  //              $time, csr_addr_li, csr_data_li, csr_ctxt_write_v_o, ctx_npc_write_v_o);
-  //     if (csr_addr_li == 12'h801)
-  //       $display("[CSR @%0t] CSR0x801 write: raw_data=0x%016x -> tid=%0d npc=0x%08x",
-  //                $time, csr_data_li, ctx_npc_write_virtual_context_id_o, ctx_npc_write_npc_o);
-  //   end
-  // end
-
 endmodule

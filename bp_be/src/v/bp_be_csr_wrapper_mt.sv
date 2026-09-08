@@ -8,10 +8,12 @@
  * used as a drop-in replacement in bp_be_pipe_sys.
  *
  * Gating rules:
- *   retire_pkt, fflags_acc, frf_w_v, csr_r_v  → only active thread
+ *   retire_pkt, fflags_acc, frf_w_v → retire_thread_id_i's bank
+ *   csr_r_v → csr_thread_id_i's reservation bank
  *   IRQ signals (debug/timer/software/external) → all threads (keeps mip current)
  *
- * Output muxing: all outputs come from current_physical_thread_id_i's instance.
+ * CSR reads and reservation translation use csr_thread_id_i. Save data uses
+ * csr_context_save_physical_thread_id_i; other outputs use the active bank.
  */
 
 `include "bp_common_defines.svh"
@@ -211,7 +213,7 @@ module bp_be_csr_wrapper_mt
        );
   end
 
-  // Mux all outputs from the active thread
+  // Select each output using its architectural owner.
   assign csr_r_data_o          = csr_r_data_co[csr_thread_id_i];
   assign csr_r_illegal_o       = csr_r_illegal_co[csr_thread_id_i];
   assign commit_pkt_o          = commit_pkt_co[current_physical_thread_id_i];

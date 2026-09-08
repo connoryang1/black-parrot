@@ -26,17 +26,27 @@ protocol rationale next to the affected RTL rather than in another dated plan.
 
 ## Accepted scope
 
-RTL checkpoint `25089713baa090aba719ec0f18f82ff9214d5f0d` booted Linux and ran
-a cooperating user-mode C handoff 0→2→0 with a target syscall and register
-restoration. The companion repository retains exact bitstream, payload, timing,
-and benchmark evidence. A documentation change is not another FPGA validation.
+FPGA-accepted RTL `6c97bcc0a` includes the register-target writeback fix and
+passes Linux boot, a cooperating user-mode C handoff 0→2→0 with a target
+syscall and register restoration, and the physical overhead benchmark. The
+companion repository's `CURRENT_CHECKOUT.md` retains exact bitstream, payload,
+timing, and benchmark identities.
+
+The current RTL endpoint `aad56bd92` adds first-seed resident CSR initialization
+(`83fc32d29`) and preserves register-bank ownership during FE refill and issue
+queue replay. It passes local traced resident/nonresident regressions and has
+completed a routed PYNQ-Z2 build; board/Linux acceptance of these resident fixes
+is still pending. Evidence is retained under the companion repository's
+`logs/resident-csr-init-20260907/` and recorded in its `WORK_LOG.md`. A routed
+build or documentation change is not a new board acceptance.
 
 Ordinary FP execution is retained; complete nonresident FP context preservation
 is not part of the accepted FPGA endpoint. General Linux task scheduling,
 untrusted-context permissions, arbitrary process lifecycle behavior, and full
 cross-address-space isolation are not demonstrated by this test.
 
-The fork's `master` contains the reviewable accepted implementation. The companion
-repository pins its exact revision; detailed pre-integration history remains at
+The fork's `master` contains the FPGA-accepted baseline; resident fixes and current
+cleanup are on development branches. The companion repository selects its RTL
+through the nested checkout and records validation separately; detailed pre-integration history remains at
 tag `archive/pre-review-series-20260906`. This integration does not incorporate
 the separate upstream changes formerly tracked on the fork's old `master`.

@@ -8,9 +8,10 @@
  * spill whole lines to memory, but resident context save/restore must not
  * depend on ordinary load/store arbitration or cache refill latency.
  *
- * The first interface is deliberately small and pipeline-friendly:
- * - two 64-bit register writes per cycle, for eviction scans and rpush;
- * - one synchronous 8-register (512-bit for RV64) line read per cycle.
+ * The interface is deliberately small and pipeline-friendly:
+ * - two scalar write inputs sharing one accepted write per cycle, with
+ *   remote register seeding taking priority over ordinary writeback;
+ * - one synchronous line read per cycle, with configurable registers per line.
  *
  * The registered response address allows callers to issue consecutive line
  * reads and associate each response without relying on a combinational RAM.

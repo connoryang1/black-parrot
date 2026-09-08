@@ -828,8 +828,8 @@ module bp_be_top
     end
   end
 
-  // Passive context-cache FSM skeleton. The first active implementation will
-  // replace the unsupported nonresident fatal with this FSM's save/restore path.
+  // Nonresident handoff: prefetch the private integer image, wait for switch
+  // commitment and backend drain, install the target, then complete FE redirect.
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
       context_cache_state_r <= e_context_cache_idle;
