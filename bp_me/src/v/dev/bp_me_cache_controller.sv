@@ -116,6 +116,7 @@ module bp_me_cache_controller
 
   logic [cache_metadata_fifo_width_lp-1:0] fsm_fwd_metadata_li, fsm_rev_metadata_lo;
   logic fsm_rev_pending_lo;
+  logic [lg_l2_banks_lp-1:0] fwd_pkt_bank_lo;
   if (l2_banks_p == 1) begin : ordered_response
   // Preserve the established single-bank transport and ordering.
   assign fsm_rev_pending_lo = fsm_rev_ready_then_li;
@@ -427,7 +428,6 @@ module bp_me_cache_controller
   logic fwd_pkt_dram_lo;
   logic [daddr_width_p-1:0] fwd_pkt_daddr_lo;
   logic [l2_data_width_p-1:0] fwd_pkt_data_lo;
-  logic [lg_l2_banks_lp-1:0] fwd_pkt_bank_lo;
   bp_me_dram_hash_encode
    #(.bp_params_p(bp_params_p))
    bank_select
