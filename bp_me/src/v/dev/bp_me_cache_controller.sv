@@ -115,6 +115,10 @@ module bp_me_cache_controller
     end
 
   logic [cache_metadata_fifo_width_lp-1:0] fsm_fwd_metadata_li, fsm_rev_metadata_lo;
+  logic fsm_rev_pending_lo;
+  if (l2_banks_p == 1) begin : ordered_response
+  // Preserve the established single-bank transport and ordering.
+  assign fsm_rev_pending_lo = fsm_rev_ready_then_li;
   bp_me_stream_pump
    #(.bp_params_p(bp_params_p)
      ,.in_data_width_p(l2_data_width_p)
@@ -164,6 +168,176 @@ module bp_me_cache_controller
      ,.out_fsm_critical_o(fsm_rev_critical_lo)
      ,.out_fsm_last_o(fsm_rev_last_lo)
      );
+  end else begin : bank_response
+    // Each cache returns its operations in order, but a pending hint in one
+    // bank must not hold up a ready response from another bank. Keep headers
+    // in bank order and separately retain the order of all ordinary messages.
+    bp_bedrock_mem_rev_header_s [l2_banks_p-1:0] header_lo;
+    logic [l2_banks_p-1:0] header_v_lo, header_ready_lo, header_yumi_li;
+    logic [lg_l2_banks_lp-1:0] ordinary_bank_lo;
+    logic ordinary_v_lo, ordinary_ready_lo;
+    logic pump_fwd_v_lo, pump_rev_ready_lo;
+    wire fwd_prefetch = fsm_fwd_header_li.payload.prefetch
+      && (fsm_fwd_header_li.msg_type == e_bedrock_mem_rd);
+    wire enqueue_header = fsm_fwd_yumi_lo & fsm_fwd_new_li;
+    wire dequeue_header = fsm_rev_v_lo & fsm_rev_last_lo;
+    logic selected_v, selected_prefetch;
+    logic [lg_l2_banks_lp-1:0] selected_bank;
+    logic locked_r;
+    logic [lg_l2_banks_lp-1:0] locked_bank_r;
+
+    bp_me_stream_pump_in
+     #(.bp_params_p(bp_params_p)
+       ,.data_width_p(l2_data_width_p)
+       ,.payload_width_p(mem_fwd_payload_width_lp)
+       ,.msg_stream_mask_p(mem_fwd_stream_mask_gp)
+       ,.fsm_stream_mask_p(mem_fwd_stream_mask_gp | mem_rev_stream_mask_gp)
+       )
+     in
+      (.clk_i(clk_i)
+       ,.reset_i(reset_i)
+       ,.msg_header_i(mem_fwd_header_i)
+       ,.msg_data_i(mem_fwd_data_i)
+       ,.msg_v_i(mem_fwd_v_i)
+       ,.msg_ready_and_o(mem_fwd_ready_and_o)
+       ,.fsm_header_o(fsm_fwd_header_li)
+       ,.fsm_data_o(fsm_fwd_data_li)
+       ,.fsm_v_o(pump_fwd_v_lo)
+       ,.fsm_yumi_i(fsm_fwd_yumi_lo)
+       ,.fsm_addr_o(fsm_fwd_addr_li)
+       ,.fsm_new_o(fsm_fwd_new_li)
+       ,.fsm_critical_o(fsm_fwd_critical_li)
+       ,.fsm_last_o(fsm_fwd_last_li)
+       );
+
+    // Reserve metadata when the first operation is accepted. Subsequent beats
+    // already own that reservation and must proceed even when queues are full.
+    assign fsm_fwd_v_li = pump_fwd_v_lo
+      & (~fsm_fwd_new_li
+         | (header_ready_lo[fwd_pkt_bank_lo]
+            & (fwd_prefetch | ordinary_ready_lo)));
+
+    for (genvar i = 0; i < l2_banks_p; i++) begin : metadata
+      bsg_fifo_1r1w_small
+       #(.width_p($bits(bp_bedrock_mem_rev_header_s))
+         ,.els_p(3), .ready_THEN_valid_p(1))
+       fifo
+        (.clk_i(clk_i)
+         ,.reset_i(reset_i)
+         ,.data_i(fsm_fwd_header_li)
+         ,.v_i(enqueue_header & (fwd_pkt_bank_lo == lg_l2_banks_lp'(i)))
+         ,.ready_param_o(header_ready_lo[i])
+         ,.data_o(header_lo[i])
+         ,.v_o(header_v_lo[i])
+         ,.yumi_i(header_yumi_li[i])
+         );
+      assign header_yumi_li[i] = dequeue_header
+        & (selected_bank == lg_l2_banks_lp'(i));
+    end
+
+    bsg_fifo_1r1w_small
+     #(.width_p(lg_l2_banks_lp)
+       ,.els_p(cache_metadata_fifo_els_lp), .ready_THEN_valid_p(1))
+     ordinary_order
+      (.clk_i(clk_i)
+       ,.reset_i(reset_i)
+       ,.data_i(fwd_pkt_bank_lo)
+       ,.v_i(enqueue_header & ~fwd_prefetch)
+       ,.ready_param_o(ordinary_ready_lo)
+       ,.data_o(ordinary_bank_lo)
+       ,.v_o(ordinary_v_lo)
+       ,.yumi_i(dequeue_header & ~selected_prefetch)
+       );
+
+    always_comb begin
+      selected_v = locked_r;
+      selected_bank = locked_bank_r;
+      // An ordinary response may pass hints, but never an older ordinary
+      // response. Cache operation tags exclude reset/flush acknowledgements.
+      if (!locked_r) begin
+        selected_bank = '0;
+        for (int i = 0; i < l2_banks_p; i++)
+          if (header_v_lo[i] & op_v_lo[i] & op_data_lo[i] & cache_data_v_i[i]
+              & ~(header_lo[i].payload.prefetch
+                  && (header_lo[i].msg_type == e_bedrock_mem_rd))
+              & ordinary_v_lo & (ordinary_bank_lo == lg_l2_banks_lp'(i))) begin
+            selected_v = 1'b1;
+            selected_bank = lg_l2_banks_lp'(i);
+          end
+        for (int i = 0; i < l2_banks_p; i++)
+          if (!selected_v && header_v_lo[i] && op_v_lo[i] && op_data_lo[i]
+              && cache_data_v_i[i] && header_lo[i].payload.prefetch
+              && (header_lo[i].msg_type == e_bedrock_mem_rd)) begin
+            selected_v = 1'b1;
+            selected_bank = lg_l2_banks_lp'(i);
+          end
+      end
+    end
+    assign selected_prefetch = header_lo[selected_bank].payload.prefetch
+      && (header_lo[selected_bank].msg_type == e_bedrock_mem_rd);
+    assign fsm_rev_metadata_lo = {selected_bank, header_lo[selected_bank]};
+    assign fsm_rev_ready_then_li = selected_v & pump_rev_ready_lo;
+    // Ready arbitration is not a pending-work indication: a miss can have
+    // metadata and operation tags before its first data beat becomes valid.
+    assign fsm_rev_pending_lo = (|header_v_lo) | (|op_v_lo);
+
+    // Retain selection even if output readiness drops before the first beat.
+    // The bank FIFO holds the header until the last accepted FSM beat, and the
+    // output gearbox retains accepted header/data while BedRock is stalled.
+    always_ff @(posedge clk_i)
+      if (reset_i) begin
+        locked_r <= 1'b0;
+        locked_bank_r <= '0;
+      end else if (dequeue_header) begin
+        locked_r <= 1'b0;
+      end else if (selected_v) begin
+        locked_r <= 1'b1;
+        locked_bank_r <= selected_bank;
+      end
+
+    bp_me_stream_pump_out
+     #(.bp_params_p(bp_params_p)
+       ,.data_width_p(l2_data_width_p)
+       ,.payload_width_p(mem_rev_payload_width_lp)
+       ,.msg_stream_mask_p(mem_rev_stream_mask_gp)
+       ,.fsm_stream_mask_p(mem_fwd_stream_mask_gp | mem_rev_stream_mask_gp)
+       )
+     out
+      (.clk_i(clk_i)
+       ,.reset_i(reset_i)
+       ,.msg_header_o(mem_rev_header_o)
+       ,.msg_data_o(mem_rev_data_o)
+       ,.msg_v_o(mem_rev_v_o)
+       ,.msg_ready_and_i(mem_rev_ready_and_i)
+       ,.fsm_header_i(fsm_rev_header_lo)
+       ,.fsm_data_i(fsm_rev_data_lo)
+       ,.fsm_v_i(fsm_rev_v_lo)
+       ,.fsm_ready_then_o(pump_rev_ready_lo)
+       ,.fsm_addr_o(fsm_rev_addr_lo)
+       ,.fsm_new_o(fsm_rev_new_lo)
+       ,.fsm_critical_o(fsm_rev_critical_lo)
+       ,.fsm_last_o(fsm_rev_last_lo)
+       );
+
+    // synopsys translate_off
+    always_ff @(negedge clk_i) if (!reset_i) begin
+      if (enqueue_header)
+        assert (header_ready_lo[fwd_pkt_bank_lo]
+                && (fwd_prefetch || ordinary_ready_lo))
+          else $error("L2 accepted a message without response metadata capacity");
+      if (locked_r)
+        assert (header_v_lo[locked_bank_r])
+          else $error("L2 response lock lost its message header");
+      if (fsm_rev_v_lo)
+        assert (selected_v && header_v_lo[selected_bank]
+                && op_v_lo[selected_bank] && op_data_lo[selected_bank]
+                && cache_data_v_i[selected_bank]
+                && (selected_prefetch
+                    || (ordinary_v_lo && ordinary_bank_lo == selected_bank)))
+          else $error("L2 response violated bank ownership or ordinary ordering");
+    end
+    // synopsys translate_on
+  end
 
   bp_local_addr_s local_addr_li;
   assign local_addr_li = fsm_fwd_addr_li;
@@ -355,9 +529,13 @@ module bp_me_cache_controller
           end
         e_drain:
           begin
-            cache_data_yumi_o = cache_data_v_i;
+            // With several banks, only the selected architectural response
+            // may be consumed. The operation-tag loop below independently
+            // drains internal clear/flush acknowledgements from every bank.
+            if (l2_banks_p == 1)
+              cache_data_yumi_o = cache_data_v_i;
 
-            state_n = (fsm_rev_ready_then_li | cache_data_v_i) ? e_drain : e_ready;
+            state_n = (fsm_rev_pending_lo | (|cache_data_v_i)) ? e_drain : e_ready;
           end
         e_ready:
           begin
@@ -483,4 +661,3 @@ module bp_me_cache_controller
     $error("L2 data width must be 64, 128, 256, or 512");
 
 endmodule
-
