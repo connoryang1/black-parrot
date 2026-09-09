@@ -75,6 +75,7 @@ module bp_be_csr_wrapper_mt
 
    // Save/restore the active physical CSR bank for nonresident virtual contexts.
    , input                                   csr_context_restore_v_i
+   , input                                   csr_context_apc_write_v_i
    , input                                   csr_context_restore_reset_i
    , input [thread_id_width_p-1:0]           csr_context_restore_physical_thread_id_i
    , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
@@ -190,6 +191,8 @@ module bp_be_csr_wrapper_mt
        ,.current_virtual_context_id_i(current_virtual_context_id_i)
        ,.csr_context_restore_v_i(csr_context_restore_v_i
                                  & (csr_context_restore_physical_thread_id_i == thread_id_width_p'(i)))
+       ,.csr_context_apc_write_v_i(csr_context_apc_write_v_i
+                                   & (csr_context_restore_physical_thread_id_i == thread_id_width_p'(i)))
        ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
        ,.csr_context_restore_data_i(csr_context_restore_data_i)
        ,.csr_context_restore_npc_i(csr_context_restore_npc_i)

@@ -55,6 +55,7 @@ module bp_be_csr
 
    // Physical CSR bank save/restore for nonresident virtual contexts.
    , input                                   csr_context_restore_v_i
+   , input                                   csr_context_apc_write_v_i
    , input                                   csr_context_restore_reset_i
    , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
    , input [vaddr_width_p-1:0]               csr_context_restore_npc_i
@@ -348,14 +349,14 @@ module bp_be_csr
      ,.data_o(debug_mode_r)
      );
 
-  logic [vaddr_width_p-1:0] apc_n, apc_r;
+  logic [vaddr_width_p-1:0] apc_n, apc_r, apc_storage_n;
   bsg_dff_reset
    #(.width_p(vaddr_width_p))
    apc_reg
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
 
-     ,.data_i(apc_n)
+     ,.data_i(apc_storage_n)
      ,.data_o(apc_r)
      );
 
@@ -407,6 +408,14 @@ module bp_be_csr
   assign apc_n = (enter_debug | cfg_bus_cast_i.freeze)
                  ? debug_halt_pc
                  : csr_context_restore_v_i ? csr_context_restore_npc_i : core_npc;
+
+  // An inactive resident NPC reseed changes only stored bookkeeping. Keep it
+  // out of the live commit NPC path: a pending interrupt after handoff must
+  // save the reseeded PC without coupling a remote update to current commit.
+  assign apc_storage_n = (csr_context_apc_write_v_i
+                         & ~enter_debug & ~cfg_bus_cast_i.freeze
+                         & ~csr_context_restore_v_i)
+                        ? csr_context_restore_npc_i : apc_n;
 
   assign translation_en_n = ((priv_mode_n < `PRIV_MODE_M) & (satp_li.mode == 4'd8));
   bsg_dff_reset

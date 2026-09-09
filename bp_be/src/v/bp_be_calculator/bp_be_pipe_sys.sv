@@ -69,6 +69,7 @@ module bp_be_pipe_sys
 
    // Save/restore physical CSR state for nonresident virtual contexts.
    , input                                   csr_context_restore_v_i
+   , input                                   csr_context_apc_write_v_i
    , input                                   csr_context_restore_reset_i
    , input [thread_id_width_p-1:0]           csr_context_restore_physical_thread_id_i
    , input [csr_context_width_lp-1:0]        csr_context_restore_data_i
@@ -163,6 +164,7 @@ module bp_be_pipe_sys
      ,.csr_thread_id_i(reservation_physical_thread_id)
      ,.retire_thread_id_i(retire_thread_id_i)
      ,.csr_context_restore_v_i(csr_context_restore_v_i)
+     ,.csr_context_apc_write_v_i(csr_context_apc_write_v_i)
      ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
      ,.csr_context_restore_physical_thread_id_i(csr_context_restore_physical_thread_id_i)
      ,.csr_context_restore_data_i(csr_context_restore_data_i)

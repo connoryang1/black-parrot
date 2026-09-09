@@ -313,6 +313,18 @@ module bp_be_top
     && !virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]
     && (ctx_npc_write_physical_thread_id_li != csr_context_save_physical_thread_id_li);
   wire csr_context_restore_v_li = csr_context_cache_restore_v_li | csr_context_resident_init_v_li;
+  // A committed NPC write to an initialized inactive resident bank changes
+  // its next trap PC without cloning the caller's architectural CSR image.
+  // Pending switches can separate active, retiring, and save-bank ownership;
+  // exclude all three so a self-seed cannot replace live retirement state.
+  wire csr_context_apc_write_v_li = ctx_npc_write_resident_v_li
+    && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
+    && (ctx_npc_write_physical_thread_id_li < num_threads_p)
+    && virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]
+    && (ctx_npc_write_physical_thread_id_li != current_physical_thread_id_lo)
+    && (ctx_npc_write_physical_thread_id_li != retire_thread_id_lo)
+    && (ctx_npc_write_physical_thread_id_li != csr_context_save_physical_thread_id_li)
+    && !csr_context_restore_v_li;
   wire [thread_id_width_p-1:0] csr_context_restore_physical_thread_id_li =
     csr_context_cache_restore_v_li ? context_cache_victim_physical_thread_id_r
                                  : ctx_npc_write_physical_thread_id_li;
@@ -1363,6 +1375,7 @@ module bp_be_top
      ,.current_virtual_context_id_i(current_virtual_context_id_r)
      ,.retire_thread_id_i(retire_thread_id_lo)
      ,.csr_context_restore_v_i(csr_context_restore_v_li)
+     ,.csr_context_apc_write_v_i(csr_context_apc_write_v_li)
      ,.csr_context_restore_reset_i(csr_context_restore_reset_li)
      ,.csr_context_restore_physical_thread_id_i(csr_context_restore_physical_thread_id_li)
      ,.csr_context_restore_data_i(csr_context_restore_data_li)
