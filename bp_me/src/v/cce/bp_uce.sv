@@ -118,23 +118,22 @@ module bp_uce
     & (cache_req_cast_i.msg_type == e_cache_prefetch);
   logic [prefetch_els_p-1:0] prefetch_valid_r, prefetch_sent_r;
   logic [prefetch_els_p-1:0][paddr_width_p-1:0] prefetch_addr_r;
+  logic [prefetch_els_p-1:0] prefetch_response_match;
   logic prefetch_free_v, prefetch_issue_v;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
-  logic [prefetch_id_width_lp-1:0] prefetch_response_id;
-  logic [prefetch_slot_width_lp-1:0] prefetch_response_slot;
-  logic prefetch_duplicate, prefetch_demand_match;
-  logic prefetch_issue, prefetch_response, prefetch_response_match;
-  wire prefetch_allocate = cache_req_yumi_o & prefetch_v_li & ~prefetch_duplicate;
+  logic prefetch_demand_match;
+  logic prefetch_issue, prefetch_response;
+  wire prefetch_allocate = cache_req_yumi_o & prefetch_v_li & prefetch_free_v;
+  wire prefetch_drop = cache_req_yumi_o & prefetch_v_li & ~prefetch_free_v;
 
   // Slots remain reserved until the final response, including across context
-  // redirects. Physical line identity merges duplicate hints and orders a
-  // following demand behind a hint to that same line. No cached data is kept.
+  // redirects. A following demand waits behind a hint to that same physical
+  // line. No prefetched data is kept in the UCE itself.
   always_comb begin
     prefetch_free_v = 1'b0;
     prefetch_free_slot = '0;
     prefetch_issue_v = 1'b0;
     prefetch_issue_slot = '0;
-    prefetch_duplicate = 1'b0;
     prefetch_demand_match = 1'b0;
     for (int i = prefetch_els_p-1; i >= 0; i--) begin
       if (!prefetch_valid_r[i]) begin
@@ -145,9 +144,6 @@ module bp_uce
         prefetch_issue_v = 1'b1;
         prefetch_issue_slot = prefetch_slot_width_lp'(i);
       end
-      prefetch_duplicate |= prefetch_valid_r[i]
-        & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
-           == cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp]);
       prefetch_demand_match |= prefetch_valid_r[i]
         & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
            == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
@@ -357,15 +353,16 @@ module bp_uce
   assign prefetch_response = prefetch_p & fsm_rev_v_li
     & fsm_rev_header_li.payload.prefetch
     & (fsm_rev_header_li.msg_type == e_bedrock_mem_rd);
-  // Prefetches do not install coherence state, so use that otherwise-unused
-  // echoed field above way_id to carry a complete queue-slot identifier. This
-  // avoids an address comparator per slot when the queue exceeds associativity.
-  assign prefetch_response_id = {fsm_rev_header_li.payload.state
-                                 ,fsm_rev_header_li.payload.way_id};
-  assign prefetch_response_slot = prefetch_slot_width_lp'(prefetch_response_id);
-  assign prefetch_response_match = (prefetch_response_id < prefetch_els_p)
-    & prefetch_valid_r[prefetch_response_slot]
-    & prefetch_sent_r[prefetch_response_slot];
+  for (genvar i = 0; i < prefetch_els_p; i++) begin : gen_prefetch_response_match
+    // Prefetches do not install coherence state. Combine that otherwise-unused
+    // echoed field with way_id to identify slots beyond cache associativity.
+    // A one-hot decoder avoids both a wide address CAM and an indexed mux.
+    assign prefetch_response_match[i] = prefetch_valid_r[i]
+      & prefetch_sent_r[i]
+      & (fsm_rev_header_li.payload.way_id == prefetch_tag_width_lp'(i))
+      & (fsm_rev_header_li.payload.state
+         == bp_coh_states_e'(prefetch_state_width_lp'(i >> prefetch_tag_width_lp)));
+  end
 
   wire miss_load_v_r   = cache_req_v_r & cache_req_r.msg_type inside {e_miss_load};
   wire miss_store_v_r  = cache_req_v_r & cache_req_r.msg_type inside {e_miss_store};
@@ -666,7 +663,9 @@ module bp_uce
         e_ready:
           begin
             if (prefetch_v_li) begin
-              cache_req_yumi_o = ~cache_req_v_r & (prefetch_free_v | prefetch_duplicate);
+              // A prefetch is advisory: acknowledge and drop it when all
+              // slots are reserved instead of stalling architectural work.
+              cache_req_yumi_o = ~cache_req_v_r;
             end else begin
             cache_req_yumi_o = cache_req_v_i & cache_req_ready_lo & (~cache_req_v_r | nonblocking_v_li);
 
@@ -933,19 +932,28 @@ module bp_uce
       end
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
-      if (prefetch_response & fsm_rev_last_li & prefetch_response_match) begin
-        prefetch_valid_r[prefetch_response_slot] <= 1'b0;
-        prefetch_sent_r[prefetch_response_slot] <= 1'b0;
+      if (prefetch_response & fsm_rev_last_li) begin
+        for (int i = 0; i < prefetch_els_p; i++) begin
+          if (prefetch_response_match[i]) begin
+            prefetch_valid_r[i] <= 1'b0;
+            prefetch_sent_r[i] <= 1'b0;
+          end
+        end
       end
     end
   end
 
   // synopsys translate_off
   always_ff @(negedge clk_i) if (!reset_i && prefetch_response) begin
-    assert (prefetch_response_match
-      && fsm_rev_header_li.size == e_bedrock_msg_size_8
-      && fsm_rev_header_li.addr == prefetch_addr_r[prefetch_response_slot])
+    assert ($onehot(prefetch_response_match)
+      && fsm_rev_header_li.size == e_bedrock_msg_size_8)
       else $error("UCE prefetch response has no matching outstanding word request");
+    for (int i = 0; i < prefetch_els_p; i++) begin
+      if (prefetch_response_match[i]) begin
+        assert (fsm_rev_header_li.addr == prefetch_addr_r[i])
+          else $error("UCE prefetch response address does not match its slot");
+      end
+    end
   end
   initial assert (prefetch_els_p > 0 && prefetch_els_p <= (1 << prefetch_id_width_lp))
     else $error("UCE prefetch queue exceeds the echoed response identifier capacity");
