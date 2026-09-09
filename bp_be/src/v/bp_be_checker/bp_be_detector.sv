@@ -75,9 +75,10 @@ module bp_be_detector
   bp_be_dep_status_s [3:0] dep_status_r;
   logic [3:0][thread_id_width_p-1:0] dep_thread_id_r;
   logic [3:0] dep_irf_w_r;
+  logic [3:0] dep_npc_seed_r;
 
   logic fence_haz_v, cmd_haz_v, fflags_haz_v, csr_rs1_haz_v, csr_trans_haz_v, iscore_haz_v, fscore_haz_v;
-  logic ctxtsw_rs1_haz_v;
+  logic ctxtsw_rs1_haz_v, ctxtsw_seed_haz_v;
   logic data_haz_v, control_haz_v, struct_haz_v;
 
   wire [reg_addr_width_gp-1:0] score_rd_li  = commit_pkt_cast_i.instr.t.fmatype.rd_addr;
@@ -292,6 +293,15 @@ module bp_be_detector
                          & (issue_pkt_cast_i.instr inside {`RV64_CSRRW, `RV64_CSRRS, `RV64_CSRRC})
                          & (check_rs1_li != '0);
 
+      // The early switch captures NPC and translation state before retirement.
+      // Wait for older NPC seeds to commit rather than capturing an uninitialized
+      // target bundle. Seeds name logical targets, so this dependency is global,
+      // and applies to both register and immediate forms of the switch CSR.
+      // As above, issue.v depends on hazard_v_o and must not gate this check.
+      ctxtsw_seed_haz_v = issue_pkt_cast_i.csrw
+                         & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
+                         & (|dep_npc_seed_r);
+
 	      /*
 	       * Memory operations consume trans_info_i directly from the CSR block.
 	       * Translation-affecting CSR writes must retire before a following
@@ -304,7 +314,8 @@ module bp_be_detector
 	                           | (dep_status_r[2].trans_info_v & (check_thread_id_li == dep_thread_id_r[2]))
 	                           | (dep_status_r[3].trans_info_v & (check_thread_id_li == dep_thread_id_r[3])));
 
-	      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v | csr_trans_haz_v | ctxtsw_rs1_haz_v;
+	      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v | csr_trans_haz_v
+                          | ctxtsw_rs1_haz_v | ctxtsw_seed_haz_v;
 
       // Combine all data hazard information
       // TODO: Parameterize away floating point data hazards without hardware support
@@ -362,11 +373,19 @@ module bp_be_detector
 
   always_ff @(posedge clk_i)
     if (reset_i)
-      dep_irf_w_r <= '0;
+      begin
+        dep_irf_w_r <= '0;
+        dep_npc_seed_r <= '0;
+      end
     else
-      // Age with the existing destination/thread tags even while issue stalls.
-      // Squashed producers may conservatively delay only this CSR, then expire.
-      dep_irf_w_r <= {dep_irf_w_r[2:0], dispatch_pkt_cast_i.v & dep_decode.irf_w_v};
+      begin
+        // Age with the existing destination/thread tags even while issue stalls.
+        // Squashed producers may conservatively delay only this CSR, then expire.
+        dep_irf_w_r <= {dep_irf_w_r[2:0], dispatch_pkt_cast_i.v & dep_decode.irf_w_v};
+        dep_npc_seed_r <= {dep_npc_seed_r[2:0], dispatch_pkt_cast_i.v
+                          & dispatch_pkt_cast_i.special.csrw
+                          & (dispatch_pkt_cast_i.instr.t.itype.imm12 == 12'h801)};
+      end
 
   always_ff @(posedge clk_i)
     begin
