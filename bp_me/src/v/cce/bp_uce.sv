@@ -92,6 +92,8 @@ module bp_uce
   localparam bank_sub_offset_width_lp = $clog2(fill_size_in_bank_lp);
   localparam prefetch_slot_width_lp = `BSG_SAFE_CLOG2(prefetch_els_p);
   localparam prefetch_tag_width_lp = `BSG_SAFE_CLOG2(lce_assoc_p);
+  localparam prefetch_state_width_lp = $bits(bp_coh_states_e);
+  localparam prefetch_id_width_lp = prefetch_tag_width_lp + prefetch_state_width_lp;
 
   localparam bp_bedrock_msg_size_e block_msg_size_lp = (block_width_p == 512)
                                                        ? e_bedrock_msg_size_64
@@ -116,11 +118,12 @@ module bp_uce
     & (cache_req_cast_i.msg_type == e_cache_prefetch);
   logic [prefetch_els_p-1:0] prefetch_valid_r, prefetch_sent_r;
   logic [prefetch_els_p-1:0][paddr_width_p-1:0] prefetch_addr_r;
-  logic [prefetch_els_p-1:0] prefetch_response_match;
   logic prefetch_free_v, prefetch_issue_v;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
+  logic [prefetch_id_width_lp-1:0] prefetch_response_id;
+  logic [prefetch_slot_width_lp-1:0] prefetch_response_slot;
   logic prefetch_duplicate, prefetch_demand_match;
-  logic prefetch_issue, prefetch_response;
+  logic prefetch_issue, prefetch_response, prefetch_response_match;
   wire prefetch_allocate = cache_req_yumi_o & prefetch_v_li & ~prefetch_duplicate;
 
   // Slots remain reserved until the final response, including across context
@@ -354,15 +357,15 @@ module bp_uce
   assign prefetch_response = prefetch_p & fsm_rev_v_li
     & fsm_rev_header_li.payload.prefetch
     & (fsm_rev_header_li.msg_type == e_bedrock_mem_rd);
-  for (genvar i = 0; i < prefetch_els_p; i++) begin : gen_prefetch_response_match
-    // Duplicate lines share one slot, so address plus the echoed low tag bits
-    // uniquely identifies every response even when the queue exceeds the
-    // BedRock way-id field width.
-    assign prefetch_response_match[i] = prefetch_valid_r[i]
-      & prefetch_sent_r[i]
-      & (fsm_rev_header_li.addr == prefetch_addr_r[i])
-      & (fsm_rev_header_li.payload.way_id == prefetch_tag_width_lp'(i));
-  end
+  // Prefetches do not install coherence state, so use that otherwise-unused
+  // echoed field above way_id to carry a complete queue-slot identifier. This
+  // avoids an address comparator per slot when the queue exceeds associativity.
+  assign prefetch_response_id = {fsm_rev_header_li.payload.state
+                                 ,fsm_rev_header_li.payload.way_id};
+  assign prefetch_response_slot = prefetch_slot_width_lp'(prefetch_response_id);
+  assign prefetch_response_match = (prefetch_response_id < prefetch_els_p)
+    & prefetch_valid_r[prefetch_response_slot]
+    & prefetch_sent_r[prefetch_response_slot];
 
   wire miss_load_v_r   = cache_req_v_r & cache_req_r.msg_type inside {e_miss_load};
   wire miss_store_v_r  = cache_req_v_r & cache_req_r.msg_type inside {e_miss_store};
@@ -907,6 +910,8 @@ module bp_uce
         fsm_fwd_header_lo.size = e_bedrock_msg_size_8;
         fsm_fwd_header_lo.payload.prefetch = 1'b1;
         fsm_fwd_header_lo.payload.way_id = prefetch_tag_width_lp'(prefetch_issue_slot);
+        fsm_fwd_header_lo.payload.state = bp_coh_states_e'
+          (prefetch_issue_slot >> prefetch_tag_width_lp);
         fsm_fwd_header_lo.payload.lce_id = lce_id_i;
         fsm_fwd_header_lo.payload.src_did = did_i;
         fsm_fwd_data_lo = '0;
@@ -928,23 +933,22 @@ module bp_uce
       end
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
-      if (prefetch_response & fsm_rev_last_li) begin
-        for (int i = 0; i < prefetch_els_p; i++) begin
-          if (prefetch_response_match[i]) begin
-            prefetch_valid_r[i] <= 1'b0;
-            prefetch_sent_r[i] <= 1'b0;
-          end
-        end
+      if (prefetch_response & fsm_rev_last_li & prefetch_response_match) begin
+        prefetch_valid_r[prefetch_response_slot] <= 1'b0;
+        prefetch_sent_r[prefetch_response_slot] <= 1'b0;
       end
     end
   end
 
   // synopsys translate_off
   always_ff @(negedge clk_i) if (!reset_i && prefetch_response) begin
-    assert ($onehot(prefetch_response_match)
-      && fsm_rev_header_li.size == e_bedrock_msg_size_8)
+    assert (prefetch_response_match
+      && fsm_rev_header_li.size == e_bedrock_msg_size_8
+      && fsm_rev_header_li.addr == prefetch_addr_r[prefetch_response_slot])
       else $error("UCE prefetch response has no matching outstanding word request");
   end
+  initial assert (prefetch_els_p > 0 && prefetch_els_p <= (1 << prefetch_id_width_lp))
+    else $error("UCE prefetch queue exceeds the echoed response identifier capacity");
   // synopsys translate_on
 
   // synopsys sync_set_reset "reset_i"
