@@ -116,8 +116,9 @@ module bp_be_regfile_mt
   assign rpush_addr_indexed = {rpush_thread_id_i, rpush_addr_i};
   assign rd_addr2_indexed   = {rd_thread_id2_i, rd_addr2_i};
 
-  // Mux write port: rpush takes priority over normal writeback
-  // rpush (CSR 0x802) and normal writeback never happen on the same cycle
+  // CSR802 dispatch is serialized through ordinary writeback; context-image
+  // restores separately require a drained pipeline. These owners therefore
+  // share the scalar write port without losing an architectural writeback.
   wire w_v_mux    = rpush_w_v_i | rd_w_v_i;
   wire [reg_addr_width_gp+thread_id_width_p-1:0] w_addr_mux = rpush_w_v_i ? rpush_addr_indexed : rd_addr_indexed;
   wire [data_width_p-1:0] w_data_mux = rpush_w_v_i ? rpush_data_i : rd_data_i;

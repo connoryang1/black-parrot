@@ -35,6 +35,7 @@ module bp_be_detector
    , input                             fdiv_busy_i
    , input                             mem_busy_i
    , input                             mem_ordered_i
+   , input                             register_seed_ready_i
    , input [thread_id_width_p-1:0]     current_physical_thread_id_i
    , input [thread_id_width_p-1:0]     retire_thread_id_i
 
@@ -76,9 +77,11 @@ module bp_be_detector
   logic [3:0][thread_id_width_p-1:0] dep_thread_id_r;
   logic [3:0] dep_irf_w_r;
   logic [3:0] dep_npc_seed_r;
+  logic register_seed_active_r;
 
   logic fence_haz_v, cmd_haz_v, fflags_haz_v, csr_rs1_haz_v, csr_trans_haz_v, iscore_haz_v, fscore_haz_v;
   logic ctxtsw_rs1_haz_v, ctxtsw_seed_haz_v;
+  logic register_seed_haz_v;
   logic data_haz_v, control_haz_v, struct_haz_v;
 
   wire [reg_addr_width_gp-1:0] score_rd_li  = commit_pkt_cast_i.instr.t.fmatype.rd_addr;
@@ -302,6 +305,16 @@ module bp_be_detector
                          & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
                          & (|dep_npc_seed_r);
 
+      // CSR802 shares each scalar register-file write port with ordinary WB.
+      // Drain older work before admitting a seed, then hold younger issue until
+      // the seed's own rd writeback has drained. Injected completions remain
+      // enabled by the scheduler while FE issue is held. No seed means no hold
+      // on the steady-state context-switch path.
+      register_seed_haz_v = register_seed_active_r
+                           | (issue_pkt_cast_i.csrw
+                              & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h802)
+                              & ~register_seed_ready_i);
+
 	      /*
 	       * Memory operations consume trans_info_i directly from the CSR block.
 	       * Translation-affecting CSR writes must retire before a following
@@ -315,7 +328,7 @@ module bp_be_detector
 	                           | (dep_status_r[3].trans_info_v & (check_thread_id_li == dep_thread_id_r[3])));
 
 	      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v | csr_trans_haz_v
-                          | ctxtsw_rs1_haz_v | ctxtsw_seed_haz_v;
+                          | ctxtsw_rs1_haz_v | ctxtsw_seed_haz_v | register_seed_haz_v;
 
       // Combine all data hazard information
       // TODO: Parameterize away floating point data hazards without hardware support
@@ -370,6 +383,17 @@ module bp_be_detector
 	                                     inside {`CSR_ADDR_MSTATUS, `CSR_ADDR_SSTATUS, `CSR_ADDR_SATP});
 	      dep_status_n.rd_addr     = dispatch_pkt_cast_i.instr.t.rtype.rd_addr;
 	    end
+
+  // Set on actual dispatch, not the issue candidate. A squashed seed releases
+  // the hold when the pipeline empties, without performing a remote write.
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      register_seed_active_r <= 1'b0;
+    else if (dispatch_pkt_cast_i.v & dispatch_pkt_cast_i.special.csrw
+             & (dispatch_pkt_cast_i.instr.t.itype.imm12 == 12'h802))
+      register_seed_active_r <= 1'b1;
+    else if (register_seed_ready_i)
+      register_seed_active_r <= 1'b0;
 
   always_ff @(posedge clk_i)
     if (reset_i)

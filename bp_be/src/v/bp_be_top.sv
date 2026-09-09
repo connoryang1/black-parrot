@@ -206,6 +206,7 @@ module bp_be_top
   logic context_cache_active_li;
   logic context_cache_scheduler_drain_ready_lo;
   logic context_cache_calculator_drain_ready_lo;
+  logic register_seed_ready_lo;
   logic context_cache_drain_safe_li;
   logic context_cache_dcache_v_li;
   logic context_cache_dcache_w_li;
@@ -1212,6 +1213,7 @@ module bp_be_top
      ,.credits_empty_i(cache_req_credits_empty_i)
      ,.mem_busy_i(mem_busy_lo)
      ,.mem_ordered_i(mem_ordered_lo)
+     ,.register_seed_ready_i(register_seed_ready_lo)
      ,.fdiv_busy_i(fdiv_busy_lo)
      ,.idiv_busy_i(idiv_busy_lo)
      ,.current_physical_thread_id_i(scheduler_current_physical_thread_id_li)
@@ -1390,6 +1392,7 @@ module bp_be_top
      ,.fast_ctxtsw_virtual_context_id_o(fast_ctxtsw_virtual_context_id_lo)
      ,.fast_ctxtsw_resume_npc_o(fast_ctxtsw_resume_npc_lo)
      ,.context_cache_drain_ready_o(context_cache_calculator_drain_ready_lo)
+     ,.register_seed_ready_o(register_seed_ready_lo)
      );
 
 endmodule

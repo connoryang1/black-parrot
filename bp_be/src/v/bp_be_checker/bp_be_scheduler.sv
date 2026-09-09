@@ -260,6 +260,19 @@ module bp_be_scheduler
   assign int_rpush_tid_li = context_cache_scan_w_v_i[0] ? context_cache_scan_physical_thread_id_i : rpush_tid_i;
   assign int_rpush_reg_li = context_cache_scan_w_v_i[0] ? context_cache_scan_w_addr_i[0] : rpush_reg_i;
   assign int_rpush_data_li = context_cache_scan_w_v_i[0] ? context_cache_scan_w_data_i[0] : rpush_data_i;
+
+`ifndef SYNTHESIS
+  // Check CSR802's scalar port ownership, independently of the separately
+  // drained context-image restore ports. Integer x0 has no architectural WB;
+  // FP register zero is an ordinary architectural destination.
+  always_ff @(posedge clk_i)
+    if (!reset_i) begin
+      if (rpush_w_v_i && iwb_pkt_cast_i.ird_w_v && (iwb_pkt_cast_i.rd_addr != '0))
+        $error("%m: CSR802 integer remote write collides with ordinary writeback");
+      if (rpush_fp_w_v_i && fwb_pkt_cast_i.frd_w_v)
+        $error("%m: CSR802 FP remote write collides with ordinary writeback");
+    end
+`endif
   assign context_cache_scan_r_data_o = {irf_rs2, irf_rs1};
 
   bp_be_regfile_mt

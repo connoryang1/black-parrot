@@ -138,6 +138,7 @@ module bp_be_calculator_top
    , output logic [vaddr_width_p-1:0]                fast_ctxtsw_resume_npc_o
 
    , output logic                                    context_cache_drain_ready_o
+   , output logic                                    register_seed_ready_o
    );
 
   // Declare parameterizable structs
@@ -634,14 +635,17 @@ module bp_be_calculator_top
   assign late_wb_force_o = pipe_mem_late_wb_v;
 
   always_comb begin
-    calculator_pipe_active_lo = reservation_r.v | dispatch_pkt_cast_i.v;
+    calculator_pipe_active_lo = reservation_r.v;
     for (int i = 0; i < pipe_stage_els_lp; i++) begin
       calculator_pipe_active_lo |= exc_stage_r[i].v;
       calculator_pipe_active_lo |= comp_stage_r[i].ird_w_v | comp_stage_r[i].frd_w_v;
     end
   end
 
-  assign context_cache_drain_ready_o = ~calculator_pipe_active_lo
+  // Admission readiness must not depend on current dispatch: it feeds the
+  // detector's issue hazard. Include all held completions as well as the pipe
+  // so an older late writeback cannot arrive during a remote register seed.
+  assign register_seed_ready_o = ~calculator_pipe_active_lo
                                         & ~mem_busy_o
                                         & mem_ordered_o
                                         & ~idiv_busy_o
@@ -650,6 +654,9 @@ module bp_be_calculator_top
                                         & ~pipe_long_idata_v_lo
                                         & ~pipe_long_fdata_v_lo
                                         & ~late_wb_v_o;
+
+  // Context installation additionally requires no dispatch on this cycle.
+  assign context_cache_drain_ready_o = register_seed_ready_o & ~dispatch_pkt_cast_i.v;
 
   // If a pipeline has completed an instruction (pipe_xxx_v), then mux in the calculated result.
   // Else, mux in the previous stage of the completion pipe. Since we are single issue and have
