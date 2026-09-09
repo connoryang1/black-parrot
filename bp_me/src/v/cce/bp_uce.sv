@@ -29,6 +29,7 @@ module bp_uce
     // single-word read, so a banked L2 can begin the next line's miss before
     // the preceding line has returned. Returned words are never architectural.
     , parameter prefetch_p = writeback_p
+    , parameter prefetch_els_p = 2
 
     `declare_bp_cache_engine_generic_if_widths(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p, cache)
     )
@@ -89,6 +90,8 @@ module bp_uce
   localparam fill_cnt_width_lp = `BSG_SAFE_CLOG2(block_size_in_fill_lp);
   localparam fill_offset_width_lp = `BSG_SAFE_CLOG2(fill_width_p>>3);
   localparam bank_sub_offset_width_lp = $clog2(fill_size_in_bank_lp);
+  localparam prefetch_slot_width_lp = `BSG_SAFE_CLOG2(prefetch_els_p);
+  localparam prefetch_tag_width_lp = `BSG_SAFE_CLOG2(lce_assoc_p);
 
   localparam bp_bedrock_msg_size_e block_msg_size_lp = (block_width_p == 512)
                                                        ? e_bedrock_msg_size_64
@@ -111,9 +114,11 @@ module bp_uce
 
   wire prefetch_v_li = prefetch_p & cache_req_v_i
     & (cache_req_cast_i.msg_type == e_cache_prefetch);
-  logic [1:0] prefetch_valid_r, prefetch_sent_r;
-  logic [1:0][paddr_width_p-1:0] prefetch_addr_r;
-  logic prefetch_free_v, prefetch_free_slot, prefetch_issue_v, prefetch_issue_slot;
+  logic [prefetch_els_p-1:0] prefetch_valid_r, prefetch_sent_r;
+  logic [prefetch_els_p-1:0][paddr_width_p-1:0] prefetch_addr_r;
+  logic [prefetch_els_p-1:0] prefetch_response_match;
+  logic prefetch_free_v, prefetch_issue_v;
+  logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
   logic prefetch_duplicate, prefetch_demand_match;
   logic prefetch_issue, prefetch_response;
   wire prefetch_allocate = cache_req_yumi_o & prefetch_v_li & ~prefetch_duplicate;
@@ -123,19 +128,19 @@ module bp_uce
   // following demand behind a hint to that same line. No cached data is kept.
   always_comb begin
     prefetch_free_v = 1'b0;
-    prefetch_free_slot = 1'b0;
+    prefetch_free_slot = '0;
     prefetch_issue_v = 1'b0;
-    prefetch_issue_slot = 1'b0;
+    prefetch_issue_slot = '0;
     prefetch_duplicate = 1'b0;
     prefetch_demand_match = 1'b0;
-    for (int i = 1; i >= 0; i--) begin
+    for (int i = prefetch_els_p-1; i >= 0; i--) begin
       if (!prefetch_valid_r[i]) begin
         prefetch_free_v = 1'b1;
-        prefetch_free_slot = 1'(i);
+        prefetch_free_slot = prefetch_slot_width_lp'(i);
       end
       if (prefetch_valid_r[i] & ~prefetch_sent_r[i]) begin
         prefetch_issue_v = 1'b1;
-        prefetch_issue_slot = 1'(i);
+        prefetch_issue_slot = prefetch_slot_width_lp'(i);
       end
       prefetch_duplicate |= prefetch_valid_r[i]
         & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
@@ -349,6 +354,15 @@ module bp_uce
   assign prefetch_response = prefetch_p & fsm_rev_v_li
     & fsm_rev_header_li.payload.prefetch
     & (fsm_rev_header_li.msg_type == e_bedrock_mem_rd);
+  for (genvar i = 0; i < prefetch_els_p; i++) begin : gen_prefetch_response_match
+    // Duplicate lines share one slot, so address plus the echoed low tag bits
+    // uniquely identifies every response even when the queue exceeds the
+    // BedRock way-id field width.
+    assign prefetch_response_match[i] = prefetch_valid_r[i]
+      & prefetch_sent_r[i]
+      & (fsm_rev_header_li.addr == prefetch_addr_r[i])
+      & (fsm_rev_header_li.payload.way_id == prefetch_tag_width_lp'(i));
+  end
 
   wire miss_load_v_r   = cache_req_v_r & cache_req_r.msg_type inside {e_miss_load};
   wire miss_store_v_r  = cache_req_v_r & cache_req_r.msg_type inside {e_miss_store};
@@ -428,9 +442,9 @@ module bp_uce
   wire cache_req_credit_ready_lo = ~cache_req_credits_full_o | ~fsm_fwd_new_lo;
   // Do not pass older demand/writeback traffic. Multiple hints may still be
   // sent together: their own credits are not a barrier to the next hint.
-  wire prefetch_only_credits = credit_count_lo
-    == (`BSG_WIDTH(coh_noc_max_credits_p)'(prefetch_sent_r[0])
-        + `BSG_WIDTH(coh_noc_max_credits_p)'(prefetch_sent_r[1]));
+  wire [`BSG_WIDTH(coh_noc_max_credits_p)-1:0] prefetch_sent_count
+    = `BSG_WIDTH(coh_noc_max_credits_p)'($countones(prefetch_sent_r));
+  wire prefetch_only_credits = credit_count_lo == prefetch_sent_count;
 
   logic [fill_width_p-1:0] writeback_data;
   wire [fill_cnt_width_lp-1:0] dirty_data_select = fsm_fwd_addr_lo[fill_offset_width_lp+:fill_cnt_width_lp];
@@ -892,7 +906,7 @@ module bp_uce
         fsm_fwd_header_lo.addr = prefetch_addr_r[prefetch_issue_slot];
         fsm_fwd_header_lo.size = e_bedrock_msg_size_8;
         fsm_fwd_header_lo.payload.prefetch = 1'b1;
-        fsm_fwd_header_lo.payload.way_id = lce_assoc_p'(prefetch_issue_slot);
+        fsm_fwd_header_lo.payload.way_id = prefetch_tag_width_lp'(prefetch_issue_slot);
         fsm_fwd_header_lo.payload.lce_id = lce_id_i;
         fsm_fwd_header_lo.payload.src_did = did_i;
         fsm_fwd_data_lo = '0;
@@ -915,19 +929,20 @@ module bp_uce
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
       if (prefetch_response & fsm_rev_last_li) begin
-        prefetch_valid_r[fsm_rev_header_li.payload.way_id[0]] <= 1'b0;
-        prefetch_sent_r[fsm_rev_header_li.payload.way_id[0]] <= 1'b0;
+        for (int i = 0; i < prefetch_els_p; i++) begin
+          if (prefetch_response_match[i]) begin
+            prefetch_valid_r[i] <= 1'b0;
+            prefetch_sent_r[i] <= 1'b0;
+          end
+        end
       end
     end
   end
 
   // synopsys translate_off
   always_ff @(negedge clk_i) if (!reset_i && prefetch_response) begin
-    assert (fsm_rev_header_li.payload.way_id < 2
-      && prefetch_valid_r[fsm_rev_header_li.payload.way_id[0]]
-      && prefetch_sent_r[fsm_rev_header_li.payload.way_id[0]]
-      && fsm_rev_header_li.size == e_bedrock_msg_size_8
-      && fsm_rev_header_li.addr == prefetch_addr_r[fsm_rev_header_li.payload.way_id[0]])
+    assert ($onehot(prefetch_response_match)
+      && fsm_rev_header_li.size == e_bedrock_msg_size_8)
       else $error("UCE prefetch response has no matching outstanding word request");
   end
   // synopsys translate_on
