@@ -729,7 +729,7 @@ module bp_be_dcache
   // should still fill L1 state for later demand accesses.
   wire prefetch_req = v_tv_r & decode_tv_r.prefetch_op & ~load_hit_tv
     & ~uncached_tv_r & ~snoop_tv_r
-    & features_p[e_cfg_writeback] & !features_p[e_cfg_coherent];
+    & features_p[e_cfg_writeback];
   assign cache_req_v_o = is_ready & (blocking_req | nonblocking_req | prefetch_req);
 
   assign blocking_hazard    = cache_req_v_o & blocking_req;
