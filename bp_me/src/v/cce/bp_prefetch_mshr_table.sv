@@ -46,6 +46,8 @@ module bp_prefetch_mshr_table
    , output logic [els_p-1:0][context_width_p-1:0] context_o
    , output logic [els_p-1:0][way_width_p-1:0] way_o
    , output logic [els_p-1:0][beats_p-1:0] fill_mask_o
+   , output logic [$clog2(els_p+1)-1:0] occupancy_o
+   , output logic [$clog2(els_p+1)-1:0] max_occupancy_o
    );
 
   localparam slot_width_lp = (els_p > 1) ? $clog2(els_p) : 1;
@@ -55,6 +57,7 @@ module bp_prefetch_mshr_table
   logic [els_p-1:0][context_width_p-1:0] context_r;
   logic [els_p-1:0][way_width_p-1:0] way_r;
   logic [els_p-1:0][beats_p-1:0] fill_mask_r;
+  logic [$clog2(els_p+1)-1:0] max_occupancy_r;
   wire issue_id_valid = (issue_id_i < els_p);
   wire response_id_valid = (response_id_i < els_p);
   wire [slot_width_lp-1:0] issue_slot = issue_id_i[slot_width_lp-1:0];
@@ -97,6 +100,8 @@ module bp_prefetch_mshr_table
   assign context_o = context_r;
   assign way_o = way_r;
   assign fill_mask_o = fill_mask_r;
+  assign occupancy_o = $countones(valid_o);
+  assign max_occupancy_o = max_occupancy_r;
 
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
@@ -106,6 +111,7 @@ module bp_prefetch_mshr_table
       context_r <= '0;
       way_r <= '0;
       fill_mask_r <= '0;
+      max_occupancy_r <= '0;
     end else begin
       if (alloc_v_i && alloc_ready_o && !alloc_duplicate_o) begin
         valid_o[alloc_slot] <= 1'b1;
@@ -123,6 +129,8 @@ module bp_prefetch_mshr_table
       end
       if (response_ready_o)
         fill_mask_r[response_slot][response_beat_i] <= 1'b1;
+      if ($countones(valid_o) > max_occupancy_r)
+        max_occupancy_r <= $countones(valid_o);
     end
   end
 
