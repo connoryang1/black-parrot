@@ -42,6 +42,8 @@ module bp_prefetch_mshr_table
    , input demand_mark_v_i
    , input [id_width_p-1:0] demand_mark_id_i
    , output logic [els_p-1:0] demand_wait_o
+   , output logic demand_release_o
+   , output logic [id_width_p-1:0] demand_release_id_o
 
    , output logic [els_p-1:0] valid_o
    , output logic [els_p-1:0] issued_o
@@ -96,6 +98,8 @@ module bp_prefetch_mshr_table
         demand_join_o = demand_v_i;
         demand_id_o = id_width_p'(i);
       end
+    demand_release_o = response_ready_o && response_last_i && demand_wait_r[response_slot];
+    demand_release_id_o = response_id_i;
     alloc_yumi_o = alloc_v_i && (alloc_ready_o || alloc_duplicate_o);
   end
 
