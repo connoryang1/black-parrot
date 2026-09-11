@@ -499,7 +499,7 @@ module bp_be_dcache
 
   wire blocking_miss_tv    = blocking_req;
   wire nonblocking_miss_tv = nonblocking_req & ~cache_req_yumi_i;
-  wire engine_miss_tv      = cache_req_v_o & ~cache_req_yumi_i & ~decode_tv_r.prefetch_op;
+  wire engine_miss_tv      = cache_req_v_o & ~cache_req_yumi_i;
   wire any_miss_tv         = blocking_miss_tv | nonblocking_miss_tv | engine_miss_tv;
   wire cache_hit_tv        = v_tv_r & ~any_miss_tv & ~decode_tv_r.prefetch_op;
 
@@ -723,9 +723,9 @@ module bp_be_dcache
   assign nonblocking_sent  = nonblocking_req & cache_req_yumi_i;
   assign blocking_sent     = blocking_req & cache_req_yumi_i;
 
-  // Hints use a separate UCE request slot, never the demand MSHR. Drop a hint
-  // while a demand owns the cache or when the engine cannot accept it. Looking
-  // up L1 first avoids fetching stale backing data for a resident dirty line.
+  // Prefetch hints are non-architectural demand misses, not ordinary loads.
+  // They avoid issuing if the line is already hot in L1, and a miss here
+  // should still fill L1 state for later demand accesses.
   wire prefetch_req = v_tv_r & decode_tv_r.prefetch_op & ~load_hit_tv
     & ~uncached_tv_r & ~snoop_tv_r
     & features_p[e_cfg_writeback] & !features_p[e_cfg_coherent];
@@ -743,7 +743,7 @@ module bp_be_dcache
       cache_req_cast_o.id = '0;
 
       // Assigning sizes to cache miss packet
-      if (load_req | store_req | bclean_req | binval_req | inval_req | clean_req)
+      if (prefetch_req | load_req | store_req | bclean_req | binval_req | inval_req | clean_req)
         begin
             cache_req_cast_o.size = block_req_size;
         end
@@ -777,7 +777,7 @@ module bp_be_dcache
       endcase
 
       if (prefetch_req)
-        cache_req_cast_o.msg_type = e_cache_prefetch;
+        cache_req_cast_o.msg_type = e_miss_load;
       else if (bflush_req)
         cache_req_cast_o.msg_type = e_cache_bflush;
       else if (bclean_req)
@@ -804,7 +804,7 @@ module bp_be_dcache
         cache_req_cast_o.msg_type = e_wt_store;
     end
 
-  wire cache_req_metadata_v_n = cache_req_yumi_i & ~prefetch_req;
+  wire cache_req_metadata_v_n = cache_req_yumi_i;
   bsg_dff_reset
    #(.width_p(1))
    cache_req_v_reg
