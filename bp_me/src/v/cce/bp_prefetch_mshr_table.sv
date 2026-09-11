@@ -11,6 +11,7 @@ module bp_prefetch_mshr_table
     , parameter context_width_p = 2
     , parameter way_width_p = 3
     , parameter els_p = 2
+    , parameter beats_p = 4
     )
   (input clk_i
    , input reset_i
@@ -28,6 +29,7 @@ module bp_prefetch_mshr_table
    , output logic issue_ready_o
    , input response_v_i
    , input [id_width_p-1:0] response_id_i
+   , input [$clog2(beats_p)-1:0] response_beat_i
    , output logic response_ready_o
    , input response_last_i
 
@@ -41,6 +43,7 @@ module bp_prefetch_mshr_table
    , output logic [els_p-1:0][addr_width_p-1:0] addr_o
    , output logic [els_p-1:0][context_width_p-1:0] context_o
    , output logic [els_p-1:0][way_width_p-1:0] way_o
+   , output logic [els_p-1:0][beats_p-1:0] fill_mask_o
    );
 
   localparam slot_width_lp = (els_p > 1) ? $clog2(els_p) : 1;
@@ -49,6 +52,7 @@ module bp_prefetch_mshr_table
   logic [els_p-1:0][addr_width_p-1:0] addr_r;
   logic [els_p-1:0][context_width_p-1:0] context_r;
   logic [els_p-1:0][way_width_p-1:0] way_r;
+  logic [els_p-1:0][beats_p-1:0] fill_mask_r;
   wire issue_id_valid = (issue_id_i < els_p);
   wire response_id_valid = (response_id_i < els_p);
   wire [slot_width_lp-1:0] issue_slot = issue_id_i[slot_width_lp-1:0];
@@ -81,6 +85,7 @@ module bp_prefetch_mshr_table
   assign addr_o = addr_r;
   assign context_o = context_r;
   assign way_o = way_r;
+  assign fill_mask_o = fill_mask_r;
 
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
@@ -89,6 +94,7 @@ module bp_prefetch_mshr_table
       addr_r <= '0;
       context_r <= '0;
       way_r <= '0;
+      fill_mask_r <= '0;
     end else begin
       if (alloc_yumi_o) begin
         valid_o[alloc_slot] <= 1'b1;
@@ -96,6 +102,7 @@ module bp_prefetch_mshr_table
         addr_r[alloc_slot] <= alloc_addr_i;
         context_r[alloc_slot] <= alloc_context_i;
         way_r[alloc_slot] <= alloc_way_i;
+        fill_mask_r[alloc_slot] <= '0;
       end
       if (issue_ready_o)
         issued_r[issue_slot] <= 1'b1;
@@ -103,6 +110,8 @@ module bp_prefetch_mshr_table
         valid_o[response_slot] <= 1'b0;
         issued_r[response_slot] <= 1'b0;
       end
+      if (response_ready_o)
+        fill_mask_r[response_slot][response_beat_i] <= 1'b1;
     end
   end
 
