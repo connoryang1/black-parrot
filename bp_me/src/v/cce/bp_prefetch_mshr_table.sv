@@ -31,6 +31,11 @@ module bp_prefetch_mshr_table
    , output logic response_ready_o
    , input response_last_i
 
+   , input demand_v_i
+   , input [addr_width_p-1:0] demand_addr_i
+   , output logic demand_join_o
+   , output logic [id_width_p-1:0] demand_id_o
+
    , output logic [els_p-1:0] valid_o
    , output logic [els_p-1:0] issued_o
    , output logic [els_p-1:0][addr_width_p-1:0] addr_o
@@ -62,6 +67,13 @@ module bp_prefetch_mshr_table
 
     issue_ready_o = issue_v_i && issue_id_valid && valid_o[issue_slot] && !issued_r[issue_slot];
     response_ready_o = response_v_i && response_id_valid && valid_o[response_slot] && issued_r[response_slot];
+    demand_join_o = 1'b0;
+    demand_id_o = '0;
+    for (int i = els_p-1; i >= 0; i--)
+      if (valid_o[i] && (addr_r[i] == demand_addr_i)) begin
+        demand_join_o = demand_v_i;
+        demand_id_o = id_width_p'(i);
+      end
     alloc_yumi_o = alloc_v_i && alloc_ready_o;
   end
 
