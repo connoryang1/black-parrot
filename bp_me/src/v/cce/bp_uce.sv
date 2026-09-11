@@ -122,7 +122,7 @@ module bp_uce
   logic prefetch_free_v, prefetch_issue_v;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
   logic prefetch_demand_match;
-  logic prefetch_issue, prefetch_response;
+  logic prefetch_issue, prefetch_response, prefetch_response_yumi;
   wire prefetch_allocate = cache_req_yumi_o & prefetch_v_li & prefetch_free_v;
   wire prefetch_drop = cache_req_yumi_o & prefetch_v_li & ~prefetch_free_v;
 
@@ -479,8 +479,8 @@ module bp_uce
 
   // We ack mem_revs for stores no matter what, so load_resp_yumi_lo is for other responses
   logic load_resp_yumi_lo;
-  // Drain hint replies in every FSM state, including a same-line demand wait.
-  assign fsm_rev_yumi_lo = load_resp_yumi_lo | store_resp_v_li | prefetch_response;
+  // Drain hint replies only after their L1 writes are accepted.
+  assign fsm_rev_yumi_lo = load_resp_yumi_lo | store_resp_v_li | prefetch_response_yumi;
   assign cache_req_id_o = cache_req_r.id;
   assign cache_req_lock_o = is_reset | is_init | inval_v_r | clean_v_r | flush_v_r;
   logic blocking_req_v_lo;
@@ -509,6 +509,7 @@ module bp_uce
       fsm_fwd_v_lo = '0;
 
       load_resp_yumi_lo = '0;
+      prefetch_response_yumi = '0;
       prefetch_issue = '0;
 
       state_n = state_r;
@@ -877,6 +878,26 @@ module bp_uce
         default: state_n = e_reset;
       endcase
 
+      if (prefetch_response) begin
+        // A detached prefetch is a normal full-line fill at the L1 boundary.
+        // The slot ID selects a deterministic replacement way; no demand
+        // metadata or architectural response is required.
+        data_mem_pkt_cast_o.opcode = e_cache_data_mem_write;
+        data_mem_pkt_cast_o.index = fsm_rev_addr_li[block_offset_width_lp+:index_width_lp];
+        data_mem_pkt_cast_o.way_id = fsm_rev_header_li.payload.way_id[0+:`BSG_SAFE_CLOG2(assoc_p)];
+        data_mem_pkt_cast_o.data = fsm_rev_data_li;
+        data_mem_pkt_cast_o.fill_index = 1'b1 << fill_index_shift;
+        data_mem_pkt_v_o = 1'b1;
+        tag_mem_pkt_cast_o.opcode = e_cache_tag_mem_set_tag;
+        tag_mem_pkt_cast_o.index = fsm_rev_addr_li[block_offset_width_lp+:index_width_lp];
+        tag_mem_pkt_cast_o.way_id = fsm_rev_header_li.payload.way_id[0+:`BSG_SAFE_CLOG2(assoc_p)];
+        tag_mem_pkt_cast_o.state = e_COH_M;
+        tag_mem_pkt_cast_o.tag = fsm_rev_addr_li[block_offset_width_lp+index_width_lp+:tag_width_p];
+        tag_mem_pkt_v_o = fsm_rev_new_li;
+        prefetch_response_yumi = data_mem_pkt_yumi_i
+          & (~fsm_rev_new_li | tag_mem_pkt_yumi_i);
+      end
+
       // Fire off a non-blocking request opportunistically if we have one
       // Could eke out some performance by changing ~fsm_fwd_v_lo to blocking_req_v_lo
       //if (nonblocking_v_r & ~fsm_fwd_v_lo)
@@ -906,7 +927,7 @@ module bp_uce
         fsm_fwd_header_lo = '0;
         fsm_fwd_header_lo.msg_type = e_bedrock_mem_rd;
         fsm_fwd_header_lo.addr = prefetch_addr_r[prefetch_issue_slot];
-        fsm_fwd_header_lo.size = e_bedrock_msg_size_8;
+        fsm_fwd_header_lo.size = block_msg_size_lp;
         fsm_fwd_header_lo.payload.prefetch = 1'b1;
         fsm_fwd_header_lo.payload.way_id = prefetch_tag_width_lp'(prefetch_issue_slot);
         fsm_fwd_header_lo.payload.state = bp_coh_states_e'
@@ -928,7 +949,7 @@ module bp_uce
       if (prefetch_allocate) begin
         prefetch_valid_r[prefetch_free_slot] <= 1'b1;
         prefetch_sent_r[prefetch_free_slot] <= 1'b0;
-        prefetch_addr_r[prefetch_free_slot] <= {cache_req_cast_i.addr[paddr_width_p-1:3], 3'b0};
+        prefetch_addr_r[prefetch_free_slot] <= {cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp], block_offset_width_lp'(0)};
       end
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
@@ -946,7 +967,7 @@ module bp_uce
   // synopsys translate_off
   always_ff @(negedge clk_i) if (!reset_i && prefetch_response) begin
     assert ($onehot(prefetch_response_match)
-      && fsm_rev_header_li.size == e_bedrock_msg_size_8)
+      && fsm_rev_header_li.size == block_msg_size_lp)
       else $error("UCE prefetch response has no matching outstanding word request");
     for (int i = 0; i < prefetch_els_p; i++) begin
       if (prefetch_response_match[i]) begin
