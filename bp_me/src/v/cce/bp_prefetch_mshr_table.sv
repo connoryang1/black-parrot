@@ -12,6 +12,7 @@ module bp_prefetch_mshr_table
     , parameter way_width_p = 3
     , parameter els_p = 2
     , parameter beats_p = 4
+    , parameter line_offset_width_p = 6
     )
   (input clk_i
    , input reset_i
@@ -74,7 +75,9 @@ module bp_prefetch_mshr_table
     demand_join_o = 1'b0;
     demand_id_o = '0;
     for (int i = els_p-1; i >= 0; i--)
-      if (valid_o[i] && (addr_r[i] == demand_addr_i)) begin
+      if (valid_o[i]
+          && (addr_r[i][addr_width_p-1:line_offset_width_p]
+              == demand_addr_i[addr_width_p-1:line_offset_width_p])) begin
         demand_join_o = demand_v_i;
         demand_id_o = id_width_p'(i);
       end
