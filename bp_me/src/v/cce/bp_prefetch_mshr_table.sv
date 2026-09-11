@@ -44,6 +44,11 @@ module bp_prefetch_mshr_table
   logic [els_p-1:0][addr_width_p-1:0] addr_r;
   logic [els_p-1:0][context_width_p-1:0] context_r;
   logic [els_p-1:0][way_width_p-1:0] way_r;
+  wire issue_id_valid = (issue_id_i < els_p);
+  wire response_id_valid = (response_id_i < els_p);
+  wire [slot_width_lp-1:0] issue_slot = issue_id_i[slot_width_lp-1:0];
+  wire [slot_width_lp-1:0] response_slot = response_id_i[slot_width_lp-1:0];
+  wire [slot_width_lp-1:0] alloc_slot = alloc_id_o[slot_width_lp-1:0];
 
   always_comb begin
     alloc_ready_o = 1'b0;
@@ -55,8 +60,8 @@ module bp_prefetch_mshr_table
       end
     end
 
-    issue_ready_o = issue_v_i && valid_o[issue_id_i] && !issued_r[issue_id_i];
-    response_ready_o = response_v_i && valid_o[response_id_i] && issued_r[response_id_i];
+    issue_ready_o = issue_v_i && issue_id_valid && valid_o[issue_slot] && !issued_r[issue_slot];
+    response_ready_o = response_v_i && response_id_valid && valid_o[response_slot] && issued_r[response_slot];
     alloc_yumi_o = alloc_v_i && alloc_ready_o;
   end
 
@@ -74,17 +79,17 @@ module bp_prefetch_mshr_table
       way_r <= '0;
     end else begin
       if (alloc_yumi_o) begin
-        valid_o[alloc_id_o] <= 1'b1;
-        issued_r[alloc_id_o] <= 1'b0;
-        addr_r[alloc_id_o] <= alloc_addr_i;
-        context_r[alloc_id_o] <= alloc_context_i;
-        way_r[alloc_id_o] <= alloc_way_i;
+        valid_o[alloc_slot] <= 1'b1;
+        issued_r[alloc_slot] <= 1'b0;
+        addr_r[alloc_slot] <= alloc_addr_i;
+        context_r[alloc_slot] <= alloc_context_i;
+        way_r[alloc_slot] <= alloc_way_i;
       end
       if (issue_ready_o)
-        issued_r[issue_id_i] <= 1'b1;
+        issued_r[issue_slot] <= 1'b1;
       if (response_ready_o && response_last_i) begin
-        valid_o[response_id_i] <= 1'b0;
-        issued_r[response_id_i] <= 1'b0;
+        valid_o[response_slot] <= 1'b0;
+        issued_r[response_slot] <= 1'b0;
       end
     end
   end
