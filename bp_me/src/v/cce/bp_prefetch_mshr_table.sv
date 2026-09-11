@@ -24,6 +24,7 @@ module bp_prefetch_mshr_table
    , input [way_width_p-1:0] alloc_way_i
    , output logic [id_width_p-1:0] alloc_id_o
    , output logic alloc_yumi_o
+   , output logic alloc_duplicate_o
 
    , input issue_v_i
    , input [id_width_p-1:0] issue_id_i
@@ -63,9 +64,16 @@ module bp_prefetch_mshr_table
   always_comb begin
     alloc_ready_o = 1'b0;
     alloc_id_o = '0;
+    alloc_duplicate_o = 1'b0;
     for (int i = els_p-1; i >= 0; i--) begin
       if (!valid_o[i]) begin
         alloc_ready_o = 1'b1;
+        alloc_id_o = id_width_p'(i);
+      end
+      if (valid_o[i]
+          && (addr_r[i][addr_width_p-1:line_offset_width_p]
+              == alloc_addr_i[addr_width_p-1:line_offset_width_p])) begin
+        alloc_duplicate_o = alloc_v_i;
         alloc_id_o = id_width_p'(i);
       end
     end
@@ -81,7 +89,7 @@ module bp_prefetch_mshr_table
         demand_join_o = demand_v_i;
         demand_id_o = id_width_p'(i);
       end
-    alloc_yumi_o = alloc_v_i && alloc_ready_o;
+    alloc_yumi_o = alloc_v_i && (alloc_ready_o || alloc_duplicate_o);
   end
 
   assign issued_o = issued_r;
@@ -99,7 +107,7 @@ module bp_prefetch_mshr_table
       way_r <= '0;
       fill_mask_r <= '0;
     end else begin
-      if (alloc_yumi_o) begin
+      if (alloc_v_i && alloc_ready_o && !alloc_duplicate_o) begin
         valid_o[alloc_slot] <= 1'b1;
         issued_r[alloc_slot] <= 1'b0;
         addr_r[alloc_slot] <= alloc_addr_i;
