@@ -39,6 +39,9 @@ module bp_prefetch_mshr_table
    , input [addr_width_p-1:0] demand_addr_i
    , output logic demand_join_o
    , output logic [id_width_p-1:0] demand_id_o
+   , input demand_mark_v_i
+   , input [id_width_p-1:0] demand_mark_id_i
+   , output logic [els_p-1:0] demand_wait_o
 
    , output logic [els_p-1:0] valid_o
    , output logic [els_p-1:0] issued_o
@@ -57,6 +60,7 @@ module bp_prefetch_mshr_table
   logic [els_p-1:0][context_width_p-1:0] context_r;
   logic [els_p-1:0][way_width_p-1:0] way_r;
   logic [els_p-1:0][beats_p-1:0] fill_mask_r;
+  logic [els_p-1:0] demand_wait_r;
   logic [$clog2(els_p+1)-1:0] max_occupancy_r;
   wire issue_id_valid = (issue_id_i < els_p);
   wire response_id_valid = (response_id_i < els_p);
@@ -102,6 +106,7 @@ module bp_prefetch_mshr_table
   assign fill_mask_o = fill_mask_r;
   assign occupancy_o = $countones(valid_o);
   assign max_occupancy_o = max_occupancy_r;
+  assign demand_wait_o = demand_wait_r;
 
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
@@ -112,6 +117,7 @@ module bp_prefetch_mshr_table
       way_r <= '0;
       fill_mask_r <= '0;
       max_occupancy_r <= '0;
+      demand_wait_r <= '0;
     end else begin
       if (alloc_v_i && alloc_ready_o && !alloc_duplicate_o) begin
         valid_o[alloc_slot] <= 1'b1;
@@ -120,15 +126,19 @@ module bp_prefetch_mshr_table
         context_r[alloc_slot] <= alloc_context_i;
         way_r[alloc_slot] <= alloc_way_i;
         fill_mask_r[alloc_slot] <= '0;
+        demand_wait_r[alloc_slot] <= 1'b0;
       end
       if (issue_ready_o)
         issued_r[issue_slot] <= 1'b1;
       if (response_ready_o && response_last_i) begin
         valid_o[response_slot] <= 1'b0;
         issued_r[response_slot] <= 1'b0;
+        demand_wait_r[response_slot] <= 1'b0;
       end
       if (response_ready_o)
         fill_mask_r[response_slot][response_beat_i] <= 1'b1;
+      if (demand_mark_v_i && (demand_mark_id_i < els_p))
+        demand_wait_r[demand_mark_id_i[slot_width_lp-1:0]] <= 1'b1;
       if ($countones(valid_o) > max_occupancy_r)
         max_occupancy_r <= $countones(valid_o);
     end
