@@ -225,6 +225,7 @@ module bp_unicore_lite
      ,.tag_width_p(dcache_tag_width_p)
      ,.id_width_p(dcache_req_id_width_p)
      ,.writeback_p(dcache_features_p[e_cfg_writeback])
+     ,.prefetch_els_p(10)
      )
    dcache_uce
     (.clk_i(negedge_clk)

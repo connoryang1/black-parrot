@@ -118,11 +118,14 @@ module bp_uce
     & (cache_req_cast_i.msg_type == e_cache_prefetch);
   logic [prefetch_els_p-1:0] prefetch_valid_r, prefetch_sent_r;
   logic [prefetch_els_p-1:0][paddr_width_p-1:0] prefetch_addr_r;
+  logic [prefetch_els_p-1:0][`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_way_r;
+  logic [prefetch_els_p-1:0][fill_cnt_width_lp-1:0] prefetch_fill_count_r;
   logic [prefetch_els_p-1:0] prefetch_response_match;
   logic prefetch_free_v, prefetch_issue_v;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
   logic prefetch_demand_match;
   logic prefetch_issue, prefetch_response, prefetch_response_yumi;
+  logic [prefetch_slot_width_lp-1:0] prefetch_response_slot;
   wire prefetch_allocate = cache_req_yumi_o & prefetch_v_li & prefetch_free_v;
   wire prefetch_drop = cache_req_yumi_o & prefetch_v_li & ~prefetch_free_v;
 
@@ -148,6 +151,12 @@ module bp_uce
         & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
            == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
     end
+  end
+  always_comb begin
+    prefetch_response_slot = '0;
+    for (int i = 0; i < prefetch_els_p; i++)
+      if (prefetch_response_match[i])
+        prefetch_response_slot = prefetch_slot_width_lp'(i);
   end
 
   enum logic [4:0] {
@@ -359,9 +368,8 @@ module bp_uce
     // A one-hot decoder avoids both a wide address CAM and an indexed mux.
     assign prefetch_response_match[i] = prefetch_valid_r[i]
       & prefetch_sent_r[i]
-      & (fsm_rev_header_li.payload.way_id == prefetch_tag_width_lp'(i))
-      & (fsm_rev_header_li.payload.state
-         == bp_coh_states_e'(prefetch_state_width_lp'(i >> prefetch_tag_width_lp)));
+      & (fsm_rev_addr_li[paddr_width_p-1:block_offset_width_lp]
+         == prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]);
   end
 
   wire miss_load_v_r   = cache_req_v_r & cache_req_r.msg_type inside {e_miss_load};
@@ -883,19 +891,24 @@ module bp_uce
         // The slot ID selects a deterministic replacement way; no demand
         // metadata or architectural response is required.
         data_mem_pkt_cast_o.opcode = e_cache_data_mem_write;
-        data_mem_pkt_cast_o.index = fsm_rev_addr_li[block_offset_width_lp+:index_width_lp];
-        data_mem_pkt_cast_o.way_id = fsm_rev_header_li.payload.way_id[0+:`BSG_SAFE_CLOG2(assoc_p)];
+        data_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_response_slot][block_offset_width_lp+:index_width_lp];
+        data_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_response_slot];
         data_mem_pkt_cast_o.data = fsm_rev_data_li;
-        data_mem_pkt_cast_o.fill_index = 1'b1 << fill_index_shift;
+        data_mem_pkt_cast_o.fill_index = 1'b1 << prefetch_fill_count_r[prefetch_response_slot];
         data_mem_pkt_v_o = 1'b1;
         tag_mem_pkt_cast_o.opcode = e_cache_tag_mem_set_tag;
-        tag_mem_pkt_cast_o.index = fsm_rev_addr_li[block_offset_width_lp+:index_width_lp];
-        tag_mem_pkt_cast_o.way_id = fsm_rev_header_li.payload.way_id[0+:`BSG_SAFE_CLOG2(assoc_p)];
+        tag_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_response_slot][block_offset_width_lp+:index_width_lp];
+        tag_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_response_slot];
         tag_mem_pkt_cast_o.state = e_COH_M;
-        tag_mem_pkt_cast_o.tag = fsm_rev_addr_li[block_offset_width_lp+index_width_lp+:tag_width_p];
-        tag_mem_pkt_v_o = fsm_rev_new_li;
+        tag_mem_pkt_cast_o.tag = prefetch_addr_r[prefetch_response_slot][block_offset_width_lp+index_width_lp+:tag_width_p];
+        // Publish the tag only after every beat has arrived. A backend that
+        // truncates an advisory read must never expose a partially filled L1
+        // line as valid.
+        tag_mem_pkt_v_o = fsm_rev_last_li
+          & (prefetch_fill_count_r[prefetch_response_slot]
+             == fill_cnt_width_lp'(block_size_in_fill_lp-1));
         prefetch_response_yumi = data_mem_pkt_yumi_i
-          & (~fsm_rev_new_li | tag_mem_pkt_yumi_i);
+          & (~tag_mem_pkt_v_o | tag_mem_pkt_yumi_i);
       end
 
       // Fire off a non-blocking request opportunistically if we have one
@@ -945,11 +958,15 @@ module bp_uce
       prefetch_valid_r <= '0;
       prefetch_sent_r <= '0;
       prefetch_addr_r <= '0;
+      prefetch_way_r <= '0;
+      prefetch_fill_count_r <= '0;
     end else begin
       if (prefetch_allocate) begin
         prefetch_valid_r[prefetch_free_slot] <= 1'b1;
         prefetch_sent_r[prefetch_free_slot] <= 1'b0;
         prefetch_addr_r[prefetch_free_slot] <= {cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp], block_offset_width_lp'(0)};
+        prefetch_way_r[prefetch_free_slot] <= cache_req_cast_i.id[0+:`BSG_SAFE_CLOG2(assoc_p)];
+        prefetch_fill_count_r[prefetch_free_slot] <= '0;
       end
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
@@ -958,8 +975,12 @@ module bp_uce
           if (prefetch_response_match[i]) begin
             prefetch_valid_r[i] <= 1'b0;
             prefetch_sent_r[i] <= 1'b0;
+            prefetch_fill_count_r[i] <= '0;
           end
         end
+      end else if (prefetch_response_yumi) begin
+        prefetch_fill_count_r[prefetch_response_slot]
+          <= prefetch_fill_count_r[prefetch_response_slot] + 1'b1;
       end
     end
   end
@@ -967,8 +988,9 @@ module bp_uce
   // synopsys translate_off
   always_ff @(negedge clk_i) if (!reset_i && prefetch_response) begin
     assert ($onehot(prefetch_response_match)
-      && fsm_rev_header_li.size == block_msg_size_lp)
-      else $error("UCE prefetch response has no matching outstanding word request");
+      && (fsm_rev_header_li.size == block_msg_size_lp
+          || fsm_rev_header_li.size == e_bedrock_msg_size_8))
+      else $error("UCE prefetch response address does not match its slot");
     for (int i = 0; i < prefetch_els_p; i++) begin
       if (prefetch_response_match[i]) begin
         assert (fsm_rev_header_li.addr == prefetch_addr_r[i])

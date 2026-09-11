@@ -741,7 +741,7 @@ module bp_be_dcache
       cache_req_cast_o.addr = paddr_tv_r;
       cache_req_cast_o.data = nonblocking_req ? wbuf_entry_in.data : st_data_tv_r;
       cache_req_cast_o.hit = load_hit_tv;
-      cache_req_cast_o.id = '0;
+      cache_req_cast_o.id = prefetch_req ? id_width_p'(hit_or_repl_way) : '0;
 
       // Assigning sizes to cache miss packet
       if (prefetch_req | load_req | store_req | bclean_req | binval_req | inval_req | clean_req)
@@ -1216,7 +1216,7 @@ module bp_be_dcache
    #(.width_p(1+dword_width_gp+paddr_width_p+thread_id_width_p+$bits(bp_be_dcache_decode_s)))
    mshr_reg
     (.clk_i(clk_i)
-     ,.en_i(blocking_sent | prefetch_sent)
+     ,.en_i(blocking_sent)
      ,.data_i({uncached_tv_r, st_data_tv_r, paddr_tv_r, thread_id_tv_r, decode_tv_r})
      ,.data_o({fill_uncached_r, fill_st_data_r, fill_paddr_r, fill_thread_id_r, fill_decode_r})
      );
