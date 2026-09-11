@@ -830,11 +830,11 @@ module bp_be_top
     context_cache_miss_virtual_context_id_li = '0;
     context_cache_miss_resume_npc_li = '0;
 
-    if (fast_ctxtsw_v_lo && !fast_ctxtsw_resident_v_li) begin
+    if (!context_cache_active_li && fast_ctxtsw_v_lo && !fast_ctxtsw_resident_v_li) begin
       context_cache_miss_v_li = 1'b1;
       context_cache_miss_virtual_context_id_li = fast_ctxtsw_virtual_context_id_lo;
       context_cache_miss_resume_npc_li = fast_ctxtsw_resume_npc_lo;
-    end else if (dispatch_pkt.ctxtsw_v && !ctxtsw_target_resident_v_li) begin
+    end else if (!context_cache_active_li && dispatch_pkt.ctxtsw_v && !ctxtsw_target_resident_v_li) begin
       context_cache_miss_v_li = 1'b1;
       context_cache_miss_virtual_context_id_li = ctxtsw_target_virtual_context_id_li;
       context_cache_miss_resume_npc_li = dispatch_pkt.pc + (dispatch_pkt.size << 1'b1);
