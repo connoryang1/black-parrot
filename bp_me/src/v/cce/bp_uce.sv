@@ -286,8 +286,9 @@ module bp_uce
 
   // We check for uncached stores ealier than other requests, because they get sent out in ready
   wire miss_load_v_li   = cache_req_v_i & cache_req_cast_i.msg_type inside {e_miss_load};
+  wire prefetch_v_li    = cache_req_v_i & cache_req_cast_i.msg_type inside {e_cache_prefetch};
   wire miss_store_v_li  = cache_req_v_i & cache_req_cast_i.msg_type inside {e_miss_store};
-  wire miss_v_li        = cache_req_v_i & miss_load_v_li | miss_store_v_li;
+  wire miss_v_li        = (cache_req_v_i & (miss_load_v_li | prefetch_v_li)) | miss_store_v_li;
   wire wt_store_v_li    = cache_req_v_i & cache_req_cast_i.msg_type inside {e_wt_store};
   wire uc_load_v_li     = cache_req_v_i & cache_req_cast_i.msg_type inside {e_uc_load};
   wire uc_store_v_li    = cache_req_v_i & cache_req_cast_i.msg_type inside {e_uc_store};
@@ -305,8 +306,9 @@ module bp_uce
     & fsm_rev_header_li.msg_type inside {e_bedrock_mem_rd, e_bedrock_mem_amo};
 
   wire miss_load_v_r   = cache_req_v_r & cache_req_r.msg_type inside {e_miss_load};
+  wire prefetch_v_r    = cache_req_v_r & cache_req_r.msg_type inside {e_cache_prefetch};
   wire miss_store_v_r  = cache_req_v_r & cache_req_r.msg_type inside {e_miss_store};
-  wire miss_v_r        = cache_req_v_r & miss_load_v_r | miss_store_v_r;
+  wire miss_v_r        = cache_req_v_r & (miss_load_v_r | prefetch_v_r) | miss_store_v_r;
   wire wt_store_v_r    = cache_req_v_r & cache_req_r.msg_type inside {e_wt_store};
   wire uc_load_v_r     = cache_req_v_r & cache_req_r.msg_type inside {e_uc_load};
   wire uc_store_v_r    = cache_req_v_r & cache_req_r.msg_type inside {e_uc_store};
@@ -443,7 +445,9 @@ module bp_uce
       fsm_fwd_v_lo = '0;
 
       load_resp_yumi_lo = '0;
-      // prefetch now follows the normal demand-fill path
+      // Prefetches use the same coherent fill machinery as demand misses,
+      // but carry an explicit message type so the LCE can reserve detached
+      // fill state and suppress an architectural response.
 
       state_n = state_r;
 

@@ -722,6 +722,7 @@ module bp_be_dcache
                              || (inval_req | clean_req | flush_req);
   assign nonblocking_sent  = nonblocking_req & cache_req_yumi_i;
   assign blocking_sent     = blocking_req & cache_req_yumi_i;
+  wire prefetch_sent       = prefetch_req & cache_req_yumi_i;
 
   // Prefetch hints are non-architectural demand misses, not ordinary loads.
   // They avoid issuing if the line is already hot in L1, and a miss here
@@ -777,7 +778,7 @@ module bp_be_dcache
       endcase
 
       if (prefetch_req)
-        cache_req_cast_o.msg_type = e_miss_load;
+        cache_req_cast_o.msg_type = e_cache_prefetch;
       else if (bflush_req)
         cache_req_cast_o.msg_type = e_cache_bflush;
       else if (bclean_req)
@@ -1215,7 +1216,7 @@ module bp_be_dcache
    #(.width_p(1+dword_width_gp+paddr_width_p+thread_id_width_p+$bits(bp_be_dcache_decode_s)))
    mshr_reg
     (.clk_i(clk_i)
-     ,.en_i(blocking_sent)
+     ,.en_i(blocking_sent | prefetch_sent)
      ,.data_i({uncached_tv_r, st_data_tv_r, paddr_tv_r, thread_id_tv_r, decode_tv_r})
      ,.data_o({fill_uncached_r, fill_st_data_r, fill_paddr_r, fill_thread_id_r, fill_decode_r})
      );

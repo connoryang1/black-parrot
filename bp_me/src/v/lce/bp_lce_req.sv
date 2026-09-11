@@ -135,14 +135,15 @@ module bp_lce_req
   wire cache_req_metadata_v = cache_req_metadata_v_i | cache_req_metadata_v_r;
 
   wire miss_load_v_li   = cache_req_v_i & cache_req_cast_i.msg_type inside {e_miss_load};
+  wire prefetch_v_li    = cache_req_v_i & cache_req_cast_i.msg_type inside {e_cache_prefetch};
   wire miss_store_v_li  = cache_req_v_i & cache_req_cast_i.msg_type inside {e_miss_store};
-  wire miss_v_li        = cache_req_v_i & miss_load_v_li | miss_store_v_li;
+  wire miss_v_li        = miss_load_v_li | prefetch_v_li | miss_store_v_li;
   wire bclean_v_li      = cache_req_v_i & cache_req_cast_i.msg_type inside {e_cache_bclean};
   wire clean_v_li       = cache_req_v_i & cache_req_cast_i.msg_type inside {e_cache_clean};
   wire uc_load_v_li     = cache_req_v_i & cache_req_cast_i.msg_type inside {e_uc_load};
   wire uc_amo_v_li      = cache_req_v_i & cache_req_cast_i.msg_type inside {e_uc_amo};
   wire uc_store_v_li    = cache_req_v_i & cache_req_cast_i.msg_type inside {e_uc_store};
-  wire blocking_v_li    = miss_load_v_li | miss_store_v_li | uc_load_v_li | uc_amo_v_li;
+  wire blocking_v_li    = miss_load_v_li | prefetch_v_li | miss_store_v_li | uc_load_v_li | uc_amo_v_li;
   wire nonblocking_v_li = uc_store_v_li;
 
   bp_bedrock_lce_req_header_s fsm_req_header_lo;
@@ -177,14 +178,15 @@ module bp_lce_req
      );
 
   wire miss_load_v_r   = cache_req_v_r & cache_req_r.msg_type inside {e_miss_load};
+  wire prefetch_v_r    = cache_req_v_r & cache_req_r.msg_type inside {e_cache_prefetch};
   wire miss_store_v_r  = cache_req_v_r & cache_req_r.msg_type inside {e_miss_store};
-  wire miss_v_r        = miss_load_v_r | miss_store_v_r;
+  wire miss_v_r        = miss_load_v_r | prefetch_v_r | miss_store_v_r;
   wire bflush_v_r      = cache_req_v_r & cache_req_r.msg_type inside {e_cache_bclean, e_cache_binval, e_cache_bflush};
   wire clean_v_r       = cache_req_v_r & cache_req_r.msg_type inside {e_cache_clean};
   wire uc_load_v_r     = cache_req_v_r & cache_req_r.msg_type inside {e_uc_load};
   wire uc_amo_v_r      = cache_req_v_r & cache_req_r.msg_type inside {e_uc_amo};
   wire uc_store_v_r    = cache_req_v_r & cache_req_r.msg_type inside {e_uc_store};
-  wire blocking_v_r    = miss_load_v_r | miss_store_v_r | uc_load_v_r | uc_amo_v_r;
+  wire blocking_v_r    = miss_load_v_r | prefetch_v_r | miss_store_v_r | uc_load_v_r | uc_amo_v_r;
   wire nonblocking_v_r = uc_store_v_r;
 
   // Outstanding request credit counter
@@ -260,7 +262,8 @@ module bp_lce_req
         e_uc_store    : fsm_req_header_lo.msg_type.req = e_bedrock_req_uc_wr;
         e_uc_load     : fsm_req_header_lo.msg_type.req = e_bedrock_req_uc_rd;
         e_uc_amo      : fsm_req_header_lo.msg_type.req = e_bedrock_req_uc_amo;
-        e_miss_load   : fsm_req_header_lo.msg_type.req = e_bedrock_req_rd_miss;
+        e_miss_load,
+        e_cache_prefetch: fsm_req_header_lo.msg_type.req = e_bedrock_req_rd_miss;
         e_miss_store  : fsm_req_header_lo.msg_type.req = e_bedrock_req_wr_miss;
         default: begin end
       endcase
@@ -324,4 +327,3 @@ module bp_lce_req
 endmodule
 
 `BSG_ABSTRACT_MODULE(bp_lce_req)
-
