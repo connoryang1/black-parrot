@@ -121,20 +121,17 @@ module bp_uce
   logic [prefetch_els_p-1:0] prefetch_response_match;
   logic prefetch_free_v, prefetch_issue_v;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
-  logic prefetch_demand_match;
   logic prefetch_issue, prefetch_response;
   wire prefetch_allocate = cache_req_yumi_o & prefetch_v_li & prefetch_free_v;
   wire prefetch_drop = cache_req_yumi_o & prefetch_v_li & ~prefetch_free_v;
 
   // Slots remain reserved until the final response, including across context
-  // redirects. A following demand waits behind a hint to that same physical
-  // line. No prefetched data is kept in the UCE itself.
+  // redirects. No prefetched data is kept in the UCE itself.
   always_comb begin
     prefetch_free_v = 1'b0;
     prefetch_free_slot = '0;
     prefetch_issue_v = 1'b0;
     prefetch_issue_slot = '0;
-    prefetch_demand_match = 1'b0;
     for (int i = prefetch_els_p-1; i >= 0; i--) begin
       if (!prefetch_valid_r[i]) begin
         prefetch_free_v = 1'b1;
@@ -144,9 +141,6 @@ module bp_uce
         prefetch_issue_v = 1'b1;
         prefetch_issue_slot = prefetch_slot_width_lp'(i);
       end
-      prefetch_demand_match |= prefetch_valid_r[i]
-        & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
-           == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
     end
   end
 
@@ -730,8 +724,7 @@ module bp_uce
               fsm_fwd_header_lo.payload.way_id = lce_assoc_p'(cache_req_metadata.hit_or_repl_way);
               fsm_fwd_header_lo.payload.lce_id = lce_id_i;
               fsm_fwd_header_lo.payload.src_did = did_i;
-              fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo
-                & ~prefetch_demand_match;
+              fsm_fwd_v_lo = fsm_fwd_ready_then_li & cache_req_credit_ready_lo;
 
               state_n = (fsm_fwd_v_lo & fsm_fwd_last_lo)
                         ? cache_req_metadata.dirty
@@ -895,13 +888,12 @@ module bp_uce
           cache_req_done = fsm_fwd_v_lo & fsm_fwd_last_lo;
         end
 
-      // Demand traffic has priority. A waiting same-line demand also permits
-      // its queued hint to issue, preventing a request-before-issue deadlock.
+      // Demand traffic has priority. A waiting prefetch can still issue while
+      // demand traffic is pending, which avoids request-before-issue deadlock.
       // A word request releases the L2 command pump after one bank operation;
       // the bank still fetches its complete cache line from backing memory.
       if (prefetch_p & prefetch_issue_v
-          & ((is_ready & ~nonblocking_v_r)
-             | (is_send_critical & miss_v_r & prefetch_demand_match))
+          & ((is_ready & ~nonblocking_v_r) | is_send_critical)
           & prefetch_only_credits & ~cache_req_credits_full_o) begin
         fsm_fwd_header_lo = '0;
         fsm_fwd_header_lo.msg_type = e_bedrock_mem_rd;
