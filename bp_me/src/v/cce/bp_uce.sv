@@ -30,6 +30,10 @@ module bp_uce
     // the preceding line has returned. Returned words are never architectural.
     , parameter prefetch_p = writeback_p
     , parameter prefetch_els_p = 2
+    // Permit the context-cache integration to drain ordinary traffic without
+    // waiting for detached hint responses.  Standalone CCE users retain the
+    // conservative fence semantics by default.
+    , parameter prefetch_ignore_credits_p = 1'b0
 
     `declare_bp_cache_engine_generic_if_widths(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p, cache)
     )
@@ -445,15 +449,17 @@ module bp_uce
      ,.count_o(credit_count_lo)
      );
   assign cache_req_credits_full_o  = (credit_count_lo == coh_noc_max_credits_p);
-  assign cache_req_credits_empty_o = ~cache_req_v_r && (credit_count_lo == 0)
-    && !(|prefetch_valid_r);
-  wire cache_req_credit_ready_lo = ~cache_req_credits_full_o | ~fsm_fwd_new_lo;
-  // Do not pass older demand/writeback traffic. Multiple hints may still be
-  // sent together: their own credits are not a barrier to the next hint.
+  // Context handoff may proceed when the only outstanding credits belong to
+  // detached hints.  Their responses are independently matched and installed
+  // in L1, so making the architectural switch wait for them serializes the
+  // very latency that prefetching is intended to hide.
   wire [`BSG_WIDTH(coh_noc_max_credits_p)-1:0] prefetch_sent_count
     = `BSG_WIDTH(coh_noc_max_credits_p)'($countones(prefetch_sent_r));
-  wire prefetch_only_credits = credit_count_lo == prefetch_sent_count;
-
+  assign cache_req_credits_empty_o = ~cache_req_v_r
+    && (prefetch_ignore_credits_p
+        ? (credit_count_lo == prefetch_sent_count)
+        : ((credit_count_lo == 0) && !(|prefetch_valid_r)));
+  wire cache_req_credit_ready_lo = ~cache_req_credits_full_o | ~fsm_fwd_new_lo;
   logic [fill_width_p-1:0] writeback_data;
   wire [fill_cnt_width_lp-1:0] dirty_data_select = fsm_fwd_addr_lo[fill_offset_width_lp+:fill_cnt_width_lp];
   bsg_mux
@@ -886,7 +892,10 @@ module bp_uce
         default: state_n = e_reset;
       endcase
 
-      if (prefetch_response) begin
+      // A detached fill shares the single-cycle L1 data/tag write ports with
+      // demand fills.  Leave the response in the pump when a demand beat is
+      // being consumed; it will be retried on the following cycle.
+      if (prefetch_response & ~load_resp_v_li & ~store_resp_v_li) begin
         // A detached prefetch is a normal full-line fill at the L1 boundary.
         // The slot ID selects a deterministic replacement way; no demand
         // metadata or architectural response is required.
@@ -911,6 +920,13 @@ module bp_uce
           & (~tag_mem_pkt_v_o | tag_mem_pkt_yumi_i);
       end
 
+      // Prefetches are detached advisory requests.  Accept them directly
+      // into the slot table even while the serialized demand FSM is waiting
+      // for a refill; otherwise the dcache holds the hint at its request
+      // interface and no second transaction can ever be in flight.
+      if (prefetch_v_li & prefetch_free_v & ~is_reset & ~is_init)
+        cache_req_yumi_o = 1'b1;
+
       // Fire off a non-blocking request opportunistically if we have one
       // Could eke out some performance by changing ~fsm_fwd_v_lo to blocking_req_v_lo
       //if (nonblocking_v_r & ~fsm_fwd_v_lo)
@@ -929,14 +945,18 @@ module bp_uce
           cache_req_done = fsm_fwd_v_lo & fsm_fwd_last_lo;
         end
 
-      // Demand traffic has priority. A waiting same-line demand also permits
-      // its queued hint to issue, preventing a request-before-issue deadlock.
-      // A word request releases the L2 command pump after one bank operation;
-      // the bank still fetches its complete cache line from backing memory.
+      // Demand traffic has priority.  Hints may use otherwise idle forward
+      // pump cycles while a demand/refill response is being waited on.  This
+      // is the key overlap path for nonresident context switches: the UCE can
+      // admit the next worker's line while the current worker's register or
+      // data refill is outstanding.  A same-line demand remains deferred
+      // until its hint has been issued, preventing duplicate ownership.
       if (prefetch_p & prefetch_issue_v
-          & ((is_ready & ~nonblocking_v_r)
+          & ((is_ready | is_read_request | is_uc_read_wait | is_writeback_read)
+             & ~prefetch_demand_match
              | (is_send_critical & miss_v_r & prefetch_demand_match))
-          & prefetch_only_credits & ~cache_req_credits_full_o) begin
+          & ~load_resp_v_li & ~store_resp_v_li & ~prefetch_response
+          & ~cache_req_credits_full_o) begin
         fsm_fwd_header_lo = '0;
         fsm_fwd_header_lo.msg_type = e_bedrock_mem_rd;
         fsm_fwd_header_lo.addr = prefetch_addr_r[prefetch_issue_slot];
