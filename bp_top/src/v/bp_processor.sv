@@ -15,6 +15,7 @@ module bp_processor
  import bp_me_pkg::*;
  import bsg_noc_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter prefetch_bypass_p = 0
    `declare_bp_proc_params(bp_params_p)
 
    `declare_bp_bedrock_if_widths(paddr_width_p, lce_id_width_p, cce_id_width_p, did_width_p, lce_assoc_p)
@@ -50,6 +51,17 @@ module bp_processor
    , output logic                                                       mem_rev_v_o
    , input                                                              mem_rev_ready_and_i
 
+   // Optional direct path for detached dcache prefetches.
+   , output logic [mem_fwd_header_width_lp-1:0]                         prefetch_mem_fwd_header_o
+   , output logic [bedrock_fill_width_p-1:0]                            prefetch_mem_fwd_data_o
+   , output logic                                                       prefetch_mem_fwd_v_o
+   , input                                                              prefetch_mem_fwd_ready_and_i
+
+   , input [mem_rev_header_width_lp-1:0]                                prefetch_mem_rev_header_i
+   , input [bedrock_fill_width_p-1:0]                                   prefetch_mem_rev_data_i
+   , input                                                              prefetch_mem_rev_v_i
+   , output logic                                                       prefetch_mem_rev_ready_and_o
+
    // DRAM interface
    , output logic [num_cce_p-1:0][l2_dmas_p-1:0][dma_pkt_width_lp-1:0]  dma_pkt_o
    , output logic [num_cce_p-1:0][l2_dmas_p-1:0]                        dma_pkt_v_o
@@ -66,6 +78,11 @@ module bp_processor
 
   if (cce_type_p != e_cce_uce)
     begin : m
+
+      assign prefetch_mem_fwd_header_o = '0;
+      assign prefetch_mem_fwd_data_o = '0;
+      assign prefetch_mem_fwd_v_o = 1'b0;
+      assign prefetch_mem_rev_ready_and_o = 1'b0;
 
       `declare_bsg_ready_and_link_sif_s(mem_noc_flit_width_p, bp_mem_noc_ral_link_s);
       `declare_bsg_ready_and_link_sif_s(dma_noc_flit_width_p, bp_dma_noc_ral_link_s);
@@ -297,10 +314,11 @@ module bp_processor
   else
     begin : u
       bp_unicore
-       #(.bp_params_p(bp_params_p))
+       #(.bp_params_p(bp_params_p)
+         ,.prefetch_bypass_p(prefetch_bypass_p)
+         )
        unicore
         (.my_cord_i('0), .*);
     end
 
 endmodule
-

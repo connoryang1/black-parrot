@@ -26,6 +26,7 @@ module bp_unicore
  import bsg_noc_pkg::*;
  import bsg_cache_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter prefetch_bypass_p = 0
    `declare_bp_proc_params(bp_params_p)
 
    `declare_bp_bedrock_if_widths(paddr_width_p, lce_id_width_p, cce_id_width_p, did_width_p, lce_assoc_p)
@@ -62,6 +63,18 @@ module bp_unicore
    , output logic                                                         mem_rev_v_o
    , input                                                                mem_rev_ready_and_i
 
+   // Optional direct path for detached dcache prefetches. This path is only
+   // valid for full-line BedRock reads and bypasses the L2 cache slices.
+   , output logic [mem_fwd_header_width_lp-1:0]                           prefetch_mem_fwd_header_o
+   , output logic [bedrock_fill_width_p-1:0]                              prefetch_mem_fwd_data_o
+   , output logic                                                         prefetch_mem_fwd_v_o
+   , input                                                                prefetch_mem_fwd_ready_and_i
+
+   , input [mem_rev_header_width_lp-1:0]                                  prefetch_mem_rev_header_i
+   , input [bedrock_fill_width_p-1:0]                                     prefetch_mem_rev_data_i
+   , input                                                                prefetch_mem_rev_v_i
+   , output logic                                                         prefetch_mem_rev_ready_and_o
+
    // DRAM interface
    , output logic [l2_slices_p-1:0][l2_banks_p-1:0][dma_pkt_width_lp-1:0] dma_pkt_o
    , output logic [l2_slices_p-1:0][l2_banks_p-1:0]                       dma_pkt_v_o
@@ -95,7 +108,8 @@ module bp_unicore
   localparam clint_dev_id_lp    = cfg_dev_id_lp      + 1;
   localparam l2s_dev_base_id_lp = clint_dev_id_lp    + 1;
   localparam loopback_dev_id_lp = l2s_dev_base_id_lp + l2_slices_p;
-  localparam io_dev_id_lp       = loopback_dev_id_lp + 1;
+  localparam prefetch_dev_id_lp = loopback_dev_id_lp + 1;
+  localparam io_dev_id_lp       = prefetch_dev_id_lp + prefetch_bypass_p;
   localparam num_dev_lp         = io_dev_id_lp       + 1;
   localparam lg_num_dev_lp      = `BSG_SAFE_CLOG2(num_dev_lp);
 
@@ -169,8 +183,14 @@ module bp_unicore
       wire is_host_fwd     = is_my_core & is_local & (device_fwd_li == host_dev_gp);
 
       wire is_io_fwd       = is_host_fwd | is_other_hio | is_other_core;
-      wire is_l2s_fwd      = ~is_local & ~is_io_fwd;
-      wire is_loopback_fwd = ~is_cfg_fwd & ~is_clint_fwd & ~is_io_fwd & ~is_l2s_fwd;
+      wire is_dcache_prefetch_fwd = prefetch_bypass_p
+        && (i == dcache_proc_id_lp)
+        && proc_fwd_header_lo[i].payload.prefetch
+        && (proc_fwd_header_lo[i].msg_type == e_bedrock_mem_rd)
+        && ~is_local & ~is_io_fwd;
+      wire is_l2s_fwd      = ~is_local & ~is_io_fwd & ~is_dcache_prefetch_fwd;
+      wire is_loopback_fwd = ~is_cfg_fwd & ~is_clint_fwd & ~is_io_fwd
+        & ~is_l2s_fwd & ~is_dcache_prefetch_fwd;
 
       localparam lg_l2_slices_lp = `BSG_SAFE_CLOG2(l2_slices_p);
       logic [lg_l2_slices_lp-1:0] slice;
@@ -196,12 +216,26 @@ module bp_unicore
          ,.o(is_l2s_slice_fwd)
          );
 
-      wire [num_dev_lp-1:0] proc_fwd_dst_sel =
-        (is_cfg_fwd << cfg_dev_id_lp)
-        | (is_clint_fwd << clint_dev_id_lp)
-        | (is_l2s_slice_fwd << l2s_dev_base_id_lp)
-        | (is_loopback_fwd << loopback_dev_id_lp)
-        | (is_io_fwd << io_dev_id_lp);
+      logic [num_dev_lp-1:0] proc_fwd_dst_sel;
+      if (prefetch_bypass_p)
+        begin : prefetch_dst
+          assign proc_fwd_dst_sel =
+            (is_cfg_fwd << cfg_dev_id_lp)
+            | (is_clint_fwd << clint_dev_id_lp)
+            | (is_l2s_slice_fwd << l2s_dev_base_id_lp)
+            | (is_loopback_fwd << loopback_dev_id_lp)
+            | (is_dcache_prefetch_fwd << prefetch_dev_id_lp)
+            | (is_io_fwd << io_dev_id_lp);
+        end
+      else
+        begin : no_prefetch_dst
+          assign proc_fwd_dst_sel =
+            (is_cfg_fwd << cfg_dev_id_lp)
+            | (is_clint_fwd << clint_dev_id_lp)
+            | (is_l2s_slice_fwd << l2s_dev_base_id_lp)
+            | (is_loopback_fwd << loopback_dev_id_lp)
+            | (is_io_fwd << io_dev_id_lp);
+        end
 
       bsg_encode_one_hot
        #(.width_p(num_dev_lp), .lo_to_hi_p(1))
@@ -363,6 +397,26 @@ module bp_unicore
   assign dev_rev_v_lo[io_dev_id_lp] = mem_rev_v_i;
   assign mem_rev_ready_and_o = dev_rev_ready_and_li[io_dev_id_lp];
 
+  if (prefetch_bypass_p)
+    begin : prefetch_bypass
+      assign prefetch_mem_fwd_header_o = dev_fwd_header_li[prefetch_dev_id_lp];
+      assign prefetch_mem_fwd_data_o = dev_fwd_data_li[prefetch_dev_id_lp];
+      assign prefetch_mem_fwd_v_o = dev_fwd_v_li[prefetch_dev_id_lp];
+      assign dev_fwd_ready_and_lo[prefetch_dev_id_lp] = prefetch_mem_fwd_ready_and_i;
+
+      assign dev_rev_header_lo[prefetch_dev_id_lp] = prefetch_mem_rev_header_i;
+      assign dev_rev_data_lo[prefetch_dev_id_lp] = prefetch_mem_rev_data_i;
+      assign dev_rev_v_lo[prefetch_dev_id_lp] = prefetch_mem_rev_v_i;
+      assign prefetch_mem_rev_ready_and_o = dev_rev_ready_and_li[prefetch_dev_id_lp];
+    end
+  else
+    begin : no_prefetch_bypass
+      assign prefetch_mem_fwd_header_o = '0;
+      assign prefetch_mem_fwd_data_o = '0;
+      assign prefetch_mem_fwd_v_o = 1'b0;
+      assign prefetch_mem_rev_ready_and_o = 1'b0;
+    end
+
   bp_me_loopback
    #(.bp_params_p(bp_params_p))
    loopback
@@ -381,4 +435,3 @@ module bp_unicore
      );
 
 endmodule
-
