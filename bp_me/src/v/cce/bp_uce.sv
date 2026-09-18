@@ -1019,7 +1019,10 @@ module bp_uce
       end
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
-      if (prefetch_response & fsm_rev_last_li) begin
+      // Keep the slot reserved while the final beat is backpressured.  The
+      // reverse pump holds that beat stable until both L1 writes accept it;
+      // retiring on visibility alone loses the slot before the retry.
+      if (prefetch_response_yumi & fsm_rev_last_li) begin
         for (int i = 0; i < prefetch_els_p; i++) begin
           if (prefetch_response_match[i]) begin
             prefetch_valid_r[i] <= 1'b0;
