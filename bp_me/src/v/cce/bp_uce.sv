@@ -984,9 +984,9 @@ module bp_uce
       prefetch_valid_r <= '0;
       prefetch_sent_r <= '0;
       prefetch_way_v_r <= '0;
-      prefetch_addr_r <= '0;
-      prefetch_way_r <= '0;
-      prefetch_fill_count_r <= '0;
+      // Payload is written before its corresponding valid bit permits use.
+      // Leaving it unreset avoids dedicating resettable FPGA flops to every
+      // detached slot and improves packing at larger queue depths.
       prefetch_metadata_pending_v_r <= 1'b0;
       prefetch_metadata_pending_allocated_r <= 1'b0;
       prefetch_metadata_pending_slot_r <= '0;
@@ -1021,7 +1021,6 @@ module bp_uce
         prefetch_valid_r[prefetch_response_slot] <= 1'b0;
         prefetch_sent_r[prefetch_response_slot] <= 1'b0;
         prefetch_way_v_r[prefetch_response_slot] <= 1'b0;
-        prefetch_fill_count_r[prefetch_response_slot] <= '0;
       end else if (prefetch_response_yumi) begin
         prefetch_fill_count_r[prefetch_response_slot]
           <= prefetch_fill_count_r[prefetch_response_slot] + 1'b1;
