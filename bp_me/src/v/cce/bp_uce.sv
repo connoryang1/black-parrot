@@ -120,18 +120,23 @@ module bp_uce
 
   wire prefetch_v_li = prefetch_p & cache_req_v_i
     & (cache_req_cast_i.msg_type == e_cache_prefetch);
-  logic [prefetch_els_p-1:0] prefetch_valid_r, prefetch_sent_r;
+  logic [prefetch_els_p-1:0] prefetch_valid_r, prefetch_sent_r, prefetch_way_v_r;
   logic [prefetch_els_p-1:0][paddr_width_p-1:0] prefetch_addr_r;
   logic [prefetch_els_p-1:0][`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_way_r;
   logic [prefetch_els_p-1:0][fill_cnt_width_lp-1:0] prefetch_fill_count_r;
   logic [prefetch_els_p-1:0] prefetch_response_match;
-  logic prefetch_free_v, prefetch_issue_v;
+  logic prefetch_free_v, prefetch_issue_v, prefetch_duplicate_v;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
   logic prefetch_demand_match;
   logic prefetch_issue, prefetch_response, prefetch_response_yumi;
   logic [prefetch_slot_width_lp-1:0] prefetch_response_slot;
-  wire prefetch_allocate = cache_req_yumi_o & prefetch_v_li & prefetch_free_v;
-  wire prefetch_drop = cache_req_yumi_o & prefetch_v_li & ~prefetch_free_v;
+  logic prefetch_metadata_pending_v_r, prefetch_metadata_pending_allocated_r;
+  logic [prefetch_slot_width_lp-1:0] prefetch_metadata_pending_slot_r;
+  wire prefetch_metadata_can_accept = ~prefetch_metadata_pending_v_r
+    | cache_req_metadata_v_i;
+  wire prefetch_accept = cache_req_yumi_o & prefetch_v_li;
+  wire prefetch_allocate = prefetch_accept & prefetch_free_v & ~prefetch_duplicate_v;
+  wire prefetch_drop = prefetch_accept & (~prefetch_free_v | prefetch_duplicate_v);
 
   // Slots remain reserved until the final response, including across context
   // redirects. A following demand waits behind a hint to that same physical
@@ -141,19 +146,23 @@ module bp_uce
     prefetch_free_slot = '0;
     prefetch_issue_v = 1'b0;
     prefetch_issue_slot = '0;
+    prefetch_duplicate_v = 1'b0;
     prefetch_demand_match = 1'b0;
     for (int i = prefetch_els_p-1; i >= 0; i--) begin
       if (!prefetch_valid_r[i]) begin
         prefetch_free_v = 1'b1;
         prefetch_free_slot = prefetch_slot_width_lp'(i);
       end
-      if (prefetch_valid_r[i] & ~prefetch_sent_r[i]) begin
+      if (prefetch_valid_r[i] & prefetch_way_v_r[i] & ~prefetch_sent_r[i]) begin
         prefetch_issue_v = 1'b1;
         prefetch_issue_slot = prefetch_slot_width_lp'(i);
       end
       prefetch_demand_match |= prefetch_valid_r[i]
         & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
            == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
+      prefetch_duplicate_v |= prefetch_valid_r[i]
+        & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
+           == cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp]);
     end
   end
   always_comb begin
@@ -230,7 +239,8 @@ module bp_uce
      ,.reset_i(reset_i)
 
      ,.data_i(cache_req_metadata_cast_i)
-     ,.v_i(cache_req_metadata_v_i & (cache_req_metadata_v_r | ~cache_req_done))
+     ,.v_i(cache_req_metadata_v_i & ~prefetch_metadata_pending_v_r
+           & (cache_req_metadata_v_r | ~cache_req_done))
      ,.ready_param_o(/* Follows cache req fifo */)
 
      ,.data_o(cache_req_metadata_r)
@@ -367,9 +377,8 @@ module bp_uce
     & fsm_rev_header_li.payload.prefetch
     & (fsm_rev_header_li.msg_type == e_bedrock_mem_rd);
   for (genvar i = 0; i < prefetch_els_p; i++) begin : gen_prefetch_response_match
-    // Prefetches do not install coherence state. Combine that otherwise-unused
-    // echoed field with way_id to identify slots beyond cache associativity.
-    // A one-hot decoder avoids both a wide address CAM and an indexed mux.
+    // The backend returns the original line address with every fill beat. Hints
+    // to an already-reserved line are dropped, so this CAM must be one-hot.
     assign prefetch_response_match[i] = prefetch_valid_r[i]
       & prefetch_sent_r[i]
       & (fsm_rev_addr_li[paddr_width_p-1:block_offset_width_lp]
@@ -680,7 +689,7 @@ module bp_uce
             if (prefetch_v_li) begin
               // A prefetch is advisory: acknowledge and drop it when all
               // slots are reserved instead of stalling architectural work.
-              cache_req_yumi_o = ~cache_req_v_r;
+              cache_req_yumi_o = ~cache_req_v_r & prefetch_metadata_can_accept;
             end else begin
             cache_req_yumi_o = cache_req_v_i & cache_req_ready_lo & (~cache_req_v_r | nonblocking_v_li);
 
@@ -924,7 +933,9 @@ module bp_uce
       // into the slot table even while the serialized demand FSM is waiting
       // for a refill; otherwise the dcache holds the hint at its request
       // interface and no second transaction can ever be in flight.
-      if (prefetch_v_li & prefetch_free_v & ~is_reset & ~is_init)
+      if (prefetch_v_li & (prefetch_free_v | prefetch_duplicate_v)
+          & prefetch_metadata_can_accept
+          & ~is_reset & ~is_init)
         cache_req_yumi_o = 1'b1;
 
       // Fire off a non-blocking request opportunistically if we have one
@@ -977,15 +988,33 @@ module bp_uce
     if (reset_i) begin
       prefetch_valid_r <= '0;
       prefetch_sent_r <= '0;
+      prefetch_way_v_r <= '0;
       prefetch_addr_r <= '0;
       prefetch_way_r <= '0;
       prefetch_fill_count_r <= '0;
+      prefetch_metadata_pending_v_r <= 1'b0;
+      prefetch_metadata_pending_allocated_r <= 1'b0;
+      prefetch_metadata_pending_slot_r <= '0;
     end else begin
+      if (cache_req_metadata_v_i & prefetch_metadata_pending_v_r) begin
+        prefetch_metadata_pending_v_r <= 1'b0;
+        if (prefetch_metadata_pending_allocated_r) begin
+          prefetch_way_r[prefetch_metadata_pending_slot_r]
+            <= cache_req_metadata_cast_i.hit_or_repl_way;
+          prefetch_way_v_r[prefetch_metadata_pending_slot_r] <= 1'b1;
+        end
+      end
+      if (prefetch_accept) begin
+        prefetch_metadata_pending_v_r <= 1'b1;
+        prefetch_metadata_pending_allocated_r
+          <= prefetch_free_v & ~prefetch_duplicate_v;
+        prefetch_metadata_pending_slot_r <= prefetch_free_slot;
+      end
       if (prefetch_allocate) begin
         prefetch_valid_r[prefetch_free_slot] <= 1'b1;
         prefetch_sent_r[prefetch_free_slot] <= 1'b0;
+        prefetch_way_v_r[prefetch_free_slot] <= 1'b0;
         prefetch_addr_r[prefetch_free_slot] <= {cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp], block_offset_width_lp'(0)};
-        prefetch_way_r[prefetch_free_slot] <= cache_req_cast_i.id[0+:`BSG_SAFE_CLOG2(assoc_p)];
         prefetch_fill_count_r[prefetch_free_slot] <= '0;
       end
       if (prefetch_issue)
@@ -995,6 +1024,7 @@ module bp_uce
           if (prefetch_response_match[i]) begin
             prefetch_valid_r[i] <= 1'b0;
             prefetch_sent_r[i] <= 1'b0;
+            prefetch_way_v_r[i] <= 1'b0;
             prefetch_fill_count_r[i] <= '0;
           end
         end
