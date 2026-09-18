@@ -42,7 +42,10 @@ module bp_fe_ras
   localparam ras_els_lp = 2**ras_idx_width_p;
   logic [`BSG_WIDTH(ras_els_lp)-1:0] init_cnt;
   bsg_counter_clear_up
-   #(.max_val_p(ras_els_lp), .init_val_p(0))
+   #(.max_val_p(ras_els_lp)
+     ,.init_val_p(0)
+     ,.disable_overflow_warning_p(1'b1)
+     )
    init_counter
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
@@ -113,4 +116,3 @@ module bp_fe_ras
   assign v_o = 1'b1;
 
 endmodule
-

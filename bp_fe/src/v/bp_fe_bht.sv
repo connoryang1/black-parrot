@@ -58,7 +58,10 @@ module bp_fe_bht
   localparam bht_init_lp = 2'b01;
   logic [`BSG_WIDTH(bht_els_lp)-1:0] init_cnt;
   bsg_counter_clear_up
-   #(.max_val_p(bht_els_lp), .init_val_p(0))
+   #(.max_val_p(bht_els_lp)
+     ,.init_val_p(0)
+     ,.disable_overflow_warning_p(1'b1)
+     )
    init_counter
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
@@ -141,4 +144,3 @@ module bp_fe_bht
   assign r_pred_o = r_val_o[pred_bit_lo];
 
 endmodule
-

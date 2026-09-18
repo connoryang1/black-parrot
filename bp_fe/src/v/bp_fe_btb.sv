@@ -61,7 +61,10 @@ module bp_fe_btb
   localparam addr_width_lp = `BSG_SAFE_CLOG2(btb_els_lp);
   logic [`BSG_WIDTH(btb_els_lp)-1:0] init_cnt;
   bsg_counter_clear_up
-   #(.max_val_p(btb_els_lp), .init_val_p(0))
+   #(.max_val_p(btb_els_lp)
+     ,.init_val_p(0)
+     ,.disable_overflow_warning_p(1'b1)
+     )
    init_counter
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
@@ -161,4 +164,3 @@ module bp_fe_btb
   assign r_tgt_o     = r_data_lo.tgt;
 
 endmodule
-
