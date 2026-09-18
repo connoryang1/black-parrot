@@ -124,12 +124,13 @@ module bp_uce
   logic [prefetch_els_p-1:0][paddr_width_p-1:0] prefetch_addr_r;
   logic [prefetch_els_p-1:0][`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_way_r;
   logic [prefetch_els_p-1:0][fill_cnt_width_lp-1:0] prefetch_fill_count_r;
-  logic [prefetch_els_p-1:0] prefetch_response_match;
   logic prefetch_free_v, prefetch_issue_v, prefetch_duplicate_v;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
   logic prefetch_demand_match;
   logic prefetch_issue, prefetch_response, prefetch_response_yumi;
   logic [prefetch_slot_width_lp-1:0] prefetch_response_slot;
+  logic [prefetch_id_width_lp-1:0] prefetch_response_id;
+  logic prefetch_response_id_v;
   logic prefetch_metadata_pending_v_r, prefetch_metadata_pending_allocated_r;
   logic [prefetch_slot_width_lp-1:0] prefetch_metadata_pending_slot_r;
   wire prefetch_metadata_can_accept = ~prefetch_metadata_pending_v_r
@@ -165,12 +166,10 @@ module bp_uce
            == cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp]);
     end
   end
-  always_comb begin
-    prefetch_response_slot = '0;
-    for (int i = 0; i < prefetch_els_p; i++)
-      if (prefetch_response_match[i])
-        prefetch_response_slot = prefetch_slot_width_lp'(i);
-  end
+  assign prefetch_response_id = {fsm_rev_header_li.payload.state
+                                 ,fsm_rev_header_li.payload.way_id};
+  assign prefetch_response_slot = prefetch_response_id[0+:prefetch_slot_width_lp];
+  assign prefetch_response_id_v = prefetch_response_id < prefetch_els_p;
 
   enum logic [4:0] {
     e_reset
@@ -373,18 +372,14 @@ module bp_uce
   wire store_resp_v_li  = fsm_rev_v_li & fsm_rev_header_li.msg_type inside {e_bedrock_mem_wr};
   wire load_resp_v_li   = fsm_rev_v_li & ~fsm_rev_header_li.payload.prefetch
     & fsm_rev_header_li.msg_type inside {e_bedrock_mem_rd, e_bedrock_mem_amo};
-  assign prefetch_response = prefetch_p & fsm_rev_v_li
+  wire prefetch_response_header = prefetch_p & fsm_rev_v_li
     & fsm_rev_header_li.payload.prefetch
     & (fsm_rev_header_li.msg_type == e_bedrock_mem_rd);
-  for (genvar i = 0; i < prefetch_els_p; i++) begin : gen_prefetch_response_match
-    // The backend returns the original line address with every fill beat. Hints
-    // to an already-reserved line are dropped, so this CAM must be one-hot.
-    assign prefetch_response_match[i] = prefetch_valid_r[i]
-      & prefetch_sent_r[i]
-      & (fsm_rev_addr_li[paddr_width_p-1:block_offset_width_lp]
-         == prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]);
-  end
-
+  assign prefetch_response = prefetch_response_header & prefetch_response_id_v
+    & (prefetch_response_id_v
+       ? prefetch_valid_r[prefetch_response_slot]
+         & prefetch_sent_r[prefetch_response_slot]
+       : 1'b0);
   wire miss_load_v_r   = cache_req_v_r & cache_req_r.msg_type inside {e_miss_load};
   wire miss_store_v_r  = cache_req_v_r & cache_req_r.msg_type inside {e_miss_store};
   wire miss_v_r        = cache_req_v_r & miss_load_v_r | miss_store_v_r;
@@ -1023,14 +1018,10 @@ module bp_uce
       // reverse pump holds that beat stable until both L1 writes accept it;
       // retiring on visibility alone loses the slot before the retry.
       if (prefetch_response_yumi & fsm_rev_last_li) begin
-        for (int i = 0; i < prefetch_els_p; i++) begin
-          if (prefetch_response_match[i]) begin
-            prefetch_valid_r[i] <= 1'b0;
-            prefetch_sent_r[i] <= 1'b0;
-            prefetch_way_v_r[i] <= 1'b0;
-            prefetch_fill_count_r[i] <= '0;
-          end
-        end
+        prefetch_valid_r[prefetch_response_slot] <= 1'b0;
+        prefetch_sent_r[prefetch_response_slot] <= 1'b0;
+        prefetch_way_v_r[prefetch_response_slot] <= 1'b0;
+        prefetch_fill_count_r[prefetch_response_slot] <= '0;
       end else if (prefetch_response_yumi) begin
         prefetch_fill_count_r[prefetch_response_slot]
           <= prefetch_fill_count_r[prefetch_response_slot] + 1'b1;
@@ -1039,17 +1030,16 @@ module bp_uce
   end
 
   // synopsys translate_off
-  always_ff @(negedge clk_i) if (!reset_i && prefetch_response) begin
-    assert ($onehot(prefetch_response_match)
+  always_ff @(negedge clk_i) if (!reset_i && prefetch_response_header) begin
+    assert (prefetch_response_id_v
+      && prefetch_valid_r[prefetch_response_slot]
+      && prefetch_sent_r[prefetch_response_slot]
       && (fsm_rev_header_li.size == block_msg_size_lp
           || fsm_rev_header_li.size == e_bedrock_msg_size_8))
+      else $error("UCE prefetch response has no live slot");
+    assert (prefetch_response_id_v
+      && fsm_rev_header_li.addr == prefetch_addr_r[prefetch_response_slot])
       else $error("UCE prefetch response address does not match its slot");
-    for (int i = 0; i < prefetch_els_p; i++) begin
-      if (prefetch_response_match[i]) begin
-        assert (fsm_rev_header_li.addr == prefetch_addr_r[i])
-          else $error("UCE prefetch response address does not match its slot");
-      end
-    end
   end
   initial assert (prefetch_els_p > 0 && prefetch_els_p <= (1 << prefetch_id_width_lp))
     else $error("UCE prefetch queue exceeds the echoed response identifier capacity");
