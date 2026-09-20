@@ -686,7 +686,14 @@ module bp_uce
               // slots are reserved instead of stalling architectural work.
               cache_req_yumi_o = ~cache_req_v_r & prefetch_metadata_can_accept;
             end else begin
-            cache_req_yumi_o = cache_req_v_i & cache_req_ready_lo & (~cache_req_v_r | nonblocking_v_li);
+            // Keep a same-line demand miss at the LCE request boundary while
+            // its detached hint is live.  The dcache recomputes its tag hit
+            // while the request is held; once the hint publishes the line,
+            // the miss withdraws instead of entering the UCE with stale miss
+            // metadata and issuing a duplicate refill.
+            cache_req_yumi_o = cache_req_v_i & cache_req_ready_lo
+              & (~cache_req_v_r | nonblocking_v_li)
+              & ~((miss_load_v_li | miss_store_v_li) & prefetch_duplicate_v);
 
             state_n = cache_req_yumi_o
                       ? (flush_v_li | clean_v_li)
