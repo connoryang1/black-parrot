@@ -408,7 +408,12 @@ module bp_be_top
   assign context_cache_bulk_swap_v_li = 1'b0;
   assign context_cache_bulk_swap_w_mask_li = '0;
   assign context_cache_bulk_swap_w_data_li = '0;
-  assign context_cache_line_w_v_li = (context_cache_state_r == e_context_cache_save_restore_regs)
+  wire context_cache_restore_required = (|physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r])
+                                        || (|virtual_context_int_dirty_r[context_cache_target_virtual_context_id_r]);
+  assign context_cache_line_w_v_li = ((context_cache_state_r == e_context_cache_save_restore_regs)
+                                      || ((context_cache_state_r == e_context_cache_wait_drain)
+                                          && context_cache_drain_safe_li
+                                          && context_cache_restore_required))
                                      & context_mem_int_restore_line_v_r[context_mem_int_restore_install_line_r];
   assign context_cache_line_index_li = context_mem_int_restore_install_line_r;
   assign context_cache_line_data_li =
@@ -1003,6 +1008,8 @@ module bp_be_top
                                             ? (physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
                                                | virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r])
                                             : '0;
+          if (context_cache_line_w_v_li)
+            context_mem_int_restore_install_line_r <= context_mem_int_restore_install_line_r + 1'b1;
           context_cache_state_r <= context_cache_drain_safe_li
                                    ? ((!context_cache_fp_copy_v_li)
                                       && !((|physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r])
