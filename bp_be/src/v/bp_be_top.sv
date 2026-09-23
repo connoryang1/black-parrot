@@ -306,7 +306,7 @@ module bp_be_top
   // takes the context-cache install path, so initialize its inactive physical
   // bank at that same committed seed. Existing contexts keep their own CSRs
   // when reseeded; a self-seed must not restore over its retiring instruction.
-  wire csr_context_cache_restore_v_li = context_cache_state_r == e_context_cache_launch_fe;
+  wire csr_context_cache_restore_v_li = context_cache_launch_v_li;
   wire csr_context_resident_init_v_li = ctx_npc_write_resident_v_li
     && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
     && (ctx_npc_write_physical_thread_id_li < num_threads_p)
@@ -430,7 +430,18 @@ module bp_be_top
                                   & fe_ctxtsw_ready_i
                                   & ~pending_ctxtsw_v_r;
   assign context_cache_commit_v_li = commit_pkt.ctxtsw & context_cache_miss_pending_r;
-  assign context_cache_launch_v_li = context_cache_state_r == e_context_cache_launch_fe;
+  // The FE captures this payload into its pending redirect register.  It cannot
+  // fetch the target until the following cycle, so capture may share the edge
+  // that installs the final integer line and the matching CSR/slot metadata.
+  // FP restores retain their existing tail, and issue stays blocked through done.
+  wire context_cache_final_int_launch_li =
+    (context_cache_state_r == e_context_cache_save_restore_regs)
+    & context_mem_int_restore_line_v_r[context_mem_int_restore_install_line_r]
+    & (context_mem_int_restore_install_line_r
+       == context_mem_line_index_width_lp'(context_mem_line_count_lp-1))
+    & ~(|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r);
+  assign context_cache_launch_v_li = (context_cache_state_r == e_context_cache_launch_fe)
+                                    | context_cache_final_int_launch_li;
   assign context_cache_active_li = context_cache_state_r != e_context_cache_idle;
   assign context_cache_dcache_v_li = context_cache_int_l1_req_v_r;
   assign context_cache_dcache_w_li = context_cache_int_l1_req_w_r;
@@ -604,7 +615,7 @@ module bp_be_top
       end
       for (int i = 0; i < num_threads_p; i++)
         physical_thread_context_id_r[i] <= context_id_width_p'(i);
-    end else if (context_cache_state_r == e_context_cache_launch_fe) begin
+    end else if (context_cache_launch_v_li) begin
       virtual_context_resident_v_r[context_cache_victim_virtual_context_id_r] <= 1'b0;
       virtual_context_resident_v_r[context_cache_target_virtual_context_id_r] <= 1'b1;
       virtual_context_slot_r[context_cache_target_virtual_context_id_r] <= context_cache_victim_physical_thread_id_r;
@@ -630,7 +641,7 @@ module bp_be_top
       current_physical_thread_id_lo <= '0;
       current_virtual_context_id_r <= '0;
     end
-    else if (context_cache_state_r == e_context_cache_launch_fe) begin
+    else if (context_cache_launch_v_li) begin
       current_physical_thread_id_lo <= context_cache_victim_physical_thread_id_r;
       current_virtual_context_id_r <= context_cache_target_virtual_context_id_r;
     end
@@ -766,7 +777,7 @@ module bp_be_top
         end
       end
 
-      if (context_cache_state_r == e_context_cache_launch_fe) begin
+      if (context_cache_launch_v_li) begin
         context_npc_r[context_cache_victim_physical_thread_id_r]
           <= virtual_context_npc_r[context_cache_target_virtual_context_id_r];
         context_priv_mode_r[context_cache_victim_physical_thread_id_r]
@@ -954,7 +965,7 @@ module bp_be_top
         if (physical_thread_context_id_r[iwb_pkt.thread_id] < num_contexts_p)
           virtual_context_int_dirty_r[physical_thread_context_id_r[iwb_pkt.thread_id]][iwb_pkt.rd_addr] <= 1'b1;
       end
-      if (context_cache_state_r == e_context_cache_launch_fe) begin
+      if (context_cache_launch_v_li) begin
         physical_thread_fp_dirty_r[context_cache_victim_physical_thread_id_r]
           <= virtual_context_fp_dirty_r[context_cache_target_virtual_context_id_r];
         physical_thread_int_dirty_r[context_cache_victim_physical_thread_id_r]
@@ -1025,13 +1036,14 @@ module bp_be_top
         e_context_cache_save_restore_regs: begin
           // Install the two prefetched lines only after the victim is drained.
           // The final line is written on the same edge that advances the FSM,
-          // so frontend launch still cannot observe partial register state.
+          // together with FE payload capture when no FP restore remains.
           if (context_cache_line_w_v_li) begin
             if (context_mem_int_restore_install_line_r
                 == context_mem_line_index_width_lp'(context_mem_line_count_lp-1))
               context_cache_state_r <= (|context_cache_fp_save_mask_r | |context_cache_fp_restore_mask_r)
                                        ? e_context_cache_save_restore_fp_regs
-                                       : e_context_cache_launch_fe;
+                                       : (fe_ctxtsw_yumi_i ? e_context_cache_done
+                                                          : e_context_cache_launch_fe);
             else
               context_mem_int_restore_install_line_r
                 <= context_mem_int_restore_install_line_r + 1'b1;
