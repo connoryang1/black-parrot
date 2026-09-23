@@ -741,14 +741,16 @@ module bp_be_calculator_top
           exc_stage_n[0].spec                     |= dispatch_pkt_cast_i.special;
           exc_stage_n[0].exc                      |= dispatch_pkt_cast_i.exception;
 
-          exc_stage_n[0].v                        &= (~pipe_flush_v | dispatch_pkt_cast_i.nspec_v)
-                                                     & ~commit_pkt_cast_o.ctxtsw;
-          exc_stage_n[1].v                        &= (~pipe_flush_v | exc_stage_r[0].nspec_v)
-                                                     & ~commit_pkt_cast_o.ctxtsw;
-          exc_stage_n[2].v                        &= (~pipe_flush_v | exc_stage_r[1].nspec_v)
-                                                     & ~commit_pkt_cast_o.ctxtsw;
+          // Injected completions belong to already-retired instructions and
+          // retain their source thread ID. A switch must drain these writes,
+          // including an injection accepted on its commit edge, before reuse
+          // of the physical bank. Flush speculative instructions, not nspec
+          // work; otherwise the accepted result is lost before writeback.
+          exc_stage_n[0].v                        &= (~pipe_flush_v | dispatch_pkt_cast_i.nspec_v);
+          exc_stage_n[1].v                        &= (~pipe_flush_v | exc_stage_r[0].nspec_v);
+          exc_stage_n[2].v                        &= (~pipe_flush_v | exc_stage_r[1].nspec_v);
           exc_stage_n[3].v                        &= (commit_pkt_cast_o.instret | exc_stage_r[2].nspec_v)
-                                                     & ~commit_pkt_cast_o.ctxtsw;
+                                                     & (~commit_pkt_cast_o.ctxtsw | exc_stage_r[2].nspec_v);
 
           exc_stage_n[0].queue_v                  &= ~pipe_flush_v;
           exc_stage_n[1].queue_v                  &= ~pipe_flush_v;
