@@ -141,6 +141,7 @@ module bp_be_dcache
    , output logic                                    ptw_o
    , output logic                                    ret_o
    , output logic                                    late_o
+   , output logic                                    prefetch_replay_o
 
    // Cache Engine Interface
    // This is considered the "slow path", handling uncached requests
@@ -730,6 +731,7 @@ module bp_be_dcache
   wire prefetch_req = v_tv_r & decode_tv_r.prefetch_op & ~load_hit_tv
     & ~uncached_tv_r & ~snoop_tv_r
     & features_p[e_cfg_writeback];
+  assign prefetch_replay_o = prefetch_req & ~cache_req_yumi_i;
   assign cache_req_v_o = is_ready & (blocking_req | nonblocking_req | prefetch_req);
 
   assign blocking_hazard    = cache_req_v_o & blocking_req;
@@ -1063,7 +1065,9 @@ module bp_be_dcache
   logic [assoc_p-1:0] dirty_mask_lo;
   if (features_p[e_cfg_writeback])
     begin : tdm
-      wire dirty_mask_v_li = stat_mem_slow_write || (v_tv_r & decode_tv_r.store_op);
+      wire dirty_mask_v_li = (stat_mem_slow_write
+                              & (stat_mem_pkt_cast_i.opcode != e_cache_stat_mem_set_lru))
+                             || (v_tv_r & decode_tv_r.store_op);
       wire [lg_assoc_lp-1:0] dirty_mask_way_li = v_tv_r ? store_hit_way_tv : stat_mem_pkt_cast_i.way_id;
       bsg_decode_with_v
        #(.num_out_p(assoc_p))
@@ -1091,6 +1095,11 @@ module bp_be_dcache
         begin
           stat_mem_data_li = '0;
           stat_mem_mask_li = '{lru: '0, dirty: dirty_mask_lo};
+        end
+      {1'b0, e_cache_stat_mem_set_lru}:
+        begin
+          stat_mem_data_li = '{lru: lru_decode_data_lo, dirty: '0};
+          stat_mem_mask_li = '{lru: lru_decode_mask_lo, dirty: '0};
         end
       default : // v_tv_r
         begin

@@ -136,7 +136,8 @@ module bp_be_pipe_mem
   wire [rv64_eaddr_width_gp-1:0] eaddr = rs1 + imm;
 
   // Preserve the hint's identity at both the MMU response and early-retire
-  // stages. A dropped hint still retires, without a miss, replay, or trap.
+  // stages. Unsupported translations and hot hints remain nonfaulting no-ops;
+  // a permitted cold hint rejected by a transient cache conflict replays.
   logic prefetch_mmu_r, prefetch_early_r;
   bsg_dff_reset
    #(.width_p(2))
@@ -326,6 +327,7 @@ module bp_be_pipe_mem
   logic [reg_addr_width_gp-1:0] dcache_rd_addr;
   logic [thread_id_width_p-1:0] dcache_thread_id;
   logic dcache_unsigned, dcache_int, dcache_float, dcache_ptw, dcache_ret, dcache_late;
+  logic dcache_prefetch_replay;
   logic dcache_busy_lo, dcache_ordered_lo;
   wire [dword_width_gp-1:0] dcache_st_data = context_cache_dcache_ptag_v_r
                                              ? context_cache_dcache_data_r
@@ -361,6 +363,7 @@ module bp_be_pipe_mem
      ,.ptw_o(dcache_ptw)
      ,.ret_o(dcache_ret)
      ,.late_o(dcache_late)
+     ,.prefetch_replay_o(dcache_prefetch_replay)
 
      // D$-LCE Interface
      ,.cache_req_o(cache_req_cast_o)
@@ -403,7 +406,8 @@ module bp_be_pipe_mem
                              & early_v_r & ~prefetch_early_r
                              & ~(dcache_v |  dcache_late) &  cache_req_yumi_i;
   assign cache_replay_v_o = ~context_cache_dcache_resp_pending_r
-                             & early_v_r & ~prefetch_early_r
+                             & early_v_r
+                             & (~prefetch_early_r | dcache_prefetch_replay)
                              & ~(dcache_v & ~dcache_late) & ~cache_req_yumi_i;
 
   bp_be_int_reg_s dcache_idata;

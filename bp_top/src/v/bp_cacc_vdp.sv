@@ -158,6 +158,7 @@ module bp_cacc_vdp
      ,.ptw_o()
      ,.ret_o()
      ,.late_o()
+     ,.prefetch_replay_o()
      ,.tag_o()
      ,.unsigned_o()
 

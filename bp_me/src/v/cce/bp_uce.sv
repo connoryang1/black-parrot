@@ -133,11 +133,39 @@ module bp_uce
   logic prefetch_response_id_v;
   logic prefetch_metadata_pending_v_r, prefetch_metadata_pending_allocated_r;
   logic [prefetch_slot_width_lp-1:0] prefetch_metadata_pending_slot_r;
+  logic [assoc_p-1:0] prefetch_reserved_ways;
+  logic prefetch_reserved_way_available;
+  logic [`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_reserved_way;
   wire prefetch_metadata_can_accept = ~prefetch_metadata_pending_v_r
     | cache_req_metadata_v_i;
   wire prefetch_accept = cache_req_yumi_o & prefetch_v_li;
   wire prefetch_allocate = prefetch_accept & prefetch_free_v & ~prefetch_duplicate_v;
   wire prefetch_drop = prefetch_accept & (~prefetch_free_v | prefetch_duplicate_v);
+
+  // The cache replacement metadata is computed independently for each hint.
+  // Prevent multiple outstanding fills to the same set from reserving the
+  // same victim way. Prefer the cache's replacement choice, then take the
+  // lowest unreserved way. Publication updates LRU so subsequent ordinary
+  // replacement observes the installed line as recently used.
+  always_comb begin
+    prefetch_reserved_ways = '0;
+    for (int i = 0; i < prefetch_els_p; i++) begin
+      if (prefetch_valid_r[i] & prefetch_way_v_r[i]
+          & (prefetch_slot_width_lp'(i) != prefetch_metadata_pending_slot_r)
+          & (prefetch_addr_r[i][block_offset_width_lp+:index_width_lp]
+             == prefetch_addr_r[prefetch_metadata_pending_slot_r][block_offset_width_lp+:index_width_lp]))
+        prefetch_reserved_ways[prefetch_way_r[i]] = 1'b1;
+    end
+    prefetch_reserved_way = cache_req_metadata_cast_i.hit_or_repl_way;
+    prefetch_reserved_way_available
+      = ~prefetch_reserved_ways[cache_req_metadata_cast_i.hit_or_repl_way];
+    for (int i = 0; i < assoc_p; i++) begin
+      if (!prefetch_reserved_way_available && !prefetch_reserved_ways[i]) begin
+        prefetch_reserved_way = way_width_lp'(i);
+        prefetch_reserved_way_available = 1'b1;
+      end
+    end
+  end
 
   // Slots remain reserved until the final response, including across context
   // redirects. A following demand waits behind a hint to that same physical
@@ -460,10 +488,10 @@ module bp_uce
   wire [`BSG_WIDTH(coh_noc_max_credits_p)-1:0] prefetch_sent_count
     = `BSG_WIDTH(coh_noc_max_credits_p)'($countones(prefetch_sent_r));
 
-  // A replacement way chosen when a hint is issued is not a reservation:
-  // stores and ordinary fills may change it while memory is outstanding.
-  // Validate the current victim under a short cache lock when the reply arrives.
-  // Dirty or busy replies are advisory and can be drained without touching L1.
+  // Detached hints reserve distinct ways relative to one another, but stores
+  // and ordinary fills may change the set while memory is outstanding. Validate
+  // the current victim under a short cache lock when the reply arrives. An
+  // unsafe reply remains advisory and can be drained without touching L1.
   typedef enum logic [2:0] {
     e_pf_idle, e_pf_drain, e_pf_read_stat, e_pf_check_stat,
     e_pf_invalidate, e_pf_fill, e_pf_publish, e_pf_drop
@@ -475,13 +503,67 @@ module bp_uce
   bp_cache_stat_info_s prefetch_install_stat;
   assign prefetch_install_stat = stat_mem_i;
 
+  logic [assoc_p-1:0] prefetch_install_reserved_ways;
+  logic prefetch_install_way_available;
+  logic [`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_install_way;
+  logic [`BSG_SAFE_MINUS(assoc_p, 2):0] prefetch_install_lru_modify_mask;
+  logic [`BSG_SAFE_MINUS(assoc_p, 2):0] prefetch_install_lru_modify_data;
+  logic [`BSG_SAFE_MINUS(assoc_p, 2):0] prefetch_install_lru;
+  logic [`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_install_lru_way;
+
+  bsg_lru_pseudo_tree_backup
+   #(.ways_p(assoc_p))
+   prefetch_install_lru_backup
+    (.disabled_ways_i(prefetch_install_stat.dirty | prefetch_install_reserved_ways)
+     ,.modify_mask_o(prefetch_install_lru_modify_mask)
+     ,.modify_data_o(prefetch_install_lru_modify_data)
+     );
+
+  assign prefetch_install_lru
+    = (prefetch_install_stat.lru & ~prefetch_install_lru_modify_mask)
+      | (prefetch_install_lru_modify_data & prefetch_install_lru_modify_mask);
+
+  bsg_lru_pseudo_tree_encode
+   #(.ways_p(assoc_p))
+   prefetch_install_lru_encoder
+    (.lru_i(prefetch_install_lru)
+     ,.way_id_o(prefetch_install_lru_way)
+     );
+
+  always_comb begin
+    prefetch_install_reserved_ways = '0;
+    for (int i = 0; i < prefetch_els_p; i++) begin
+      if (prefetch_valid_r[i] & prefetch_way_v_r[i]
+          & (prefetch_slot_width_lp'(i) != prefetch_install_slot_r)
+          & (prefetch_addr_r[i][block_offset_width_lp+:index_width_lp]
+             == prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp]))
+        prefetch_install_reserved_ways[prefetch_way_r[i]] = 1'b1;
+    end
+
+    // Keep the reserved choice when it is still safe. If its line became
+    // dirty while memory was outstanding, select another clean way that is
+    // not owned by a same-set detached fill. The full dirty vector is only
+    // authoritative after the locked stat-memory read below.
+    prefetch_install_way = prefetch_way_r[prefetch_install_slot_r];
+    prefetch_install_way_available
+      = ~prefetch_install_stat.dirty[prefetch_way_r[prefetch_install_slot_r]]
+        & ~prefetch_install_reserved_ways[prefetch_way_r[prefetch_install_slot_r]];
+    if (!prefetch_install_way_available) begin
+      prefetch_install_way = prefetch_install_lru_way;
+      prefetch_install_way_available
+        = ~&(prefetch_install_stat.dirty | prefetch_install_reserved_ways);
+    end
+  end
+
   wire prefetch_install_begin = prefetch_response
     & (prefetch_install_state_r == e_pf_idle);
-  wire prefetch_install_available = (is_ready | is_backoff)
+  wire prefetch_install_safe_to_wait
+    = (credit_count_lo == prefetch_sent_count)
+      & (fsm_rev_header_li.size == block_msg_size_lp);
+  wire prefetch_install_available = prefetch_install_safe_to_wait
+    & (is_ready | is_backoff)
     & ~cache_req_v_r & ~cache_req_metadata_v_r & ~cache_req_metadata_v_i
-    & ~prefetch_metadata_pending_v_r
-    & (credit_count_lo == prefetch_sent_count)
-    & (fsm_rev_header_li.size == block_msg_size_lp);
+    & ~prefetch_metadata_pending_v_r;
   wire prefetch_install_acquire = prefetch_install_begin & prefetch_install_available;
   wire prefetch_install_owned = prefetch_install_acquire
     | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_stat, e_pf_check_stat,
@@ -714,9 +796,11 @@ module bp_uce
         e_ready:
           begin
             if (prefetch_v_li) begin
-              // A prefetch is advisory: acknowledge and drop it when all
-              // slots are reserved instead of stalling architectural work.
-              cache_req_yumi_o = ~cache_req_v_r & prefetch_metadata_can_accept;
+              // A duplicate is already covered by its live slot. If every
+              // slot holds another line, refuse this execution so the memory
+              // pipe can replay it after capacity becomes available.
+              cache_req_yumi_o = ~cache_req_v_r & prefetch_metadata_can_accept
+                & (prefetch_free_v | prefetch_duplicate_v);
             end else begin
             // Keep a same-line demand miss at the LCE request boundary while
             // its detached hint is live.  The dcache recomputes its tag hit
@@ -1045,7 +1129,12 @@ module bp_uce
             tag_mem_pkt_cast_o.state = e_COH_M;
             tag_mem_pkt_cast_o.tag = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+index_width_lp+:tag_width_p];
             tag_mem_pkt_v_o = prefetch_install_packet & prefetch_install_full & fsm_rev_last_li;
-            prefetch_response_yumi = tag_mem_pkt_v_o & tag_mem_pkt_yumi_i;
+            stat_mem_pkt_cast_o.opcode = e_cache_stat_mem_set_lru;
+            stat_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
+            stat_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
+            stat_mem_pkt_v_o = tag_mem_pkt_v_o;
+            prefetch_response_yumi = tag_mem_pkt_v_o & tag_mem_pkt_yumi_i
+              & stat_mem_pkt_yumi_i;
           end
           default: begin end
         endcase
@@ -1060,11 +1149,19 @@ module bp_uce
       prefetch_install_clean_r <= 1'b0;
     end else begin
       unique case (prefetch_install_state_r)
-        e_pf_idle: if (prefetch_install_begin) begin
+        e_pf_idle: if (prefetch_install_begin & prefetch_install_available) begin
           prefetch_install_slot_r <= prefetch_response_slot;
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
-          prefetch_install_state_r <= prefetch_install_available ? e_pf_drain : e_pf_drop;
+          prefetch_install_state_r <= e_pf_drain;
+        end else if (prefetch_install_begin & ~prefetch_install_safe_to_wait) begin
+          // Do not hold an ordinary response behind an advisory reply. Local
+          // cache-pipeline conflicts are transient and retain the packet;
+          // an ordinary outstanding credit or malformed size must drain it.
+          prefetch_install_slot_r <= prefetch_response_slot;
+          prefetch_install_clean_r <= 1'b0;
+          prefetch_install_drain_r <= '0;
+          prefetch_install_state_r <= e_pf_drop;
         end
         e_pf_drain: begin
           // cache_req_lock_o disables new TL entries. Existing TL/TV stages
@@ -1079,10 +1176,13 @@ module bp_uce
           prefetch_install_state_r <= e_pf_check_stat;
         e_pf_check_stat: begin
           // This is the synchronous result of the ACCEPTED preceding read.
-          // A dirty victim is left intact, including its tag and dirty bit.
-          prefetch_install_clean_r <= ~prefetch_install_stat.dirty[prefetch_way_r[prefetch_install_slot_r]];
-          prefetch_install_state_r <= prefetch_install_stat.dirty[prefetch_way_r[prefetch_install_slot_r]]
-            ? e_pf_drop : e_pf_invalidate;
+          // A dirty or reserved victim is left intact. Choose another clean,
+          // unreserved way when one exists, and use that way consistently for
+          // invalidation, data installation, publication, and LRU update.
+          prefetch_way_r[prefetch_install_slot_r] <= prefetch_install_way;
+          prefetch_install_clean_r <= prefetch_install_way_available;
+          prefetch_install_state_r <= prefetch_install_way_available
+            ? e_pf_invalidate : e_pf_drop;
         end
         e_pf_invalidate: if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i)
           prefetch_install_state_r <= e_pf_fill;
@@ -1111,9 +1211,16 @@ module bp_uce
       if (cache_req_metadata_v_i & prefetch_metadata_pending_v_r) begin
         prefetch_metadata_pending_v_r <= 1'b0;
         if (prefetch_metadata_pending_allocated_r) begin
-          prefetch_way_r[prefetch_metadata_pending_slot_r]
-            <= cache_req_metadata_cast_i.hit_or_repl_way;
-          prefetch_way_v_r[prefetch_metadata_pending_slot_r] <= 1'b1;
+          if (prefetch_reserved_way_available) begin
+            prefetch_way_r[prefetch_metadata_pending_slot_r]
+              <= prefetch_reserved_way;
+            prefetch_way_v_r[prefetch_metadata_pending_slot_r] <= 1'b1;
+          end else begin
+            // More same-set fills than ways cannot be retained safely.
+            prefetch_valid_r[prefetch_metadata_pending_slot_r] <= 1'b0;
+            prefetch_sent_r[prefetch_metadata_pending_slot_r] <= 1'b0;
+            prefetch_way_v_r[prefetch_metadata_pending_slot_r] <= 1'b0;
+          end
         end
       end
       if (prefetch_accept) begin
@@ -1169,9 +1276,13 @@ module bp_uce
     if (prefetch_install_state_r inside {e_pf_invalidate, e_pf_fill, e_pf_publish})
       assert (prefetch_install_clean_r)
         else $error("UCE prefetch modifies a victim without a fresh clean decision");
+    if (prefetch_install_state_r == e_pf_check_stat && prefetch_install_way_available)
+      assert (!prefetch_install_stat.dirty[prefetch_install_way]
+              && !prefetch_install_reserved_ways[prefetch_install_way])
+        else $error("UCE prefetch selected a dirty or reserved install way");
     if (prefetch_install_state_r == e_pf_publish)
       assert (prefetch_install_full && prefetch_install_packet && fsm_rev_last_li
-              && !data_mem_pkt_v_o)
+              && !data_mem_pkt_v_o && stat_mem_pkt_v_o)
         else $error("UCE prefetch publishes before complete data installation");
     if (prefetch_install_state_r == e_pf_drop && prefetch_install_packet)
       assert (prefetch_response_yumi)

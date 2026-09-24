@@ -81,6 +81,8 @@
     ,e_cache_stat_mem_read
     // clear dirty bit for given index and way_id.
     ,e_cache_stat_mem_clear_dirty
+    // mark the selected way most recently used without changing dirty state.
+    ,e_cache_stat_mem_set_lru
   } bp_cache_stat_mem_opcode_e;
 
 `endif
