@@ -1179,7 +1179,6 @@ module bp_uce
           // A dirty or reserved victim is left intact. Choose another clean,
           // unreserved way when one exists, and use that way consistently for
           // invalidation, data installation, publication, and LRU update.
-          prefetch_way_r[prefetch_install_slot_r] <= prefetch_install_way;
           prefetch_install_clean_r <= prefetch_install_way_available;
           prefetch_install_state_r <= prefetch_install_way_available
             ? e_pf_invalidate : e_pf_drop;
@@ -1208,6 +1207,11 @@ module bp_uce
       prefetch_metadata_pending_allocated_r <= 1'b0;
       prefetch_metadata_pending_slot_r <= '0;
     end else begin
+      // Keep every prefetch slot field in this sequential process. Some FPGA
+      // synthesis flows do not merge disjoint indexed writes to an unpacked
+      // array when they originate in separate always_ff blocks.
+      if (prefetch_install_state_r == e_pf_check_stat)
+        prefetch_way_r[prefetch_install_slot_r] <= prefetch_install_way;
       if (cache_req_metadata_v_i & prefetch_metadata_pending_v_r) begin
         prefetch_metadata_pending_v_r <= 1'b0;
         if (prefetch_metadata_pending_allocated_r) begin
