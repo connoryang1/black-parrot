@@ -469,7 +469,11 @@ module bp_be_dcache
   logic [prefetch_buffer_els_lp-1:0] prefetch_buffer_v_r;
   logic [prefetch_buffer_els_lp-1:0][paddr_width_p-1:4] prefetch_buffer_addr_r;
   logic [prefetch_buffer_els_lp-1:0][1:0] prefetch_buffer_word_v_r;
-  logic [prefetch_buffer_els_lp-1:0][1:0][dword_width_gp-1:0] prefetch_buffer_data_r;
+  // The data array has one synchronous write and one asynchronous selected
+  // read. Leaving its contents unreset lets FPGA tools map it to compact
+  // distributed RAM; word-valid state guards every architectural read.
+  (* ram_style = "distributed" *)
+  logic [dword_width_gp-1:0] prefetch_buffer_data_r [prefetch_buffer_els_lp*2];
   logic prefetch_buffer_hit_tv, prefetch_buffer_segment_tv;
   logic [prefetch_buffer_slot_width_lp-1:0] prefetch_buffer_hit_slot_tv;
   logic [dword_width_gp-1:0] prefetch_buffer_data_tv;
@@ -485,7 +489,7 @@ module bp_be_dcache
         if (prefetch_buffer_word_v_r[i][paddr_tv_r[3]]) begin
           prefetch_buffer_hit_tv = 1'b1;
           prefetch_buffer_hit_slot_tv = prefetch_buffer_slot_width_lp'(i);
-          prefetch_buffer_data_tv = prefetch_buffer_data_r[i][paddr_tv_r[3]];
+          prefetch_buffer_data_tv = prefetch_buffer_data_r[2*i+paddr_tv_r[3]];
         end
       end
     end
@@ -1082,7 +1086,6 @@ module bp_be_dcache
       prefetch_buffer_v_r <= '0;
       prefetch_buffer_addr_r <= '0;
       prefetch_buffer_word_v_r <= '0;
-      prefetch_buffer_data_r <= '0;
     end else begin
       // Consumed words are one-use. A later miss remains architecturally safe
       // even if a redirect squashes the consuming instruction.
@@ -1114,8 +1117,8 @@ module bp_be_dcache
         else
           prefetch_buffer_word_v_r[prefetch_buffer_write_slot]
                                     [data_mem_pkt_cast_i.addr[3]] <= 1'b1;
-        prefetch_buffer_data_r[prefetch_buffer_write_slot]
-                              [data_mem_pkt_cast_i.addr[3]]
+        prefetch_buffer_data_r[2*prefetch_buffer_write_slot
+                               + data_mem_pkt_cast_i.addr[3]]
           <= data_mem_pkt_cast_i.data[0+:dword_width_gp];
       end
     end
