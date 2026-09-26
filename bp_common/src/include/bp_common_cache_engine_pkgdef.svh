@@ -57,6 +57,8 @@
     ,e_cache_data_mem_read
     // write uncached load data
     ,e_cache_data_mem_uncached
+    // write one detached-prefetch word into the D$ side buffer
+    ,e_cache_data_mem_prefetch
   } bp_cache_data_mem_opcode_e;
 
   // Tag mem pkt opcodes

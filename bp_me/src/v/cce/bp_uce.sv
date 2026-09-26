@@ -95,6 +95,7 @@ module bp_uce
   localparam fill_offset_width_lp = `BSG_SAFE_CLOG2(fill_width_p>>3);
   localparam bank_sub_offset_width_lp = $clog2(fill_size_in_bank_lp);
   localparam prefetch_slot_width_lp = `BSG_SAFE_CLOG2(prefetch_els_p);
+  localparam prefetch_buffer_offset_width_lp = 4;
   localparam prefetch_tag_width_lp = `BSG_SAFE_CLOG2(lce_assoc_p);
   localparam prefetch_state_width_lp = $bits(bp_coh_states_e);
   localparam prefetch_id_width_lp = prefetch_tag_width_lp + prefetch_state_width_lp;
@@ -108,6 +109,7 @@ module bp_uce
                                                            : (block_width_p == 64)
                                                              ? e_bedrock_msg_size_8
                                                              : e_bedrock_msg_size_64;
+  localparam bp_bedrock_msg_size_e prefetch_msg_size_lp = e_bedrock_msg_size_16;
 
   `declare_bp_bedrock_if(paddr_width_p, lce_id_width_p, cce_id_width_p, did_width_p, lce_assoc_p);
   `declare_bp_cache_engine_generic_if(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p, cache);
@@ -186,12 +188,14 @@ module bp_uce
         prefetch_issue_v = 1'b1;
         prefetch_issue_slot = prefetch_slot_width_lp'(i);
       end
-      prefetch_demand_match |= prefetch_valid_r[i]
-        & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
-           == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
+      if (prefetch_valid_r[i]
+          & (prefetch_addr_r[i][paddr_width_p-1:prefetch_buffer_offset_width_lp]
+             == cache_req_r.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp])) begin
+        prefetch_demand_match = 1'b1;
+      end
       prefetch_duplicate_v |= prefetch_valid_r[i]
-        & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
-           == cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp]);
+        & (prefetch_addr_r[i][paddr_width_p-1:prefetch_buffer_offset_width_lp]
+           == cache_req_cast_i.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]);
     end
   end
   assign prefetch_response_id = {fsm_rev_header_li.payload.state
@@ -555,7 +559,9 @@ module bp_uce
     end
   end
 
-  wire prefetch_install_begin = prefetch_response
+  // Pointer-stream hints retain their two useful words in the slot itself.
+  // They do not enter the full-line L1 installer below.
+  wire prefetch_install_begin = 1'b0 & prefetch_response
     & (prefetch_install_state_r == e_pf_idle);
   wire prefetch_install_safe_to_wait
     = (credit_count_lo == prefetch_sent_count)
@@ -1061,7 +1067,7 @@ module bp_uce
         fsm_fwd_header_lo = '0;
         fsm_fwd_header_lo.msg_type = e_bedrock_mem_rd;
         fsm_fwd_header_lo.addr = prefetch_addr_r[prefetch_issue_slot];
-        fsm_fwd_header_lo.size = block_msg_size_lp;
+        fsm_fwd_header_lo.size = prefetch_msg_size_lp;
         fsm_fwd_header_lo.payload.prefetch = 1'b1;
         fsm_fwd_header_lo.payload.way_id = prefetch_tag_width_lp'(prefetch_issue_slot);
         fsm_fwd_header_lo.payload.state = bp_coh_states_e'
@@ -1071,6 +1077,19 @@ module bp_uce
         fsm_fwd_data_lo = '0;
         fsm_fwd_v_lo = fsm_fwd_ready_then_li;
         prefetch_issue = fsm_fwd_v_lo & fsm_fwd_last_lo;
+      end
+
+      // Narrow detached replies bypass L1 replacement. Each returned word is
+      // written into the D$ side buffer and therefore never locks the cache
+      // SRAMs or blocks an unrelated hit.
+      if (prefetch_response) begin
+        data_mem_pkt_cast_o = '0;
+        data_mem_pkt_cast_o.opcode = e_cache_data_mem_prefetch;
+        data_mem_pkt_cast_o.addr = prefetch_addr_r[prefetch_response_slot]
+          + (paddr_width_p'(prefetch_fill_count_r[prefetch_response_slot]) << 3);
+        data_mem_pkt_cast_o.data = fsm_rev_data_li;
+        data_mem_pkt_v_o = 1'b1;
+        prefetch_response_yumi = data_mem_pkt_yumi_i;
       end
 
       // The shared reverse stream must make progress even if an ordinary miss
@@ -1237,14 +1256,13 @@ module bp_uce
         prefetch_valid_r[prefetch_free_slot] <= 1'b1;
         prefetch_sent_r[prefetch_free_slot] <= 1'b0;
         prefetch_way_v_r[prefetch_free_slot] <= 1'b0;
-        prefetch_addr_r[prefetch_free_slot] <= {cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp], block_offset_width_lp'(0)};
+        prefetch_addr_r[prefetch_free_slot]
+          <= {cache_req_cast_i.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]
+              ,prefetch_buffer_offset_width_lp'(0)};
         prefetch_fill_count_r[prefetch_free_slot] <= '0;
       end
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
-      // Keep the slot reserved while the final beat is backpressured.  The
-      // reverse pump holds that beat stable until both L1 writes accept it;
-      // retiring on visibility alone loses the slot before the retry.
       if (prefetch_response_yumi & fsm_rev_last_li) begin
         prefetch_valid_r[prefetch_response_slot] <= 1'b0;
         prefetch_sent_r[prefetch_response_slot] <= 1'b0;
@@ -1296,8 +1314,7 @@ module bp_uce
     assert (prefetch_response_id_v
       && prefetch_valid_r[prefetch_response_slot]
       && prefetch_sent_r[prefetch_response_slot]
-      && (fsm_rev_header_li.size == block_msg_size_lp
-          || fsm_rev_header_li.size == e_bedrock_msg_size_8))
+      && (fsm_rev_header_li.size == prefetch_msg_size_lp))
       else $error("UCE prefetch response has no live slot");
     assert (prefetch_response_id_v
       && fsm_rev_header_li.addr == prefetch_addr_r[prefetch_response_slot])

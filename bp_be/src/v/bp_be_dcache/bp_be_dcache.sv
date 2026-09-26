@@ -450,14 +450,49 @@ module bp_be_dcache
      );
 
   logic [lg_assoc_lp-1:0] load_hit_way_tv;
-  logic load_hit_tv;
+  logic cache_load_hit_tv;
   bsg_encode_one_hot
    #(.width_p(assoc_p) ,.lo_to_hi_p(1))
    load_hit_index_encoder
     (.i(load_hit_v_tv_r)
      ,.addr_o(load_hit_way_tv)
-     ,.v_o(load_hit_tv)
+     ,.v_o(cache_load_hit_tv)
      );
+
+  // Detached pointer hints return two words into a small fully-associative
+  // side buffer. This avoids publishing a partial cache line and lets later
+  // loads use the normal two-stage hit path without entering the blocking
+  // miss engine. Entries are one-use advisory data and are invalidated by a
+  // matching store or ordinary L1 hit.
+  localparam prefetch_buffer_els_lp = dcache_prefetch_els_p;
+  localparam prefetch_buffer_slot_width_lp = `BSG_SAFE_CLOG2(prefetch_buffer_els_lp);
+  logic [prefetch_buffer_els_lp-1:0] prefetch_buffer_v_r;
+  logic [prefetch_buffer_els_lp-1:0][paddr_width_p-1:4] prefetch_buffer_addr_r;
+  logic [prefetch_buffer_els_lp-1:0][1:0] prefetch_buffer_word_v_r;
+  logic [prefetch_buffer_els_lp-1:0][1:0][dword_width_gp-1:0] prefetch_buffer_data_r;
+  logic prefetch_buffer_hit_tv, prefetch_buffer_segment_tv;
+  logic [prefetch_buffer_slot_width_lp-1:0] prefetch_buffer_hit_slot_tv;
+  logic [dword_width_gp-1:0] prefetch_buffer_data_tv;
+  always_comb begin
+    prefetch_buffer_hit_tv = 1'b0;
+    prefetch_buffer_segment_tv = 1'b0;
+    prefetch_buffer_hit_slot_tv = '0;
+    prefetch_buffer_data_tv = '0;
+    for (int i = prefetch_buffer_els_lp-1; i >= 0; i--) begin
+      if (prefetch_buffer_v_r[i]
+          & (prefetch_buffer_addr_r[i] == paddr_tv_r[paddr_width_p-1:4])) begin
+        prefetch_buffer_segment_tv = &prefetch_buffer_word_v_r[i];
+        if (prefetch_buffer_word_v_r[i][paddr_tv_r[3]]) begin
+          prefetch_buffer_hit_tv = 1'b1;
+          prefetch_buffer_hit_slot_tv = prefetch_buffer_slot_width_lp'(i);
+          prefetch_buffer_data_tv = prefetch_buffer_data_r[i][paddr_tv_r[3]];
+        end
+      end
+    end
+    prefetch_buffer_hit_tv &= v_tv_r & decode_tv_r.load_op
+                              & ~uncached_tv_r & ~cache_load_hit_tv;
+  end
+  wire load_hit_tv = cache_load_hit_tv | prefetch_buffer_hit_tv;
   wire uncached_hit_tv = uncached_tv_r & load_hit_tv;
 
   logic [assoc_p-1:0] ld_data_way_select_tv;
@@ -492,7 +527,9 @@ module bp_be_dcache
   logic [data_width_p-1:0] ld_data_dword_merged;
   wire [`BSG_SAFE_CLOG2(data_width_p)-1:0] ld_data_shift_tv = paddr_tv_r << 3;
 
-  wire [data_width_p-1:0] final_data_tv = ld_data_dword_merged >> ld_data_shift_tv;
+  wire [data_width_p-1:0] final_data_tv = prefetch_buffer_hit_tv
+    ? prefetch_buffer_data_tv
+    : (ld_data_dword_merged >> ld_data_shift_tv);
 
   // Store no-allocate, so keep going if we have a store miss on a writethrough cache
   wire store_miss_tv    = (decode_tv_r.store_op | decode_tv_r.lr_op) & ~store_hit_tv & ~sc_fail_tv & ~nonblocking_req & features_p[e_cfg_writeback];
@@ -728,7 +765,8 @@ module bp_be_dcache
   // Prefetch hints are non-architectural demand misses, not ordinary loads.
   // They avoid issuing if the line is already hot in L1, and a miss here
   // should still fill L1 state for later demand accesses.
-  wire prefetch_req = v_tv_r & decode_tv_r.prefetch_op & ~load_hit_tv
+  wire prefetch_req = v_tv_r & decode_tv_r.prefetch_op & ~cache_load_hit_tv
+    & ~prefetch_buffer_segment_tv
     & ~uncached_tv_r & ~snoop_tv_r
     & features_p[e_cfg_writeback];
   assign prefetch_replay_o = prefetch_req & ~cache_req_yumi_i;
@@ -742,7 +780,7 @@ module bp_be_dcache
       cache_req_cast_o = '0;
       cache_req_cast_o.addr = paddr_tv_r;
       cache_req_cast_o.data = nonblocking_req ? wbuf_entry_in.data : st_data_tv_r;
-      cache_req_cast_o.hit = load_hit_tv;
+      cache_req_cast_o.hit = cache_load_hit_tv;
       cache_req_cast_o.id = '0;
 
       // Assigning sizes to cache miss packet
@@ -825,7 +863,7 @@ module bp_be_dcache
    #(.width_p(assoc_p+1+lg_assoc_lp))
    cached_hit_reg
     (.clk_i(clk_i)
-     ,.data_i({way_v_tv_r, load_hit_tv, load_hit_way_tv})
+     ,.data_i({way_v_tv_r, cache_load_hit_tv, load_hit_way_tv})
      ,.data_o({metadata_way_v_r, metadata_hit_r, metadata_hit_index_r})
      );
 
@@ -858,8 +896,8 @@ module bp_be_dcache
   wire tag_mem_fast_read = safe_tl_we & ~decode_lo.cache_op;
   wire tag_mem_slow_read = tag_mem_pkt_yumi_o & (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_read);
   wire tag_mem_slow_write = tag_mem_pkt_yumi_o & (tag_mem_pkt_cast_i.opcode != e_cache_tag_mem_read);
-  wire tag_mem_fast_write = (v_tv_r & uncached_tv_r & load_hit_tv & ~snoop_tv_r)
-    || (v_tv_r & decode_tv_r.binval_op & load_hit_tv & ~snoop_tv_r);
+  wire tag_mem_fast_write = (v_tv_r & uncached_tv_r & cache_load_hit_tv & ~snoop_tv_r)
+    || (v_tv_r & decode_tv_r.binval_op & cache_load_hit_tv & ~snoop_tv_r);
   assign tag_mem_write_hazard = tag_mem_fast_write;
 
   assign tag_mem_v_li = tag_mem_fast_read | tag_mem_slow_read | tag_mem_slow_write | tag_mem_fast_write;
@@ -1004,14 +1042,84 @@ module bp_be_dcache
   // If we didn't read all banks, this could be more efficient
   assign data_mem_write_hazard = |{data_mem_fast_read & data_mem_force_write};
 
-  assign data_mem_pkt_yumi_o = data_mem_pkt_v_i
-      & ~lrsc_lock
-      & ~{|data_mem_fast_read & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read)}
-      & ~{|data_mem_fast_write & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read)}
-      & ~|{data_mem_fast_read & data_mem_write_bank_mask}
-      & ~|{data_mem_fast_write & data_mem_write_bank_mask}
-      & ~(v_tl_r & cache_req_critical_i)
-      & ~(wbuf_snoop_match_lo);
+  wire prefetch_buffer_write = data_mem_pkt_v_i
+    & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_prefetch);
+  logic prefetch_buffer_write_match;
+  logic [prefetch_buffer_slot_width_lp-1:0] prefetch_buffer_write_slot;
+  always_comb begin
+    prefetch_buffer_write_match = 1'b0;
+    prefetch_buffer_write_slot = '0;
+    for (int i = prefetch_buffer_els_lp-1; i >= 0; i--) begin
+      if (prefetch_buffer_v_r[i]
+          & (prefetch_buffer_addr_r[i]
+             == data_mem_pkt_cast_i.addr[paddr_width_p-1:4])) begin
+        prefetch_buffer_write_match = 1'b1;
+        prefetch_buffer_write_slot = prefetch_buffer_slot_width_lp'(i);
+      end
+      if (!prefetch_buffer_v_r[i] & !prefetch_buffer_write_match) begin
+        prefetch_buffer_write_slot = prefetch_buffer_slot_width_lp'(i);
+      end
+    end
+  end
+
+  wire data_mem_pkt_sram_yumi = data_mem_pkt_v_i
+    & ~lrsc_lock
+    & ~{|data_mem_fast_read & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read)}
+    & ~{|data_mem_fast_write & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read)}
+    & ~|{data_mem_fast_read & data_mem_write_bank_mask}
+    & ~|{data_mem_fast_write & data_mem_write_bank_mask}
+    & ~(v_tl_r & cache_req_critical_i)
+    & ~(wbuf_snoop_match_lo);
+  // Detached responses do not touch the cache SRAMs. If advisory entries are
+  // all occupied, replacing one is safe and prevents the memory response from
+  // deadlocking behind an entry that software never consumes.
+  assign data_mem_pkt_yumi_o = prefetch_buffer_write
+    ? 1'b1
+    : data_mem_pkt_sram_yumi;
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      prefetch_buffer_v_r <= '0;
+      prefetch_buffer_addr_r <= '0;
+      prefetch_buffer_word_v_r <= '0;
+      prefetch_buffer_data_r <= '0;
+    end else begin
+      // Consumed words are one-use. A later miss remains architecturally safe
+      // even if a redirect squashes the consuming instruction.
+      if (prefetch_buffer_hit_tv) begin
+        prefetch_buffer_word_v_r[prefetch_buffer_hit_slot_tv][paddr_tv_r[3]] <= 1'b0;
+        if (!(|(prefetch_buffer_word_v_r[prefetch_buffer_hit_slot_tv]
+               & ~(2'(1) << paddr_tv_r[3]))))
+          prefetch_buffer_v_r[prefetch_buffer_hit_slot_tv] <= 1'b0;
+      end
+
+      // A local store or an authoritative L1 copy supersedes advisory data.
+      for (int i = 0; i < prefetch_buffer_els_lp; i++) begin
+        if (prefetch_buffer_v_r[i]
+            & (prefetch_buffer_addr_r[i] == paddr_tv_r[paddr_width_p-1:4])
+            & v_tv_r
+            & (decode_tv_r.store_op | cache_load_hit_tv)) begin
+          prefetch_buffer_v_r[i] <= 1'b0;
+          prefetch_buffer_word_v_r[i] <= '0;
+        end
+      end
+
+      if (prefetch_buffer_write & data_mem_pkt_yumi_o) begin
+        prefetch_buffer_v_r[prefetch_buffer_write_slot] <= 1'b1;
+        prefetch_buffer_addr_r[prefetch_buffer_write_slot]
+          <= data_mem_pkt_cast_i.addr[paddr_width_p-1:4];
+        if (!prefetch_buffer_write_match)
+          prefetch_buffer_word_v_r[prefetch_buffer_write_slot]
+            <= 2'(1) << data_mem_pkt_cast_i.addr[3];
+        else
+          prefetch_buffer_word_v_r[prefetch_buffer_write_slot]
+                                    [data_mem_pkt_cast_i.addr[3]] <= 1'b1;
+        prefetch_buffer_data_r[prefetch_buffer_write_slot]
+                              [data_mem_pkt_cast_i.addr[3]]
+          <= data_mem_pkt_cast_i.data[0+:dword_width_gp];
+      end
+    end
+  end
 
   logic [lg_assoc_lp-1:0] data_mem_pkt_way_r;
   bsg_dff
@@ -1035,7 +1143,7 @@ module bp_be_dcache
   // Stat Mem Control
   ///////////////////////////
   wire stat_mem_fast_read  = (v_tv_r & cache_req_metadata_v_n & ~decode_tv_r.cache_op);
-  wire stat_mem_fast_write = (v_tv_r & load_hit_tv & ~decode_tv_r.cache_op & ~uncached_tv_r & ~cache_req_metadata_v_n);
+  wire stat_mem_fast_write = (v_tv_r & cache_load_hit_tv & ~decode_tv_r.cache_op & ~uncached_tv_r & ~cache_req_metadata_v_n);
   wire stat_mem_slow_write = stat_mem_pkt_yumi_o & (stat_mem_pkt_cast_i.opcode != e_cache_stat_mem_read);
   wire stat_mem_slow_read  = stat_mem_pkt_yumi_o & (stat_mem_pkt_cast_i.opcode == e_cache_stat_mem_read);
   assign stat_mem_v_li = stat_mem_fast_read | stat_mem_fast_write
