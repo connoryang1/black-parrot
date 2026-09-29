@@ -154,10 +154,11 @@ module bp_be_pipe_long
                             ,default: '0
                             };
 
-  //
-  // Control bits for the FPU
-  //   The control bits control tininess, which is fixed in RISC-V
-  rv64_frm_e frm_li;
+  if (|fpu_support_p) begin : fdivsqrt_gen
+    //
+    // Control bits for the FPU
+    //   The control bits control tininess, which is fixed in RISC-V
+    rv64_frm_e frm_li;
   // VCS / DVE 2016.1 has an issue with the 'assign' variant of the following code
   always_comb frm_li = rv64_frm_e'((instr.t.fmatype.rm == e_dyn) ? frm_dyn_i : instr.t.fmatype.rm);
   wire [`floatControlWidth-1:0] control_li = `flControl_default;
@@ -246,12 +247,17 @@ module bp_be_pipe_long
 
   assign fbusy_o = fdivsqrt_v_li | ~fdivsqrt_ready_and_lo | fmask_r | fdivsqrt_pending;
   assign fwb_v_o = ~fmask_r & (fdivsqrt_v_lo | fdivsqrt_pending);
-  assign fwb_pkt_cast_o = '{frd_w_v : fwb_v_o
-                            ,thread_id: frd_thread_id_r
-                            ,rd_addr: frd_addr_r
-                            ,rd_data: frd_data_lo
-                            ,fflags : fflags_lo & {5{fwb_v_o}}
-                            ,default: '0
-                            };
+    assign fwb_pkt_cast_o = '{frd_w_v : fwb_v_o
+                              ,thread_id: frd_thread_id_r
+                              ,rd_addr: frd_addr_r
+                              ,rd_data: frd_data_lo
+                              ,fflags : fflags_lo & {5{fwb_v_o}}
+                              ,default: '0
+                              };
+  end else begin : no_fdivsqrt_gen
+    assign fbusy_o = 1'b0;
+    assign fwb_v_o = 1'b0;
+    assign fwb_pkt_cast_o = '0;
+  end
 
 endmodule
