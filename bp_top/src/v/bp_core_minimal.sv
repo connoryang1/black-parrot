@@ -92,7 +92,8 @@ module bp_core_minimal
   `bp_cast_i(bp_cfg_bus_s, cfg_bus);
 
   bp_fe_queue_s fe_queue_li, fe_queue_lo;
-  logic fe_queue_v_li, fe_queue_ready_and_lo;
+  logic fe_queue_v_li, fe_queue_ready_and_li;
+  logic fe_queue_v_lo, fe_queue_ready_and_lo;
   bp_fe_cmd_s fe_cmd_lo;
   logic fe_cmd_v_lo, fe_cmd_yumi_li, fe_ctxtsw_ready_lo;
   logic fe_ctxtsw_v_lo, fe_ctxtsw_yumi_li;
@@ -112,7 +113,7 @@ module bp_core_minimal
 
      ,.fe_queue_o(fe_queue_li)
      ,.fe_queue_v_o(fe_queue_v_li)
-     ,.fe_queue_ready_and_i(fe_queue_ready_and_lo)
+     ,.fe_queue_ready_and_i(fe_queue_ready_and_li)
 
      ,.fe_cmd_i(fe_cmd_lo)
      ,.fe_cmd_v_i(fe_cmd_v_lo)
@@ -154,6 +155,26 @@ module bp_core_minimal
      ,.stat_mem_o(icache_stat_mem_o)
      );
 
+  // Break the long BE ready -> FE fetch/cache-request control path.  The FE
+  // only asserts valid when ready, so the full-rate enqueue/dequeue mode is
+  // safe here.  Redirects must discard packets fetched on the old path.
+  wire fe_queue_flush = (fe_cmd_yumi_li & (fe_cmd_lo.opcode != e_op_attaboy))
+                        | fe_ctxtsw_yumi_li;
+  bsg_two_fifo
+   #(.width_p($bits(bp_fe_queue_s))
+     ,.allow_enq_deq_on_full_p(1)
+     )
+   fe_queue_pipe
+    (.clk_i(clk_i)
+     ,.reset_i(reset_i | fe_queue_flush)
+     ,.ready_param_o(fe_queue_ready_and_li)
+     ,.data_i(fe_queue_li)
+     ,.v_i(fe_queue_v_li)
+     ,.v_o(fe_queue_v_lo)
+     ,.data_o(fe_queue_lo)
+     ,.yumi_i(fe_queue_v_lo & fe_queue_ready_and_lo)
+     );
+
   bp_be_top
    #(.bp_params_p(bp_params_p))
    be
@@ -162,8 +183,8 @@ module bp_core_minimal
 
      ,.cfg_bus_i(cfg_bus_cast_i)
 
-     ,.fe_queue_i(fe_queue_li)
-     ,.fe_queue_v_i(fe_queue_v_li)
+     ,.fe_queue_i(fe_queue_lo)
+     ,.fe_queue_v_i(fe_queue_v_lo)
      ,.fe_queue_ready_and_o(fe_queue_ready_and_lo)
 
      ,.fe_cmd_o(fe_cmd_lo)
