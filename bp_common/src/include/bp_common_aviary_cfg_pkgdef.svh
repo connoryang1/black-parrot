@@ -178,6 +178,9 @@
     int dcache_mshr;
     // Number of nonfaulting request slots in the data-cache UCE.
     int dcache_prefetch_els;
+    // Install complete detached-prefetch lines instead of retaining only the
+    // critical 16-byte sector in the advisory side buffer.
+    int dcache_prefetch_full_line;
 
     // A$ cache features
     int acache_features;
@@ -341,6 +344,7 @@
       ,dcache_mshr          : 1
       ,dcache_data_width    : 64
       ,dcache_prefetch_els  : 2
+      ,dcache_prefetch_full_line : 0
 
       ,acache_features      : (1 << e_cfg_enabled)
       ,acache_sets          : 64
@@ -470,6 +474,7 @@
       ,`bp_aviary_define_override(dcache_data_width, BP_DCACHE_DATA_WIDTH, `BP_CUSTOM_BASE_CFG)
       ,`bp_aviary_define_override(dcache_mshr, BP_DCACHE_MSHR, `BP_CUSTOM_BASE_CFG)
       ,`bp_aviary_define_override(dcache_prefetch_els, BP_DCACHE_PREFETCH_ELS, `BP_CUSTOM_BASE_CFG)
+      ,`bp_aviary_define_override(dcache_prefetch_full_line, BP_DCACHE_PREFETCH_FULL_LINE, `BP_CUSTOM_BASE_CFG)
 
       ,`bp_aviary_define_override(acache_features, BP_ACACHE_FEATURES, `BP_CUSTOM_BASE_CFG)
       ,`bp_aviary_define_override(acache_sets, BP_ACACHE_SETS, `BP_CUSTOM_BASE_CFG)
