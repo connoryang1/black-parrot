@@ -90,6 +90,7 @@
     , localparam dcache_data_width_p        = proc_param_lp.dcache_data_width                      \
     , localparam dcache_mshr_p              = proc_param_lp.dcache_mshr                            \
     , localparam dcache_prefetch_els_p      = proc_param_lp.dcache_prefetch_els                    \
+    , localparam dcache_prefetch_full_line_p = proc_param_lp.dcache_prefetch_full_line             \
     , localparam dcache_req_id_width_p      = `BSG_SAFE_CLOG2(dcache_mshr_p)                       \
     , localparam dcache_way_groups_p        = dcache_sets_p                                        \
                                                                                                    \
@@ -284,6 +285,7 @@
           ,`bp_aviary_parameter_override(dcache_data_width, override_cfg_mp, default_cfg_mp)       \
           ,`bp_aviary_parameter_override(dcache_mshr, override_cfg_mp, default_cfg_mp)             \
           ,`bp_aviary_parameter_override(dcache_prefetch_els, override_cfg_mp, default_cfg_mp)     \
+          ,`bp_aviary_parameter_override(dcache_prefetch_full_line, override_cfg_mp, default_cfg_mp) \
                                                                                                    \
           ,`bp_aviary_parameter_override(acache_features, override_cfg_mp, default_cfg_mp)         \
           ,`bp_aviary_parameter_override(acache_sets, override_cfg_mp, default_cfg_mp)             \
