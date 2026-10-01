@@ -95,7 +95,11 @@ module bp_uce
   localparam fill_offset_width_lp = `BSG_SAFE_CLOG2(fill_width_p>>3);
   localparam bank_sub_offset_width_lp = $clog2(fill_size_in_bank_lp);
   localparam prefetch_slot_width_lp = `BSG_SAFE_CLOG2(prefetch_els_p);
-  localparam prefetch_buffer_offset_width_lp = 4;
+`ifdef BP_PREFETCH_FULL_LINE
+  localparam prefetch_match_offset_width_lp = block_offset_width_lp;
+`else
+  localparam prefetch_match_offset_width_lp = 4;
+`endif
   localparam prefetch_tag_width_lp = `BSG_SAFE_CLOG2(lce_assoc_p);
   localparam prefetch_state_width_lp = $bits(bp_coh_states_e);
   localparam prefetch_id_width_lp = prefetch_tag_width_lp + prefetch_state_width_lp;
@@ -109,7 +113,11 @@ module bp_uce
                                                            : (block_width_p == 64)
                                                              ? e_bedrock_msg_size_8
                                                              : e_bedrock_msg_size_64;
+`ifdef BP_PREFETCH_FULL_LINE
+  localparam bp_bedrock_msg_size_e prefetch_msg_size_lp = block_msg_size_lp;
+`else
   localparam bp_bedrock_msg_size_e prefetch_msg_size_lp = e_bedrock_msg_size_16;
+`endif
 
   `declare_bp_bedrock_if(paddr_width_p, lce_id_width_p, cce_id_width_p, did_width_p, lce_assoc_p);
   `declare_bp_cache_engine_generic_if(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p, cache);
@@ -189,13 +197,13 @@ module bp_uce
         prefetch_issue_slot = prefetch_slot_width_lp'(i);
       end
       if (prefetch_valid_r[i]
-          & (prefetch_addr_r[i][paddr_width_p-1:prefetch_buffer_offset_width_lp]
-             == cache_req_r.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp])) begin
+          & (prefetch_addr_r[i][paddr_width_p-1:prefetch_match_offset_width_lp]
+             == cache_req_r.addr[paddr_width_p-1:prefetch_match_offset_width_lp])) begin
         prefetch_demand_match = 1'b1;
       end
       prefetch_duplicate_v |= prefetch_valid_r[i]
-        & (prefetch_addr_r[i][paddr_width_p-1:prefetch_buffer_offset_width_lp]
-           == cache_req_cast_i.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]);
+        & (prefetch_addr_r[i][paddr_width_p-1:prefetch_match_offset_width_lp]
+           == cache_req_cast_i.addr[paddr_width_p-1:prefetch_match_offset_width_lp]);
     end
   end
   assign prefetch_response_id = {fsm_rev_header_li.payload.state
@@ -559,10 +567,16 @@ module bp_uce
     end
   end
 
-  // Pointer-stream hints retain their two useful words in the slot itself.
-  // They do not enter the full-line L1 installer below.
+  // The evaluation build installs complete detached replies in L1. The
+  // optimized pointer-stream build instead retains two useful words in the
+  // D-cache side buffer and leaves this installer idle.
+`ifdef BP_PREFETCH_FULL_LINE
+  wire prefetch_install_begin = prefetch_response
+    & (prefetch_install_state_r == e_pf_idle);
+`else
   wire prefetch_install_begin = 1'b0 & prefetch_response
     & (prefetch_install_state_r == e_pf_idle);
+`endif
   wire prefetch_install_safe_to_wait
     = (credit_count_lo == prefetch_sent_count)
       & (fsm_rev_header_li.size == block_msg_size_lp);
@@ -1079,6 +1093,7 @@ module bp_uce
         prefetch_issue = fsm_fwd_v_lo & fsm_fwd_last_lo;
       end
 
+`ifndef BP_PREFETCH_FULL_LINE
       // Narrow detached replies bypass L1 replacement. Each returned word is
       // written into the D$ side buffer and therefore never locks the cache
       // SRAMs or blocks an unrelated hit.
@@ -1091,6 +1106,7 @@ module bp_uce
         data_mem_pkt_v_o = 1'b1;
         prefetch_response_yumi = data_mem_pkt_yumi_i;
       end
+`endif
 
       // The shared reverse stream must make progress even if an ordinary miss
       // is waiting for a response behind this hint. Never wait for that FSM to
@@ -1257,8 +1273,8 @@ module bp_uce
         prefetch_sent_r[prefetch_free_slot] <= 1'b0;
         prefetch_way_v_r[prefetch_free_slot] <= 1'b0;
         prefetch_addr_r[prefetch_free_slot]
-          <= {cache_req_cast_i.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]
-              ,prefetch_buffer_offset_width_lp'(0)};
+          <= {cache_req_cast_i.addr[paddr_width_p-1:prefetch_match_offset_width_lp]
+              ,prefetch_match_offset_width_lp'(0)};
         prefetch_fill_count_r[prefetch_free_slot] <= '0;
       end
       if (prefetch_issue)
