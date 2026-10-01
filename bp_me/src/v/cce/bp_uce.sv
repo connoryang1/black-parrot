@@ -133,8 +133,7 @@ module bp_uce
   // Full-line mode decouples memory reception from L1 installation. Each
   // detached request owns one line buffer, allowing responses to complete at
   // memory speed while the single cache write port drains lines later.
-  (* ram_style = "distributed" *)
-  logic [fill_width_p-1:0] prefetch_fill_data_r [prefetch_els_p*block_size_in_fill_lp];
+  logic [block_size_in_fill_lp-1:0][fill_width_p-1:0] prefetch_install_line_r;
   logic prefetch_free_v, prefetch_issue_v, prefetch_duplicate_v;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
   logic prefetch_demand_match;
@@ -616,6 +615,23 @@ module bp_uce
   wire prefetch_install_packet = prefetch_response
     & (prefetch_response_slot == prefetch_install_slot_r);
   wire prefetch_install_full = prefetch_complete_r[prefetch_install_slot_r];
+
+  // Bank by line beat so every bank has one response-write port and one
+  // independent installer-read port. Selecting an install slot loads the
+  // complete line into the BRAM output registers in parallel; the existing
+  // L1 port can then drain one beat per accepted cycle with no RAM-read bubble.
+  for (genvar i = 0; i < block_size_in_fill_lp; i++) begin : prefetch_fill_bank
+    (* ram_style = "block" *)
+    logic [fill_width_p-1:0] mem [prefetch_els_p];
+    always_ff @(posedge clk_i) begin
+      if (prefetch_full_line_p) begin
+        if (prefetch_response_yumi
+            && (prefetch_fill_count_r[prefetch_response_slot] == fill_cnt_width_lp'(i)))
+          mem[prefetch_response_slot] <= fsm_rev_data_li;
+        prefetch_install_line_r[i] <= mem[prefetch_install_slot_r];
+      end
+    end
+  end
   assign cache_req_credits_empty_o = ~cache_req_v_r
     && (prefetch_ignore_credits_p
         ? (credit_count_lo == prefetch_outstanding_count)
@@ -1193,8 +1209,7 @@ module bp_uce
             data_mem_pkt_cast_o.opcode = e_cache_data_mem_write;
             data_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
             data_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
-            data_mem_pkt_cast_o.data = prefetch_fill_data_r
-              [block_size_in_fill_lp*prefetch_install_slot_r+prefetch_install_count_r];
+            data_mem_pkt_cast_o.data = prefetch_install_line_r[prefetch_install_count_r];
             data_mem_pkt_cast_o.fill_index = 1'b1 << prefetch_install_count_r;
             data_mem_pkt_v_o = prefetch_install_full;
           end
@@ -1347,9 +1362,6 @@ module bp_uce
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
       if (prefetch_full_line_p && prefetch_response_yumi) begin
-        prefetch_fill_data_r
-          [block_size_in_fill_lp*prefetch_response_slot
-           +prefetch_fill_count_r[prefetch_response_slot]] <= fsm_rev_data_li;
         if (fsm_rev_last_li) begin
           prefetch_complete_r[prefetch_response_slot] <= 1'b1;
           prefetch_fill_count_r[prefetch_response_slot] <= '0;
