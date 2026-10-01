@@ -131,9 +131,16 @@ module bp_uce
   wire prefetch_v_li = prefetch_p & cache_req_v_i
     & (cache_req_cast_i.msg_type == e_cache_prefetch);
   logic [prefetch_els_p-1:0] prefetch_valid_r, prefetch_sent_r, prefetch_way_v_r;
+  logic [prefetch_els_p-1:0] prefetch_complete_r;
   logic [prefetch_els_p-1:0][paddr_width_p-1:0] prefetch_addr_r;
+  logic [prefetch_els_p-1:0][block_offset_width_lp-1:4] prefetch_critical_segment_r;
   logic [prefetch_els_p-1:0][`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_way_r;
   logic [prefetch_els_p-1:0][fill_cnt_width_lp-1:0] prefetch_fill_count_r;
+  // Full-line mode decouples memory reception from L1 installation. Each
+  // detached request owns one line buffer, allowing responses to complete at
+  // memory speed while the single cache write port drains lines later.
+  (* ram_style = "distributed" *)
+  logic [fill_width_p-1:0] prefetch_fill_data_r [prefetch_els_p*block_size_in_fill_lp];
   logic prefetch_free_v, prefetch_issue_v, prefetch_duplicate_v;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
   logic prefetch_demand_match;
@@ -177,9 +184,9 @@ module bp_uce
     end
   end
 
-  // Slots remain reserved until the final response, including across context
-  // redirects. A following demand waits behind a hint to that same physical
-  // line. No prefetched data is kept in the UCE itself.
+  // Slots remain reserved until a narrow reply completes or a buffered full
+  // line is installed/dropped. A following demand waits behind a hint to the
+  // same physical line unless its critical sector hits in the D-cache buffer.
   always_comb begin
     prefetch_free_v = 1'b0;
     prefetch_free_slot = '0;
@@ -210,6 +217,12 @@ module bp_uce
                                  ,fsm_rev_header_li.payload.way_id};
   assign prefetch_response_slot = prefetch_response_id[0+:prefetch_slot_width_lp];
   assign prefetch_response_id_v = prefetch_response_id < prefetch_els_p;
+  wire [paddr_width_p-1:0] prefetch_response_addr
+    = prefetch_addr_r[prefetch_response_slot]
+      + (paddr_width_p'(prefetch_fill_count_r[prefetch_response_slot]) << 3);
+  wire prefetch_response_critical
+    = prefetch_response_addr[block_offset_width_lp-1:4]
+      == prefetch_critical_segment_r[prefetch_response_slot];
 
   enum logic [4:0] {
     e_reset
@@ -497,8 +510,8 @@ module bp_uce
   // detached hints.  Their responses are independently matched and installed
   // in L1, so making the architectural switch wait for them serializes the
   // very latency that prefetching is intended to hide.
-  wire [`BSG_WIDTH(coh_noc_max_credits_p)-1:0] prefetch_sent_count
-    = `BSG_WIDTH(coh_noc_max_credits_p)'($countones(prefetch_sent_r));
+  wire [`BSG_WIDTH(coh_noc_max_credits_p)-1:0] prefetch_outstanding_count
+    = `BSG_WIDTH(coh_noc_max_credits_p)'($countones(prefetch_sent_r & ~prefetch_complete_r));
 
   // Detached hints reserve distinct ways relative to one another, but stores
   // and ordinary fills may change the set while memory is outstanding. Validate
@@ -510,6 +523,7 @@ module bp_uce
   } prefetch_install_state_e;
   prefetch_install_state_e prefetch_install_state_r;
   logic [prefetch_slot_width_lp-1:0] prefetch_install_slot_r;
+  logic [fill_cnt_width_lp-1:0] prefetch_install_count_r;
   logic [1:0] prefetch_install_drain_r;
   logic prefetch_install_clean_r;
   bp_cache_stat_info_s prefetch_install_stat;
@@ -567,19 +581,30 @@ module bp_uce
     end
   end
 
-  // The evaluation build installs complete detached replies in L1. The
-  // optimized pointer-stream build instead retains two useful words in the
-  // D-cache side buffer and leaves this installer idle.
+  logic prefetch_complete_v;
+  logic [prefetch_slot_width_lp-1:0] prefetch_complete_slot;
+  always_comb begin
+    prefetch_complete_v = 1'b0;
+    prefetch_complete_slot = '0;
+    for (int i = prefetch_els_p-1; i >= 0; i--)
+      if (prefetch_complete_r[i]) begin
+        prefetch_complete_v = 1'b1;
+        prefetch_complete_slot = prefetch_slot_width_lp'(i);
+      end
+  end
+
+  // Full-line replies first land in per-request fill buffers. The installer
+  // drains completed buffers independently; narrow mode retains only the two
+  // useful words in the D-cache side buffer and leaves this installer idle.
 `ifdef BP_PREFETCH_FULL_LINE
-  wire prefetch_install_begin = prefetch_response
+  wire prefetch_install_begin = prefetch_complete_v
     & (prefetch_install_state_r == e_pf_idle);
 `else
-  wire prefetch_install_begin = 1'b0 & prefetch_response
+  wire prefetch_install_begin = 1'b0 & prefetch_complete_v
     & (prefetch_install_state_r == e_pf_idle);
 `endif
   wire prefetch_install_safe_to_wait
-    = (credit_count_lo == prefetch_sent_count)
-      & (fsm_rev_header_li.size == block_msg_size_lp);
+    = (credit_count_lo == prefetch_outstanding_count);
   wire prefetch_install_available = prefetch_install_safe_to_wait
     & (is_ready | is_backoff)
     & ~cache_req_v_r & ~cache_req_metadata_v_r & ~cache_req_metadata_v_i
@@ -588,13 +613,23 @@ module bp_uce
   wire prefetch_install_owned = prefetch_install_acquire
     | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_stat, e_pf_check_stat,
                                        e_pf_invalidate, e_pf_fill, e_pf_publish});
+  // Once the victim is invalid, normal D-cache hits and critical-sector
+  // buffer hits may run alongside fill writes. The cache SRAM handshake
+  // pauses a background write on a conflicting fast-path access; misses stay
+  // held by the UCE ownership override until publication completes.
+  wire prefetch_install_lock = prefetch_install_acquire
+    | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_stat, e_pf_check_stat,
+                                       e_pf_invalidate});
+  wire prefetch_install_retire
+    = (prefetch_install_state_r == e_pf_drop)
+      | ((prefetch_install_state_r == e_pf_publish)
+         & tag_mem_pkt_v_o & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i);
   wire prefetch_install_packet = prefetch_response
     & (prefetch_response_slot == prefetch_install_slot_r);
-  wire prefetch_install_full = prefetch_fill_count_r[prefetch_install_slot_r]
-    == fill_cnt_width_lp'(block_size_in_fill_lp-1);
+  wire prefetch_install_full = prefetch_complete_r[prefetch_install_slot_r];
   assign cache_req_credits_empty_o = ~cache_req_v_r
     && (prefetch_ignore_credits_p
-        ? (credit_count_lo == prefetch_sent_count)
+        ? (credit_count_lo == prefetch_outstanding_count)
         : ((credit_count_lo == 0) && !(|prefetch_valid_r)));
   wire cache_req_credit_ready_lo = ~cache_req_credits_full_o | ~fsm_fwd_new_lo;
   logic [fill_width_p-1:0] writeback_data;
@@ -634,7 +669,7 @@ module bp_uce
   assign fsm_rev_yumi_lo = load_resp_yumi_lo | store_resp_v_li | prefetch_response_yumi;
   assign cache_req_id_o = cache_req_r.id;
   assign cache_req_lock_o = is_reset | is_init | inval_v_r | clean_v_r | flush_v_r
-    | prefetch_install_owned;
+    | prefetch_install_lock;
   logic blocking_req_v_lo;
   always_comb
     begin
@@ -1106,24 +1141,48 @@ module bp_uce
         data_mem_pkt_v_o = 1'b1;
         prefetch_response_yumi = data_mem_pkt_yumi_i;
       end
+`else
+      // Capture every beat in its request slot, but immediately forward the
+      // requested 16-byte sector to the D-cache's ordinary advisory buffer.
+      // Noncritical beats have no cache-port dependency and are accepted
+      // directly. L1 installation proceeds later from the completed buffer.
+      if (prefetch_response) begin
+        if (prefetch_response_critical) begin
+          data_mem_pkt_cast_o = '0;
+          data_mem_pkt_cast_o.opcode = e_cache_data_mem_prefetch;
+          data_mem_pkt_cast_o.addr = prefetch_response_addr;
+          data_mem_pkt_cast_o.data = fsm_rev_data_li;
+          data_mem_pkt_v_o = 1'b1;
+          prefetch_response_yumi = data_mem_pkt_yumi_i;
+        end else begin
+          prefetch_response_yumi = 1'b1;
+        end
+      end
 `endif
 
       // The shared reverse stream must make progress even if an ordinary miss
       // is waiting for a response behind this hint. Never wait for that FSM to
       // become idle: a busy-at-first-beat decision drops the entire packet.
       if (prefetch_install_state_r == e_pf_drop)
-        prefetch_response_yumi = prefetch_install_packet;
+        prefetch_response_yumi = prefetch_response;
 
-      // Exclusive installation wins over ALL admission/forwarding overrides
-      // above, including acquisition on this cycle. In particular, no ordinary
-      // request may capture victim metadata while its way is being replaced.
+      // Ordinary requests remain held throughout installation. Once victim
+      // selection is complete, new detached hints may allocate alongside
+      // background fill writes; their metadata read naturally arbitrates with
+      // publication through the D-cache SRAM handshakes.
       if (prefetch_install_owned) begin
-        cache_req_yumi_o = 1'b0;
+        if (prefetch_install_lock | ~prefetch_v_li)
+          cache_req_yumi_o = 1'b0;
         cache_req_critical_o = 1'b0;
         cache_req_last_o = 1'b0;
         cache_req_done = 1'b0;
-        fsm_fwd_v_lo = 1'b0;
-        prefetch_issue = 1'b0;
+        // Victim selection must exclude new traffic. Once the victim is
+        // invalid and the installer is only draining buffered data, detached
+        // requests already in other slots may continue onto the memory link.
+        if (prefetch_install_lock) begin
+          fsm_fwd_v_lo = 1'b0;
+          prefetch_issue = 1'b0;
+        end
         load_resp_yumi_lo = 1'b0;
         state_n = state_r;
         data_mem_pkt_v_o = 1'b0;
@@ -1149,13 +1208,10 @@ module bp_uce
             data_mem_pkt_cast_o.opcode = e_cache_data_mem_write;
             data_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
             data_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
-            data_mem_pkt_cast_o.data = fsm_rev_data_li;
-            data_mem_pkt_cast_o.fill_index = 1'b1 << prefetch_fill_count_r[prefetch_install_slot_r];
-            data_mem_pkt_v_o = prefetch_install_packet;
-            // Keep the final response beat held until a separate tag write.
-            // This prevents tag acceptance ahead of a backpressured data write.
-            prefetch_response_yumi = prefetch_install_packet
-              & data_mem_pkt_yumi_i & ~fsm_rev_last_li;
+            data_mem_pkt_cast_o.data = prefetch_fill_data_r
+              [block_size_in_fill_lp*prefetch_install_slot_r+prefetch_install_count_r];
+            data_mem_pkt_cast_o.fill_index = 1'b1 << prefetch_install_count_r;
+            data_mem_pkt_v_o = prefetch_install_full;
           end
           e_pf_publish: begin
             tag_mem_pkt_cast_o.opcode = e_cache_tag_mem_set_tag;
@@ -1163,16 +1219,31 @@ module bp_uce
             tag_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
             tag_mem_pkt_cast_o.state = e_COH_M;
             tag_mem_pkt_cast_o.tag = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+index_width_lp+:tag_width_p];
-            tag_mem_pkt_v_o = prefetch_install_packet & prefetch_install_full & fsm_rev_last_li;
+            tag_mem_pkt_v_o = prefetch_install_full;
             stat_mem_pkt_cast_o.opcode = e_cache_stat_mem_set_lru;
             stat_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
             stat_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
             stat_mem_pkt_v_o = tag_mem_pkt_v_o;
-            prefetch_response_yumi = tag_mem_pkt_v_o & tag_mem_pkt_yumi_i
-              & stat_mem_pkt_yumi_i;
           end
           default: begin end
         endcase
+`ifdef BP_PREFETCH_FULL_LINE
+        // A returning critical sector takes priority over a background fill
+        // write. Noncritical beats only write their request buffer and can be
+        // accepted alongside tag/stat installer operations.
+        if (prefetch_response) begin
+          if (prefetch_response_critical) begin
+            data_mem_pkt_cast_o = '0;
+            data_mem_pkt_cast_o.opcode = e_cache_data_mem_prefetch;
+            data_mem_pkt_cast_o.addr = prefetch_response_addr;
+            data_mem_pkt_cast_o.data = fsm_rev_data_li;
+            data_mem_pkt_v_o = 1'b1;
+            prefetch_response_yumi = data_mem_pkt_yumi_i;
+          end else begin
+            prefetch_response_yumi = 1'b1;
+          end
+        end
+`endif
       end
     end
 
@@ -1180,12 +1251,14 @@ module bp_uce
     if (reset_i) begin
       prefetch_install_state_r <= e_pf_idle;
       prefetch_install_slot_r <= '0;
+      prefetch_install_count_r <= '0;
       prefetch_install_drain_r <= '0;
       prefetch_install_clean_r <= 1'b0;
     end else begin
       unique case (prefetch_install_state_r)
         e_pf_idle: if (prefetch_install_begin & prefetch_install_available) begin
-          prefetch_install_slot_r <= prefetch_response_slot;
+          prefetch_install_slot_r <= prefetch_complete_slot;
+          prefetch_install_count_r <= '0;
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
           prefetch_install_state_r <= e_pf_drain;
@@ -1193,7 +1266,8 @@ module bp_uce
           // Do not hold an ordinary response behind an advisory reply. Local
           // cache-pipeline conflicts are transient and retain the packet;
           // an ordinary outstanding credit or malformed size must drain it.
-          prefetch_install_slot_r <= prefetch_response_slot;
+          prefetch_install_slot_r <= prefetch_complete_slot;
+          prefetch_install_count_r <= '0;
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
           prefetch_install_state_r <= e_pf_drop;
@@ -1220,11 +1294,16 @@ module bp_uce
         end
         e_pf_invalidate: if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i)
           prefetch_install_state_r <= e_pf_fill;
-        e_pf_fill: if (prefetch_install_packet & fsm_rev_last_li & data_mem_pkt_yumi_i)
-          // An incomplete line remains invalid; never expose a partial fill.
-          prefetch_install_state_r <= prefetch_install_full ? e_pf_publish : e_pf_drop;
-        e_pf_publish, e_pf_drop: if (prefetch_response_yumi & fsm_rev_last_li)
+        e_pf_fill: if (data_mem_pkt_v_o & data_mem_pkt_yumi_i
+                       & (data_mem_pkt_cast_o.opcode == e_cache_data_mem_write)) begin
+          if (prefetch_install_count_r == fill_cnt_width_lp'(block_size_in_fill_lp-1))
+            prefetch_install_state_r <= e_pf_publish;
+          else
+            prefetch_install_count_r <= prefetch_install_count_r + 1'b1;
+        end
+        e_pf_publish: if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i)
           prefetch_install_state_r <= e_pf_idle;
+        e_pf_drop: prefetch_install_state_r <= e_pf_idle;
         default: prefetch_install_state_r <= e_pf_idle;
       endcase
     end
@@ -1235,7 +1314,9 @@ module bp_uce
       prefetch_valid_r <= '0;
       prefetch_sent_r <= '0;
       prefetch_way_v_r <= '0;
+      prefetch_complete_r <= '0;
       prefetch_addr_r <= '0;
+      prefetch_critical_segment_r <= '0;
       prefetch_way_r <= '0;
       prefetch_fill_count_r <= '0;
       prefetch_metadata_pending_v_r <= 1'b0;
@@ -1272,13 +1353,36 @@ module bp_uce
         prefetch_valid_r[prefetch_free_slot] <= 1'b1;
         prefetch_sent_r[prefetch_free_slot] <= 1'b0;
         prefetch_way_v_r[prefetch_free_slot] <= 1'b0;
+        prefetch_complete_r[prefetch_free_slot] <= 1'b0;
         prefetch_addr_r[prefetch_free_slot]
           <= {cache_req_cast_i.addr[paddr_width_p-1:prefetch_match_offset_width_lp]
               ,prefetch_match_offset_width_lp'(0)};
+        prefetch_critical_segment_r[prefetch_free_slot]
+          <= cache_req_cast_i.addr[block_offset_width_lp-1:4];
         prefetch_fill_count_r[prefetch_free_slot] <= '0;
       end
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
+`ifdef BP_PREFETCH_FULL_LINE
+      if (prefetch_response_yumi) begin
+        prefetch_fill_data_r
+          [block_size_in_fill_lp*prefetch_response_slot
+           +prefetch_fill_count_r[prefetch_response_slot]] <= fsm_rev_data_li;
+        if (fsm_rev_last_li) begin
+          prefetch_complete_r[prefetch_response_slot] <= 1'b1;
+          prefetch_fill_count_r[prefetch_response_slot] <= '0;
+        end else begin
+          prefetch_fill_count_r[prefetch_response_slot]
+            <= prefetch_fill_count_r[prefetch_response_slot] + 1'b1;
+        end
+      end
+      if (prefetch_install_retire) begin
+        prefetch_valid_r[prefetch_install_slot_r] <= 1'b0;
+        prefetch_sent_r[prefetch_install_slot_r] <= 1'b0;
+        prefetch_way_v_r[prefetch_install_slot_r] <= 1'b0;
+        prefetch_complete_r[prefetch_install_slot_r] <= 1'b0;
+      end
+`else
       if (prefetch_response_yumi & fsm_rev_last_li) begin
         prefetch_valid_r[prefetch_response_slot] <= 1'b0;
         prefetch_sent_r[prefetch_response_slot] <= 1'b0;
@@ -1288,6 +1392,7 @@ module bp_uce
         prefetch_fill_count_r[prefetch_response_slot]
           <= prefetch_fill_count_r[prefetch_response_slot] + 1'b1;
       end
+`endif
     end
   end
 
@@ -1296,19 +1401,28 @@ module bp_uce
   // prefetch slots must not interleave within a packet. This is the existing
   // bridge/stream contract, not a new guarantee about arbitrary AXI RID order.
   always_ff @(negedge clk_i) if (!reset_i) begin
+`ifndef BP_PREFETCH_FULL_LINE
     if (prefetch_install_begin)
       assert (fsm_rev_new_li && prefetch_fill_count_r[prefetch_response_slot] == '0)
         else $error("UCE prefetch installation did not start at a packet boundary");
     if (prefetch_install_state_r != e_pf_idle && fsm_rev_v_li)
       assert (prefetch_install_packet)
         else $error("UCE reverse packet interleaved while installing/dropping a prefetch");
+`else
+    if (prefetch_install_begin)
+      assert (prefetch_complete_r[prefetch_complete_slot])
+        else $error("UCE prefetch installation selected an incomplete fill buffer");
+`endif
     if (prefetch_install_owned) begin
-      assert (!cache_req_yumi_o && !fsm_fwd_v_lo && !prefetch_issue
+      assert ((!cache_req_yumi_o || (prefetch_v_li & ~prefetch_install_lock))
+              && (!prefetch_install_lock || (!fsm_fwd_v_lo && !prefetch_issue))
               && !cache_req_critical_o && !cache_req_last_o && state_n == state_r)
         else $error("UCE ordinary request advanced during exclusive prefetch installation");
-      assert (!cache_req_v_r && !cache_req_metadata_v_r
-              && !cache_req_metadata_v_i && !prefetch_metadata_pending_v_r
-              && credit_count_lo == prefetch_sent_count)
+      assert (!cache_req_v_r
+              && (!prefetch_install_lock
+                  || (!cache_req_metadata_v_r && !cache_req_metadata_v_i
+                      && !prefetch_metadata_pending_v_r))
+              && credit_count_lo == prefetch_outstanding_count)
         else $error("UCE prefetch installation overlaps accepted ordinary work");
     end
     if (prefetch_install_state_r inside {e_pf_invalidate, e_pf_fill, e_pf_publish})
@@ -1319,12 +1433,8 @@ module bp_uce
               && !prefetch_install_reserved_ways[prefetch_install_way])
         else $error("UCE prefetch selected a dirty or reserved install way");
     if (prefetch_install_state_r == e_pf_publish)
-      assert (prefetch_install_full && prefetch_install_packet && fsm_rev_last_li
-              && !data_mem_pkt_v_o && stat_mem_pkt_v_o)
+      assert (prefetch_install_full && !data_mem_pkt_v_o && stat_mem_pkt_v_o)
         else $error("UCE prefetch publishes before complete data installation");
-    if (prefetch_install_state_r == e_pf_drop && prefetch_install_packet)
-      assert (prefetch_response_yumi)
-        else $error("UCE dropped prefetch blocks the reverse stream");
   end
   always_ff @(negedge clk_i) if (!reset_i && prefetch_response_header) begin
     assert (prefetch_response_id_v
