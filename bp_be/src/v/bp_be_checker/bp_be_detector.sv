@@ -76,6 +76,9 @@ module bp_be_detector
   bp_be_dep_status_s [3:0] dep_status_r;
   logic [3:0][thread_id_width_p-1:0] dep_thread_id_r;
   logic [3:0] dep_irf_w_r;
+  logic ctxtsw_irf_tail_v_r;
+  logic [thread_id_width_p-1:0] ctxtsw_irf_tail_thread_id_r;
+  logic [reg_addr_width_gp-1:0] ctxtsw_irf_tail_rd_addr_r;
   logic [3:0] dep_npc_seed_r;
   logic register_seed_active_r;
 
@@ -291,6 +294,9 @@ module bp_be_detector
         ctxtsw_rs1_haz_v |= dep_irf_w_r[i]
                            & (check_thread_id_li == dep_thread_id_r[i])
                            & (check_rs1_li == dep_status_r[i].rd_addr);
+      ctxtsw_rs1_haz_v |= ctxtsw_irf_tail_v_r
+                          & (check_thread_id_li == ctxtsw_irf_tail_thread_id_r)
+                          & (check_rs1_li == ctxtsw_irf_tail_rd_addr_r);
       ctxtsw_rs1_haz_v &= issue_pkt_cast_i.csrw
                          & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
                          & (issue_pkt_cast_i.instr inside {`RV64_CSRRW, `RV64_CSRRS, `RV64_CSRRC})
@@ -400,6 +406,9 @@ module bp_be_detector
     if (reset_i)
       begin
         dep_irf_w_r <= '0;
+        ctxtsw_irf_tail_v_r <= 1'b0;
+        ctxtsw_irf_tail_thread_id_r <= '0;
+        ctxtsw_irf_tail_rd_addr_r <= '0;
         dep_npc_seed_r <= '0;
       end
     else
@@ -407,6 +416,13 @@ module bp_be_detector
         // Age with the existing destination/thread tags even while issue stalls.
         // Squashed producers may conservatively delay only this CSR, then expire.
         dep_irf_w_r <= {dep_irf_w_r[2:0], dispatch_pkt_cast_i.v & dep_decode.irf_w_v};
+        // The early context target is read before calculator forwarding. Keep a
+        // lightweight fifth dependency stage so results that reach the GPR at
+        // the end of the normal four-stage window are visible before CSR800 is
+        // admitted. This costs only the valid bit and its thread/register tag.
+        ctxtsw_irf_tail_v_r <= dep_irf_w_r[3];
+        ctxtsw_irf_tail_thread_id_r <= dep_thread_id_r[3];
+        ctxtsw_irf_tail_rd_addr_r <= dep_status_r[3].rd_addr;
         dep_npc_seed_r <= {dep_npc_seed_r[2:0], dispatch_pkt_cast_i.v
                           & dispatch_pkt_cast_i.special.csrw
                           & (dispatch_pkt_cast_i.instr.t.itype.imm12 == 12'h801)};
