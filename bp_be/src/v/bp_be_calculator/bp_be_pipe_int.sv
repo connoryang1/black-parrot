@@ -127,16 +127,17 @@ module bp_be_pipe_int
     (.i(rs1[0+:dword_width_gp]), .o(popcount));
 
   logic [`BSG_WIDTH(word_width_gp)-1:0] clzh, clzl;
-  wire [`BSG_WIDTH(dword_width_gp)-1:0] clz = !clzh[5] ? clzh : (!opw_v << 5) | clzl;
+  wire [`BSG_WIDTH(dword_width_gp)-1:0] clz =
+    !clzh[5] ? clzh : (opw_v ? clzl : word_width_gp + clzl);
   bsg_counting_leading_zeros
    #(.width_p(word_width_gp))
    bclzh
-    (.a_i(rs1[word_width_gp+:word_width_gp]), .num_zero_o(clzh));
+    (.a_i(src1[word_width_gp+:word_width_gp]), .num_zero_o(clzh));
 
   bsg_counting_leading_zeros
    #(.width_p(word_width_gp))
    bclzl
-    (.a_i(rs1[0+:word_width_gp]), .num_zero_o(clzl));
+    (.a_i(src1[0+:word_width_gp]), .num_zero_o(clzl));
 
   logic [num_bytes_lp-1:0][7:0] orcb;
   for (genvar i = 0; i < num_bytes_lp; i++)
@@ -201,4 +202,3 @@ module bp_be_pipe_int
   assign npc_o = btaken_o ? taken_tgt : ntaken_tgt;
 
 endmodule
-
