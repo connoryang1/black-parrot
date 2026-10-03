@@ -1254,6 +1254,7 @@ module bp_be_top
      ,.ordered_v_o(ordered_v)
      ,.dispatch_pkt_i(dispatch_pkt)
      ,.commit_pkt_i(commit_pkt)
+     ,.iwb_pkt_i(iwb_pkt)
 
      ,.late_wb_pkt_i(late_wb_pkt)
      ,.late_wb_yumi_i(late_wb_yumi_li)

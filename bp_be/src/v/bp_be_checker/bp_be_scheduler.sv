@@ -428,10 +428,26 @@ module bp_be_scheduler
   wire [thread_id_width_p-1:0] issue_thread_id_li =
     issue_pkt_cast_o.thread_id[0 +: thread_id_width_p];
 
+  // CSR800 classifies the target before calculator operand forwarding. When
+  // its producer reaches architectural integer writeback in this cycle, use
+  // that packet directly rather than relying on same-cycle FPGA BRAM read/write
+  // semantics in the synchronous register file.
+  wire issue_ctxtsw_iwb_bypass_v = issue_ctxtsw_v
+                                    & ~issue_ctxtsw_imm_v
+                                    & iwb_pkt_cast_i.ird_w_v
+                                    & (iwb_pkt_cast_i.thread_id == issue_thread_id_li)
+                                    & (iwb_pkt_cast_i.rd_addr
+                                       == issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
+                                    & (iwb_pkt_cast_i.rd_addr != '0);
+  wire [context_id_width_p-1:0] issue_ctxtsw_register_target_tid =
+    issue_ctxtsw_iwb_bypass_v
+      ? iwb_pkt_cast_i.rd_data[0 +: context_id_width_p]
+      : irf_rs1[0 +: context_id_width_p];
+
   wire [context_id_width_p-1:0] issue_ctxtsw_target_tid =
     issue_ctxtsw_imm_v
       ? context_id_width_p'(issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
-      : context_id_width_p'(irf_rs1[0 +: context_id_width_p]);
+      : issue_ctxtsw_register_target_tid;
 
   wire issue_ctxtsw_switch_v = issue_ctxtsw_v & (issue_ctxtsw_target_tid != current_virtual_context_id_i);
   wire issue_ctxtsw_dispatch_v = fe_queue_read_li
