@@ -44,8 +44,6 @@ module bp_be_detector
    , output logic                      ordered_v_o
    , input [dispatch_pkt_width_lp-1:0] dispatch_pkt_i
    , input [commit_pkt_width_lp-1:0]   commit_pkt_i
-   , input [wb_pkt_width_lp-1:0]       iwb_pkt_i
-
    , input [wb_pkt_width_lp-1:0]       late_wb_pkt_i
    , input                             late_wb_yumi_i
 
@@ -57,7 +55,6 @@ module bp_be_detector
   `bp_cast_i(bp_be_issue_pkt_s, issue_pkt);
   `bp_cast_i(bp_be_dispatch_pkt_s, dispatch_pkt);
   `bp_cast_i(bp_be_commit_pkt_s, commit_pkt);
-  `bp_cast_i(bp_be_wb_pkt_s, iwb_pkt);
   `bp_cast_i(bp_be_wb_pkt_s, late_wb_pkt);
 
   // Integer data hazards
@@ -289,20 +286,10 @@ module bp_be_detector
       // writeback, including injected load/divide completions with no pipe flag.
       // Do not gate on issue.v: it depends on queue enable and hence hazard_v_o.
       ctxtsw_rs1_haz_v = 1'b0;
-      for (int i = 0; i < 3; i++)
+      for (int i = 0; i < 4; i++)
         ctxtsw_rs1_haz_v |= dep_irf_w_r[i]
                            & (check_thread_id_li == dep_thread_id_r[i])
                            & (check_rs1_li == dep_status_r[i].rd_addr);
-      // Stage three is the architectural integer-writeback cycle. Release the
-      // switch only when that exact thread/register value is present on IWB;
-      // the scheduler then consumes IWB directly instead of depending on the
-      // FPGA block RAM's same-cycle read/write behavior.
-      ctxtsw_rs1_haz_v |= dep_irf_w_r[3]
-                          & (check_thread_id_li == dep_thread_id_r[3])
-                          & (check_rs1_li == dep_status_r[3].rd_addr)
-                          & ~(iwb_pkt_cast_i.ird_w_v
-                              & (check_thread_id_li == iwb_pkt_cast_i.thread_id)
-                              & (check_rs1_li == iwb_pkt_cast_i.rd_addr));
       ctxtsw_rs1_haz_v &= issue_pkt_cast_i.csrw
                          & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
                          & (issue_pkt_cast_i.instr inside {`RV64_CSRRW, `RV64_CSRRS, `RV64_CSRRC})

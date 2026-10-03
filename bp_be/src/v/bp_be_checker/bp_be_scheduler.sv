@@ -175,6 +175,7 @@ module bp_be_scheduler
   localparam entry_cinstr_gp = 2**fetch_sel_p;
   localparam op_ptr_width_lp = `BSG_WIDTH(entry_cinstr_gp);
   logic ctxtsw_issue_hold_r;
+  bp_be_wb_pkt_s ctxtsw_iwb_pkt_r;
   logic ctxtsw_first_target_dispatch_r;
   logic [3:0] ctxtsw_cancel_drain_r;
   wire ctxtsw_issue_hold_clear_li                  = commit_pkt_cast_i.ctxtsw
@@ -428,20 +429,19 @@ module bp_be_scheduler
   wire [thread_id_width_p-1:0] issue_thread_id_li =
     issue_pkt_cast_o.thread_id[0 +: thread_id_width_p];
 
-  // CSR800 classifies the target before calculator operand forwarding. When
-  // its producer reaches architectural integer writeback in this cycle, use
-  // that packet directly rather than relying on same-cycle FPGA BRAM read/write
-  // semantics in the synchronous register file.
+  // The detector holds a dependent CSR800 through its producer's live IWB
+  // cycle. Consume that exact writeback on the following cycle rather than
+  // relying on FPGA block-RAM read-during-write behavior.
   wire issue_ctxtsw_iwb_bypass_v = issue_ctxtsw_v
                                     & ~issue_ctxtsw_imm_v
-                                    & iwb_pkt_cast_i.ird_w_v
-                                    & (iwb_pkt_cast_i.thread_id == issue_thread_id_li)
-                                    & (iwb_pkt_cast_i.rd_addr
+                                    & ctxtsw_iwb_pkt_r.ird_w_v
+                                    & (ctxtsw_iwb_pkt_r.thread_id == issue_thread_id_li)
+                                    & (ctxtsw_iwb_pkt_r.rd_addr
                                        == issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
-                                    & (iwb_pkt_cast_i.rd_addr != '0);
+                                    & (ctxtsw_iwb_pkt_r.rd_addr != '0);
   wire [context_id_width_p-1:0] issue_ctxtsw_register_target_tid =
     issue_ctxtsw_iwb_bypass_v
-      ? iwb_pkt_cast_i.rd_data[0 +: context_id_width_p]
+      ? ctxtsw_iwb_pkt_r.rd_data[0 +: context_id_width_p]
       : irf_rs1[0 +: context_id_width_p];
 
   wire [context_id_width_p-1:0] issue_ctxtsw_target_tid =
@@ -477,6 +477,12 @@ module bp_be_scheduler
       ctxtsw_issue_hold_r <= 1'b0;
     else if (issue_ctxtsw_dispatch_v)
       ctxtsw_issue_hold_r <= 1'b1;
+
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ctxtsw_iwb_pkt_r <= '0;
+    else
+      ctxtsw_iwb_pkt_r <= iwb_pkt_cast_i;
 
   // A context-switch redirect can replace the issue-queue PC/instruction one
   // cycle before the queue's registered branch-metadata thread tag.  Preserve
