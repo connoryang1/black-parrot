@@ -469,6 +469,7 @@ module bp_be_dcache
   logic [prefetch_buffer_els_lp-1:0] prefetch_buffer_v_r;
   logic [prefetch_buffer_els_lp-1:0][paddr_width_p-1:4] prefetch_buffer_addr_r;
   logic [prefetch_buffer_els_lp-1:0][1:0] prefetch_buffer_word_v_r;
+  logic [prefetch_buffer_slot_width_lp-1:0] prefetch_buffer_replace_r;
   // The data array has one synchronous write and one asynchronous selected
   // read. Leaving its contents unreset lets FPGA tools map it to compact
   // distributed RAM; word-valid state guards every architectural read.
@@ -1052,7 +1053,10 @@ module bp_be_dcache
   logic [prefetch_buffer_slot_width_lp-1:0] prefetch_buffer_write_slot;
   always_comb begin
     prefetch_buffer_write_match = 1'b0;
-    prefetch_buffer_write_slot = '0;
+    // A full advisory buffer may contain predictions that software never
+    // consumes. Rotate those replacements so a stream of new replies cannot
+    // repeatedly overwrite one slot while stale entries pin every other slot.
+    prefetch_buffer_write_slot = prefetch_buffer_replace_r;
     for (int i = prefetch_buffer_els_lp-1; i >= 0; i--) begin
       if (prefetch_buffer_v_r[i]
           & (prefetch_buffer_addr_r[i]
@@ -1086,6 +1090,7 @@ module bp_be_dcache
       prefetch_buffer_v_r <= '0;
       prefetch_buffer_addr_r <= '0;
       prefetch_buffer_word_v_r <= '0;
+      prefetch_buffer_replace_r <= '0;
     end else begin
       // A pointer hint is one-use at segment granularity. The memory reply
       // carries two words, but retaining the unrequested neighbor after a hit
@@ -1121,6 +1126,13 @@ module bp_be_dcache
         prefetch_buffer_data_r[2*prefetch_buffer_write_slot
                                + data_mem_pkt_cast_i.addr[3]]
           <= data_mem_pkt_cast_i.data[0+:dword_width_gp];
+        if (!prefetch_buffer_write_match & (&prefetch_buffer_v_r)) begin
+          if (prefetch_buffer_replace_r
+              == prefetch_buffer_slot_width_lp'(prefetch_buffer_els_lp-1))
+            prefetch_buffer_replace_r <= '0;
+          else
+            prefetch_buffer_replace_r <= prefetch_buffer_replace_r + 1'b1;
+        end
       end
     end
   end
