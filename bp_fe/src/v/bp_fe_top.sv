@@ -27,6 +27,7 @@ module bp_fe_top
    , output logic                                     ctxtsw_ready_o
    , input                                            ctxtsw_v_i
    , output logic                                     ctxtsw_yumi_o
+   , input                                            ctxtsw_cancel_i
    , input [vaddr_width_p-1:0]                        ctxtsw_npc_i
    , input [thread_id_width_p-1:0]                    ctxtsw_thread_id_i
    , input [rv64_priv_width_gp-1:0]                   ctxtsw_priv_i
@@ -404,6 +405,7 @@ module bp_fe_top
 
      ,.ctxtsw_v_i(ctxtsw_v_i)
      ,.ctxtsw_yumi_o(ctxtsw_yumi_o)
+     ,.ctxtsw_cancel_i(ctxtsw_cancel_i)
      ,.ctxtsw_npc_i(ctxtsw_npc_i)
      ,.ctxtsw_thread_id_i(ctxtsw_thread_id_i)
      ,.ctxtsw_priv_i(ctxtsw_priv_i)

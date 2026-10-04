@@ -40,6 +40,7 @@ module bp_be_top
    , input                                           fe_ctxtsw_ready_i
    , output logic                                    fe_ctxtsw_v_o
    , input                                           fe_ctxtsw_yumi_i
+   , output logic                                    fe_ctxtsw_cancel_o
    , output logic [vaddr_width_p-1:0]                fe_ctxtsw_npc_o
    , output logic [thread_id_width_p-1:0]            fe_ctxtsw_thread_id_o
    , output logic [rv64_priv_width_gp-1:0]           fe_ctxtsw_priv_o
@@ -589,6 +590,10 @@ module bp_be_top
   assign scheduler_rpush_fp_v_li = ctx_rpush_fp_v_lo & ctx_rpush_resident_v_li;
 
   assign fe_ctxtsw_v_o = context_cache_launch_v_li | fast_ctxtsw_launch_v_li | ctxtsw_launch_lo;
+  // A younger speculative context switch may already be buffered in the FE
+  // when an older trap, redirect, or resume retires.  Cancel that payload in
+  // the same cycle so it cannot override the architectural redirect.
+  assign fe_ctxtsw_cancel_o = ctxtsw_token_cancel_v_li;
   assign fe_ctxtsw_npc_o = context_cache_launch_v_li
                             ? virtual_context_npc_r[context_cache_target_virtual_context_id_r]
                             : fast_ctxtsw_launch_v_li ? fast_ctxtsw_target_npc_lo : pending_ctxtsw_npc_r;

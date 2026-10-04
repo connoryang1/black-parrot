@@ -27,6 +27,7 @@ module bp_fe_controller
 
    , input                                            ctxtsw_v_i
    , output logic                                     ctxtsw_yumi_o
+   , input                                            ctxtsw_cancel_i
    , input [vaddr_width_p-1:0]                        ctxtsw_npc_i
    , input [thread_id_width_p-1:0]                    ctxtsw_thread_id_i
    , input [rv64_priv_width_gp-1:0]                   ctxtsw_priv_i
@@ -171,7 +172,7 @@ module bp_fe_controller
   // Capture only after the BE has completed any nonresident restore, then hold
   // the payload stable until the forced I-cache request is accepted.
   wire ctxtsw_capture_v = ctxtsw_v_i & is_run & ~ctxtsw_pending_r;
-  wire ctxtsw_accept_v  = ctxtsw_pending_r & is_run & icache_yumi_i;
+  wire ctxtsw_accept_v  = ctxtsw_pending_r & is_run & icache_yumi_i & ~ctxtsw_cancel_i;
 
   always_ff @(posedge clk_i)
     if (reset_i) begin
@@ -182,7 +183,9 @@ module bp_fe_controller
       ctxtsw_translation_en_r <= 1'b0;
       ctxtsw_asid_r           <= '0;
     end else begin
-      if (ctxtsw_capture_v) begin
+      if (ctxtsw_cancel_i) begin
+        ctxtsw_pending_r <= 1'b0;
+      end else if (ctxtsw_capture_v) begin
         ctxtsw_pending_r        <= 1'b1;
         ctxtsw_npc_r            <= ctxtsw_npc_i;
         ctxtsw_thread_id_r      <= ctxtsw_thread_id_i;
