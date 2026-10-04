@@ -85,6 +85,7 @@ module bp_be_csr_wrapper_mt
 
    // Bootstrap: write target NPC for a virtual context (CSR 0x801)
    , output logic                            ctx_npc_write_v_o
+   , output logic                            ctx_npc_write_rebind_o
    , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
@@ -115,6 +116,7 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            irq_pending_co;
   logic [num_threads_p-1:0]                            irq_waiting_co;
   logic [num_threads_p-1:0]                            ctx_npc_write_v_co;
+  logic [num_threads_p-1:0]                            ctx_npc_write_rebind_co;
   logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_co;
   logic [num_threads_p-1:0][vaddr_width_p-1:0]        ctx_npc_write_npc_co;
   logic [num_threads_p-1:0]                            ctx_rpush_v_co;
@@ -198,6 +200,7 @@ module bp_be_csr_wrapper_mt
        ,.csr_context_restore_npc_i(csr_context_restore_npc_i)
        ,.csr_context_save_data_o(csr_context_save_data_co[i])
        ,.ctx_npc_write_v_o(ctx_npc_write_v_co[i])
+       ,.ctx_npc_write_rebind_o(ctx_npc_write_rebind_co[i])
        ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_co[i])
        ,.ctx_npc_write_npc_o(ctx_npc_write_npc_co[i])
 
@@ -227,6 +230,7 @@ module bp_be_csr_wrapper_mt
   assign irq_pending_o         = irq_pending_co[current_physical_thread_id_i];
   assign irq_waiting_o         = irq_waiting_co[current_physical_thread_id_i];
   assign ctx_npc_write_v_o     = ctx_npc_write_v_co[current_physical_thread_id_i];
+  assign ctx_npc_write_rebind_o = ctx_npc_write_rebind_co[current_physical_thread_id_i];
   assign ctx_npc_write_virtual_context_id_o   = ctx_npc_write_virtual_context_id_co[current_physical_thread_id_i];
   assign ctx_npc_write_npc_o   = ctx_npc_write_npc_co[current_physical_thread_id_i];
   assign ctx_rpush_v_o         = ctx_rpush_v_co[current_physical_thread_id_i];

@@ -64,6 +64,7 @@ module bp_be_csr
    // Bootstrap: write a target NPC for a virtual context (CSR 0x801)
    // Write format: upper bits = context_id, lower vaddr_width_p bits = target NPC
    , output logic                            ctx_npc_write_v_o
+   , output logic                            ctx_npc_write_rebind_o
    , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
@@ -920,10 +921,13 @@ module bp_be_csr
 
   assign frm_dyn_o = rv64_frm_e'(fcsr_lo.frm);
 
-  // CSR 0x801 write: set the NPC for the virtual context whose ID is in the upper bits
+  // CSR 0x801 write: set the NPC for the virtual context whose ID is in the upper bits.
+  // Bit 63 explicitly rebinds the target's privilege/translation CSR image to
+  // the caller. Ordinary reseeds preserve the target's private CSR state.
   // Write format: csr_data_li[vaddr_width_p +: context_id_width_p] = context_id
   //               csr_data_li[vaddr_width_p-1:0]                   = target NPC
   assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801);
+  assign ctx_npc_write_rebind_o = ctx_npc_write_v_o & csr_data_li[dword_width_gp-1];
   assign ctx_npc_write_virtual_context_id_o = csr_data_li[vaddr_width_p +: context_id_width_p];
   assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
 

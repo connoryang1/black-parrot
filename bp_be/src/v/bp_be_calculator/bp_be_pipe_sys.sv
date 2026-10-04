@@ -79,6 +79,7 @@ module bp_be_pipe_sys
 
    // Bootstrap: write target NPC for a virtual context (CSR 0x801)
    , output logic                            ctx_npc_write_v_o
+   , output logic                            ctx_npc_write_rebind_o
    , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
@@ -172,6 +173,7 @@ module bp_be_pipe_sys
      ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_i)
      ,.csr_context_save_data_o(csr_context_save_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
+     ,.ctx_npc_write_rebind_o(ctx_npc_write_rebind_o)
      ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
      ,.ctx_rpush_v_o(ctx_rpush_v_o)

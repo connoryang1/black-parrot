@@ -113,6 +113,7 @@ module bp_be_top
   logic [1:0] ctxtsw_target_priv_mode_lo;
   logic ctxtsw_target_translation_en_lo;
   logic [asid_width_p-1:0] ctxtsw_target_asid_lo;
+  logic ctx_npc_write_rebind_lo;
   logic pending_ctxtsw_v_r;
   logic pending_ctxtsw_sent_r;
   logic ctxtsw_launch_pending_r;
@@ -311,7 +312,8 @@ module bp_be_top
   wire csr_context_resident_init_v_li = ctx_npc_write_resident_v_li
     && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
     && (ctx_npc_write_physical_thread_id_li < num_threads_p)
-    && !virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]
+    && (ctx_npc_write_rebind_lo
+        || !virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo])
     && (ctx_npc_write_physical_thread_id_li != csr_context_save_physical_thread_id_li);
   wire csr_context_restore_v_li = csr_context_cache_restore_v_li | csr_context_resident_init_v_li;
   // A committed NPC write to an initialized inactive resident bank changes
@@ -322,6 +324,7 @@ module bp_be_top
     && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
     && (ctx_npc_write_physical_thread_id_li < num_threads_p)
     && virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]
+    && !ctx_npc_write_rebind_lo
     && (ctx_npc_write_physical_thread_id_li != current_physical_thread_id_lo)
     && (ctx_npc_write_physical_thread_id_li != retire_thread_id_lo)
     && (ctx_npc_write_physical_thread_id_li != csr_context_save_physical_thread_id_li)
@@ -764,7 +767,8 @@ module bp_be_top
         virtual_context_translation_en_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.translation_en_n;
         virtual_context_asid_r[ctx_npc_write_virtual_context_id_lo] <= trans_info_lo.asid;
 
-        if (!virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]) begin
+        if (ctx_npc_write_rebind_lo
+            || !virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]) begin
           // A bootstrap target has no prior CSR image.  Clone the seeding
           // context's architectural CSR state so a first launch
           // preserves the caller's privilege mode and SATP translation root.
@@ -1406,6 +1410,7 @@ module bp_be_top
      ,.csr_context_save_physical_thread_id_i(csr_context_save_physical_thread_id_li)
      ,.csr_context_save_data_o(csr_context_save_data_lo)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_lo)
+     ,.ctx_npc_write_rebind_o(ctx_npc_write_rebind_lo)
      ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_lo)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_lo)
      ,.ctx_rpush_v_o(ctx_rpush_v_lo)
