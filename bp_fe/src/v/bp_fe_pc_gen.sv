@@ -83,6 +83,12 @@ module bp_fe_pc_gen
   /////////////////////////////////////////////////////////////////////////////////////
   logic [ghist_width_p-1:0] ghistory_n, ghistory_r;
 
+  // Physical-debug experiment: retain BTB prediction for unconditional jumps,
+  // but fetch conditional branches down the not-taken path until the backend
+  // resolves them.  This separates conditional predictor behavior from the
+  // context-redirect and I-cache paths without changing architectural results.
+  localparam disable_conditional_prediction_lp = 1'b1;
+
   // Per-thread BTB/BHT select register
   logic [thread_id_width_p-1:0] thread_id_r;
   wire predictor_thread_change_v =
@@ -148,7 +154,7 @@ module bp_fe_pc_gen
       end
     else
       begin
-        next_pred  = bht_pred_lo;
+        next_pred  = disable_conditional_prediction_lp ? 1'b0 : bht_pred_lo;
         next_taken = btb_taken;
         next_pc    = btb_taken ? btb_br_tgt_lo : pc_plus;
 
@@ -335,7 +341,9 @@ module bp_fe_pc_gen
   assign pc_if1_aligned = `bp_addr_align(pc_if1_r, icache_bytes_lp);
   assign pc_if1 = fetch_catchup_i ? ntaken_tgt_lo : pc_if1_r;
 
-  assign btb_taken = btb_br_tgt_v_lo & (bht_pred_lo | btb_br_tgt_jmp_lo);
+  assign btb_taken = btb_br_tgt_v_lo
+                     & (btb_br_tgt_jmp_lo
+                        | (~disable_conditional_prediction_lp & bht_pred_lo));
   assign pc_plus = pc_if1_aligned + icache_bytes_lp;
 
   /////////////////////////////////////////////////////////////////////////////////////
