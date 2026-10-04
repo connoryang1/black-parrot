@@ -203,10 +203,15 @@ module bp_fe_controller
   assign redirect_br_nonbr_o        = !ctxtsw_accept_v & br_miss_nonbr;
   assign redirect_thread_id_o       = ctxtsw_accept_v
                                       ? ctxtsw_thread_id_r
-                                      : context_switch_v
+                                      : (context_switch_v | state_reset_v)
                                       ? fe_cmd_cast_i.operands.pc_redirect_operands.context_switch_thread_id
                                       : redirect_branch_metadata_fwd_cast.thread_id;
-  assign redirect_thread_id_v_o     = ctxtsw_accept_v | context_switch_v;
+  // A resident switch can reach commit before the FE accepts the speculative
+  // context redirect.  The BE then falls back to a state-reset command carrying
+  // the target slot in context_switch_thread_id.  Mark that command as an
+  // explicit thread change as well, or the target PC is fetched with the old
+  // register-bank metadata after a translated refill.
+  assign redirect_thread_id_v_o     = ctxtsw_accept_v | context_switch_v | state_reset_v;
   assign redirect_br_metadata_fwd_o = ctxtsw_accept_v
                                       ? branch_metadata_fwd_width_p'(ctxtsw_branch_metadata_fwd_cast)
                                       : fe_cmd_cast_i.operands.pc_redirect_operands.branch_metadata_fwd;
