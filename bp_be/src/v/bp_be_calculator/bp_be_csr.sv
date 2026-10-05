@@ -132,6 +132,13 @@ module bp_be_csr
   bp_be_csr_context_s csr_context_save;
   assign csr_context_restore = csr_context_restore_data_i;
 
+  // satp.ASID is WARL.  Keep its architectural readback consistent with the
+  // narrower ASID tag carried by the MMU/TLB interfaces.  Linux discovers the
+  // implemented ASID width by writing all ones and reading satp back; retaining
+  // unsupported bits would make it allocate aliases that the TLB cannot tell
+  // apart.
+  localparam logic [15:0] satp_asid_mask_lp = {16{1'b1}} >> (16-asid_width_p);
+
   // The muxed and demuxed CSR outputs
   logic [dword_width_gp-1:0] csr_data_lo;
   logic [dword_width_gp-1:0] ctx_l1_data_r;
@@ -826,6 +833,8 @@ module bp_be_csr
           dscratch1_li = csr_context_restore.dscratch1;
         end
       end
+
+      satp_li.asid = satp_li.asid & satp_asid_mask_lp;
     end
 
   assign irq_pending_o = (~dcsr_lo.step | dcsr_lo.stepie)
