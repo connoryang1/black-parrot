@@ -124,6 +124,8 @@ module bp_core_minimal
     logic [31:0] cycle_r;
     (* ram_style = "block" *) logic [63:0] icache_trace_mem [0:255];
     (* ram_style = "block" *) logic [63:0] dcache_trace_mem [0:255];
+    logic [63:0] icache_trace_data_r, dcache_trace_data_r;
+    logic miss_trace_read_source_r;
 
     wire icache_miss_accept = armed_r & icache_req_v_o & icache_req_yumi_i
                               & (icache_req_cast.msg_type == e_miss_load);
@@ -133,6 +135,9 @@ module bp_core_minimal
     assign miss_trace_status_li =
       {{(dword_width_gp-21){1'b0}}, armed_r, dcache_overflow_r, icache_overflow_r
        ,dcache_count_r, icache_count_r};
+    assign miss_trace_data_li = miss_trace_read_source_r
+                                ? dcache_trace_data_r
+                                : icache_trace_data_r;
 
     always_ff @(posedge clk_i)
       if (reset_i) begin
@@ -142,7 +147,7 @@ module bp_core_minimal
         icache_count_r <= '0;
         dcache_count_r <= '0;
         cycle_r <= '0;
-        miss_trace_data_li <= '0;
+        miss_trace_read_source_r <= 1'b0;
       end else begin
         cycle_r <= cycle_r + 1'b1;
 
@@ -174,10 +179,13 @@ module bp_core_minimal
           end
         end
 
-        if (miss_trace_read_v_lo)
-          miss_trace_data_li <= miss_trace_read_source_lo
-                                ? dcache_trace_mem[miss_trace_read_index_lo]
-                                : icache_trace_mem[miss_trace_read_index_lo];
+        if (miss_trace_read_v_lo) begin
+          // Keep the two registered read ports structurally independent so
+          // Vivado can infer one simple dual-port block RAM per history.
+          icache_trace_data_r <= icache_trace_mem[miss_trace_read_index_lo];
+          dcache_trace_data_r <= dcache_trace_mem[miss_trace_read_index_lo];
+          miss_trace_read_source_r <= miss_trace_read_source_lo;
+        end
       end
   end else begin : gen_no_cache_miss_trace
     assign miss_trace_status_li = '0;
