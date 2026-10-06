@@ -132,6 +132,15 @@ module bp_be_calculator_top
    , output logic [reg_addr_width_gp-1:0]            context_cache_dcache_resp_id_o
    , output logic [dword_width_gp-1:0]               context_cache_dcache_resp_data_o
 
+   , input [dword_width_gp-1:0]                      miss_trace_status_i
+   , input [dword_width_gp-1:0]                      miss_trace_data_i
+   , output logic                                    miss_trace_ctrl_v_o
+   , output logic                                    miss_trace_arm_o
+   , output logic                                    miss_trace_clear_o
+   , output logic                                    miss_trace_read_v_o
+   , output logic                                    miss_trace_read_source_o
+   , output logic [7:0]                              miss_trace_read_index_o
+
    // Early classified ctxtsw event. Observable only until BE context state
    // consumes it as an architectural mini-commit.
    , output logic                                    fast_ctxtsw_v_o
@@ -357,6 +366,14 @@ module bp_be_calculator_top
      ,.ctx_l1_cmd_w_o(ctx_l1_cmd_w_lo)
      ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_lo)
      ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_lo)
+     ,.miss_trace_status_i(miss_trace_status_i)
+     ,.miss_trace_data_i(miss_trace_data_i)
+     ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_o)
+     ,.miss_trace_arm_o(miss_trace_arm_o)
+     ,.miss_trace_clear_o(miss_trace_clear_o)
+     ,.miss_trace_read_v_o(miss_trace_read_v_o)
+     ,.miss_trace_read_source_o(miss_trace_read_source_o)
+     ,.miss_trace_read_index_o(miss_trace_read_index_o)
      );
 
   // Integer pipe: 1 cycle latency

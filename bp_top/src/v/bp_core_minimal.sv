@@ -16,6 +16,7 @@ module bp_core_minimal
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_fe_icache_engine_if_widths(paddr_width_p, icache_tag_width_p, icache_sets_p, icache_assoc_p, icache_data_width_p, icache_block_width_p, icache_fill_width_p, icache_req_id_width_p)
    `declare_bp_be_dcache_engine_if_widths(paddr_width_p, dcache_tag_width_p, dcache_sets_p, dcache_assoc_p, dcache_data_width_p, dcache_block_width_p, dcache_fill_width_p, dcache_req_id_width_p)
+   , parameter bit cache_miss_trace_p = 1'b0
    , localparam cfg_bus_width_lp = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
    )
   (input                                             clk_i
@@ -87,6 +88,8 @@ module bp_core_minimal
    );
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
+  `declare_bp_fe_icache_engine_if(paddr_width_p, icache_tag_width_p, icache_sets_p, icache_assoc_p, icache_data_width_p, icache_block_width_p, icache_fill_width_p, icache_req_id_width_p);
+  `declare_bp_be_dcache_engine_if(paddr_width_p, dcache_tag_width_p, dcache_sets_p, dcache_assoc_p, dcache_data_width_p, dcache_block_width_p, dcache_fill_width_p, dcache_req_id_width_p);
   `declare_bp_cfg_bus_s(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p);
 
   `bp_cast_i(bp_cfg_bus_s, cfg_bus);
@@ -101,6 +104,85 @@ module bp_core_minimal
   logic [rv64_priv_width_gp-1:0] fe_ctxtsw_priv_lo;
   logic fe_ctxtsw_translation_en_lo;
   logic [asid_width_p-1:0] fe_ctxtsw_asid_lo;
+
+  logic [dword_width_gp-1:0] miss_trace_status_li, miss_trace_data_li;
+  logic miss_trace_ctrl_v_lo, miss_trace_arm_lo, miss_trace_clear_lo;
+  logic miss_trace_read_v_lo, miss_trace_read_source_lo;
+  logic [7:0] miss_trace_read_index_lo;
+
+  // This temporary measurement block records accepted physical demand misses,
+  // after translation and before the I/D memory engines. Separate memories
+  // preserve simultaneous I- and D-side events and map to one RAMB18 each.
+  if (cache_miss_trace_p) begin : gen_cache_miss_trace
+    bp_fe_icache_req_s icache_req_cast;
+    bp_be_dcache_req_s dcache_req_cast;
+    assign icache_req_cast = icache_req_o;
+    assign dcache_req_cast = dcache_req_o;
+
+    logic armed_r, icache_overflow_r, dcache_overflow_r;
+    logic [8:0] icache_count_r, dcache_count_r;
+    logic [31:0] cycle_r;
+    (* ram_style = "block" *) logic [63:0] icache_trace_mem [0:255];
+    (* ram_style = "block" *) logic [63:0] dcache_trace_mem [0:255];
+
+    wire icache_miss_accept = armed_r & icache_req_v_o & icache_req_yumi_i
+                              & (icache_req_cast.msg_type == e_miss_load);
+    wire dcache_miss_accept = armed_r & dcache_req_v_o & dcache_req_yumi_i
+                              & (dcache_req_cast.msg_type == e_miss_load);
+
+    assign miss_trace_status_li =
+      {{(dword_width_gp-21){1'b0}}, armed_r, dcache_overflow_r, icache_overflow_r
+       ,dcache_count_r, icache_count_r};
+
+    always_ff @(posedge clk_i)
+      if (reset_i) begin
+        armed_r <= 1'b0;
+        icache_overflow_r <= 1'b0;
+        dcache_overflow_r <= 1'b0;
+        icache_count_r <= '0;
+        dcache_count_r <= '0;
+        cycle_r <= '0;
+        miss_trace_data_li <= '0;
+      end else begin
+        cycle_r <= cycle_r + 1'b1;
+
+        if (miss_trace_ctrl_v_lo)
+          armed_r <= miss_trace_arm_lo;
+
+        if (miss_trace_clear_lo) begin
+          icache_overflow_r <= 1'b0;
+          dcache_overflow_r <= 1'b0;
+          icache_count_r <= '0;
+          dcache_count_r <= '0;
+        end else begin
+          if (icache_miss_accept) begin
+            if (icache_count_r < 9'd256) begin
+              icache_trace_mem[icache_count_r[7:0]]
+                <= {cycle_r, icache_req_cast.msg_type, icache_req_cast.addr[33:6]};
+              icache_count_r <= icache_count_r + 1'b1;
+            end else
+              icache_overflow_r <= 1'b1;
+          end
+
+          if (dcache_miss_accept) begin
+            if (dcache_count_r < 9'd256) begin
+              dcache_trace_mem[dcache_count_r[7:0]]
+                <= {cycle_r, dcache_req_cast.msg_type, dcache_req_cast.addr[33:6]};
+              dcache_count_r <= dcache_count_r + 1'b1;
+            end else
+              dcache_overflow_r <= 1'b1;
+          end
+        end
+
+        if (miss_trace_read_v_lo)
+          miss_trace_data_li <= miss_trace_read_source_lo
+                                ? dcache_trace_mem[miss_trace_read_index_lo]
+                                : icache_trace_mem[miss_trace_read_index_lo];
+      end
+  end else begin : gen_no_cache_miss_trace
+    assign miss_trace_status_li = '0;
+    assign miss_trace_data_li = '0;
+  end
 
   bp_fe_top
    #(.bp_params_p(bp_params_p))
@@ -212,6 +294,14 @@ module bp_core_minimal
      ,.software_irq_i(software_irq_i)
      ,.m_external_irq_i(m_external_irq_i)
      ,.s_external_irq_i(s_external_irq_i)
+     ,.miss_trace_status_i(miss_trace_status_li)
+     ,.miss_trace_data_i(miss_trace_data_li)
+     ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_lo)
+     ,.miss_trace_arm_o(miss_trace_arm_lo)
+     ,.miss_trace_clear_o(miss_trace_clear_lo)
+     ,.miss_trace_read_v_o(miss_trace_read_v_lo)
+     ,.miss_trace_read_source_o(miss_trace_read_source_lo)
+     ,.miss_trace_read_index_o(miss_trace_read_index_lo)
      );
 
 endmodule

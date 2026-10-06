@@ -84,6 +84,15 @@ module bp_be_top
    , input                                           software_irq_i
    , input                                           m_external_irq_i
    , input                                           s_external_irq_i
+
+   , input [dword_width_gp-1:0]                     miss_trace_status_i
+   , input [dword_width_gp-1:0]                     miss_trace_data_i
+   , output logic                                    miss_trace_ctrl_v_o
+   , output logic                                    miss_trace_arm_o
+   , output logic                                    miss_trace_clear_o
+   , output logic                                    miss_trace_read_v_o
+   , output logic                                    miss_trace_read_source_o
+   , output logic [7:0]                              miss_trace_read_index_o
    );
 
   // Declare parameterized structures
@@ -1428,6 +1437,14 @@ module bp_be_top
      ,.context_cache_dcache_resp_v_o(context_cache_dcache_resp_v_lo)
      ,.context_cache_dcache_resp_id_o(context_cache_dcache_resp_id_lo)
      ,.context_cache_dcache_resp_data_o(context_cache_dcache_resp_data_lo)
+     ,.miss_trace_status_i(miss_trace_status_i)
+     ,.miss_trace_data_i(miss_trace_data_i)
+     ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_o)
+     ,.miss_trace_arm_o(miss_trace_arm_o)
+     ,.miss_trace_clear_o(miss_trace_clear_o)
+     ,.miss_trace_read_v_o(miss_trace_read_v_o)
+     ,.miss_trace_read_source_o(miss_trace_read_source_o)
+     ,.miss_trace_read_index_o(miss_trace_read_index_o)
      ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
      ,.fast_ctxtsw_old_physical_thread_id_o(fast_ctxtsw_old_physical_thread_id_lo)
      ,.fast_ctxtsw_virtual_context_id_o(fast_ctxtsw_virtual_context_id_lo)

@@ -16,6 +16,7 @@ module bp_processor
  import bsg_noc_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
    , parameter prefetch_bypass_p = 0
+   , parameter bit cache_miss_trace_p = 1'b0
    `declare_bp_proc_params(bp_params_p)
 
    `declare_bp_bedrock_if_widths(paddr_width_p, lce_id_width_p, cce_id_width_p, did_width_p, lce_assoc_p)
@@ -316,6 +317,7 @@ module bp_processor
       bp_unicore
        #(.bp_params_p(bp_params_p)
          ,.prefetch_bypass_p(prefetch_bypass_p)
+         ,.cache_miss_trace_p(cache_miss_trace_p)
          )
        unicore
         (.my_cord_i('0), .*);

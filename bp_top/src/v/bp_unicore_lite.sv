@@ -12,6 +12,7 @@ module bp_unicore_lite
  import bp_me_pkg::*;
  import bsg_noc_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter bit cache_miss_trace_p = 1'b0
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_bedrock_if_widths(paddr_width_p, lce_id_width_p, cce_id_width_p, did_width_p, lce_assoc_p)
 
@@ -86,7 +87,9 @@ module bp_unicore_lite
   wire [did_width_p-1:0] did_li = cfg_bus_cast_i.did;
   wire [1:0][lce_id_width_p-1:0] lce_id_li = {cfg_bus_cast_i.dcache_id, cfg_bus_cast_i.icache_id};
   bp_core_minimal
-   #(.bp_params_p(bp_params_p))
+   #(.bp_params_p(bp_params_p)
+     ,.cache_miss_trace_p(cache_miss_trace_p)
+     )
    core_minimal
     (.clk_i(posedge_clk)
      ,.reset_i(reset_i)

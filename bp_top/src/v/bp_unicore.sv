@@ -27,6 +27,9 @@ module bp_unicore
  import bsg_cache_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
    , parameter prefetch_bypass_p = 0
+   // Temporary diagnostic. Set to zero at this boundary to compile out both
+   // trace RAMs and every associated counter/control path.
+   , parameter bit cache_miss_trace_p = 1'b0
    `declare_bp_proc_params(bp_params_p)
 
    `declare_bp_bedrock_if_widths(paddr_width_p, lce_id_width_p, cce_id_width_p, did_width_p, lce_assoc_p)
@@ -132,7 +135,9 @@ module bp_unicore
   bp_cfg_bus_s cfg_bus_lo;
   logic debug_irq_li, timer_irq_li, software_irq_li, m_external_irq_li, s_external_irq_li;
   bp_unicore_lite
-   #(.bp_params_p(bp_params_p))
+   #(.bp_params_p(bp_params_p)
+     ,.cache_miss_trace_p(cache_miss_trace_p)
+     )
    unicore_lite
     (.clk_i(clk_i)
      ,.reset_i(reset_r)

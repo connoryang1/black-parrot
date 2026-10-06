@@ -98,6 +98,15 @@ module bp_be_pipe_sys
    , output logic                            ctx_l1_cmd_w_o
    , output logic [paddr_width_p-1:0]        ctx_l1_cmd_paddr_o
    , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
+
+   , input [dword_width_gp-1:0]              miss_trace_status_i
+   , input [dword_width_gp-1:0]              miss_trace_data_i
+   , output logic                            miss_trace_ctrl_v_o
+   , output logic                            miss_trace_arm_o
+   , output logic                            miss_trace_clear_o
+   , output logic                            miss_trace_read_v_o
+   , output logic                            miss_trace_read_source_o
+   , output logic [7:0]                      miss_trace_read_index_o
    );
 
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
@@ -188,6 +197,14 @@ module bp_be_pipe_sys
      ,.ctx_l1_cmd_w_o(ctx_l1_cmd_w_o)
      ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_o)
      ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_o)
+     ,.miss_trace_status_i(miss_trace_status_i)
+     ,.miss_trace_data_i(miss_trace_data_i)
+     ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_o)
+     ,.miss_trace_arm_o(miss_trace_arm_o)
+     ,.miss_trace_clear_o(miss_trace_clear_o)
+     ,.miss_trace_read_v_o(miss_trace_read_v_o)
+     ,.miss_trace_read_source_o(miss_trace_read_source_o)
+     ,.miss_trace_read_index_o(miss_trace_read_index_o)
      );
 
   logic [vaddr_width_p-1:0] retire_npc_r;

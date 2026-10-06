@@ -104,6 +104,15 @@ module bp_be_csr_wrapper_mt
    , output logic                            ctx_l1_cmd_w_o
    , output logic [paddr_width_p-1:0]        ctx_l1_cmd_paddr_o
    , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
+
+   , input [dword_width_gp-1:0]              miss_trace_status_i
+   , input [dword_width_gp-1:0]              miss_trace_data_i
+   , output logic                            miss_trace_ctrl_v_o
+   , output logic                            miss_trace_arm_o
+   , output logic                            miss_trace_clear_o
+   , output logic                            miss_trace_read_v_o
+   , output logic                            miss_trace_read_source_o
+   , output logic [7:0]                      miss_trace_read_index_o
    );
 
   // Per-thread output arrays
@@ -128,6 +137,12 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            ctx_l1_cmd_w_co;
   logic [num_threads_p-1:0][paddr_width_p-1:0]         ctx_l1_cmd_paddr_co;
   logic [num_threads_p-1:0][dword_width_gp-1:0]        ctx_l1_cmd_data_co;
+  logic [num_threads_p-1:0]                            miss_trace_ctrl_v_co;
+  logic [num_threads_p-1:0]                            miss_trace_arm_co;
+  logic [num_threads_p-1:0]                            miss_trace_clear_co;
+  logic [num_threads_p-1:0]                            miss_trace_read_v_co;
+  logic [num_threads_p-1:0]                            miss_trace_read_source_co;
+  logic [num_threads_p-1:0][7:0]                       miss_trace_read_index_co;
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
@@ -216,6 +231,14 @@ module bp_be_csr_wrapper_mt
        ,.ctx_l1_cmd_w_o(ctx_l1_cmd_w_co[i])
        ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_co[i])
        ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_co[i])
+       ,.miss_trace_status_i(miss_trace_status_i)
+       ,.miss_trace_data_i(miss_trace_data_i)
+       ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_co[i])
+       ,.miss_trace_arm_o(miss_trace_arm_co[i])
+       ,.miss_trace_clear_o(miss_trace_clear_co[i])
+       ,.miss_trace_read_v_o(miss_trace_read_v_co[i])
+       ,.miss_trace_read_source_o(miss_trace_read_source_co[i])
+       ,.miss_trace_read_index_o(miss_trace_read_index_co[i])
        );
   end
 
@@ -242,6 +265,12 @@ module bp_be_csr_wrapper_mt
   assign ctx_l1_cmd_w_o        = ctx_l1_cmd_w_co[current_physical_thread_id_i];
   assign ctx_l1_cmd_paddr_o    = ctx_l1_cmd_paddr_co[current_physical_thread_id_i];
   assign ctx_l1_cmd_data_o     = ctx_l1_cmd_data_co[current_physical_thread_id_i];
+  assign miss_trace_ctrl_v_o   = miss_trace_ctrl_v_co[retire_thread_id_i];
+  assign miss_trace_arm_o      = miss_trace_arm_co[retire_thread_id_i];
+  assign miss_trace_clear_o    = miss_trace_clear_co[retire_thread_id_i];
+  assign miss_trace_read_v_o   = miss_trace_read_v_co[retire_thread_id_i];
+  assign miss_trace_read_source_o = miss_trace_read_source_co[retire_thread_id_i];
+  assign miss_trace_read_index_o = miss_trace_read_index_co[retire_thread_id_i];
   assign csr_context_save_data_o = csr_context_save_data_co[csr_context_save_physical_thread_id_i];
 
 endmodule

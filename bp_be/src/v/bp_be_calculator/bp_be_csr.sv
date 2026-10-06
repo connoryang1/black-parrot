@@ -85,6 +85,17 @@ module bp_be_csr
    , output logic                            ctx_l1_cmd_w_o
    , output logic [paddr_width_p-1:0]        ctx_l1_cmd_paddr_o
    , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
+
+   // Core-wide accepted cache-miss trace: 0x805 control/status,
+   // 0x806 read selector, and 0x807 selected record.
+   , input [dword_width_gp-1:0]              miss_trace_status_i
+   , input [dword_width_gp-1:0]              miss_trace_data_i
+   , output logic                            miss_trace_ctrl_v_o
+   , output logic                            miss_trace_arm_o
+   , output logic                            miss_trace_clear_o
+   , output logic                            miss_trace_read_v_o
+   , output logic                            miss_trace_read_source_o
+   , output logic [7:0]                      miss_trace_read_index_o
    );
 
   // Declare parameterizable structs
@@ -518,6 +529,12 @@ module bp_be_csr
           csr_data_lo = ctx_l1_data_r;
         12'h804:  // Context-cache L1 service status
           csr_data_lo = {{(dword_width_gp-2){1'b0}}, ctx_l1_resp_v_i, ctx_l1_ready_i};
+        12'h805:  // Accepted cache-miss trace control/status
+          csr_data_lo = miss_trace_status_i;
+        12'h806:  // Trace read selector - write-only, reads as 0
+          csr_data_lo = '0;
+        12'h807:  // Selected trace record
+          csr_data_lo = miss_trace_data_i;
         {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
           csr_data_lo = global_cycle_i;
         default:
@@ -855,7 +872,10 @@ module bp_be_csr
                            | (csr_addr_li == 12'h801)
                            | (csr_addr_li == 12'h802)
                            | (csr_addr_li == 12'h803)
-                           | (csr_addr_li == 12'h804);
+                           | (csr_addr_li == 12'h804)
+                           | (csr_addr_li == 12'h805)
+                           | (csr_addr_li == 12'h806)
+                           | (csr_addr_li == 12'h807);
 
   assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special.dcache_miss
                                                  ,retire_pkt_cast_i.special.fencei
@@ -959,6 +979,16 @@ module bp_be_csr
   assign ctx_l1_cmd_w_o = csr_data_li[dword_width_gp-1];
   assign ctx_l1_cmd_paddr_o = csr_data_li[0+:paddr_width_p];
   assign ctx_l1_cmd_data_o = ctx_l1_data_r;
+
+  // A control write sets the desired armed state directly. Bit 1 also clears
+  // counts and overflow flags. A selector write initiates the recorder's
+  // synchronous BRAM read; bit 8 chooses D (1) or I (0), bits 7:0 select entry.
+  assign miss_trace_ctrl_v_o = csr_w_v_li & (csr_addr_li == 12'h805);
+  assign miss_trace_arm_o = csr_data_li[0];
+  assign miss_trace_clear_o = miss_trace_ctrl_v_o & csr_data_li[1];
+  assign miss_trace_read_v_o = csr_w_v_li & (csr_addr_li == 12'h806);
+  assign miss_trace_read_source_o = csr_data_li[8];
+  assign miss_trace_read_index_o = csr_data_li[7:0];
 
   always_ff @(posedge clk_i)
     if (reset_i)
