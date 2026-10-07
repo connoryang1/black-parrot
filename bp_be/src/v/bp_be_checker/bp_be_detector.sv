@@ -79,7 +79,7 @@ module bp_be_detector
   logic register_seed_active_r;
 
   logic fence_haz_v, cmd_haz_v, fflags_haz_v, csr_rs1_haz_v, csr_trans_haz_v, iscore_haz_v, fscore_haz_v;
-  logic ctxtsw_rs1_haz_v, ctxtsw_seed_haz_v;
+  logic ctxtsw_rs1_haz_v, ctxtsw_seed_haz_v, ctxtsw_order_haz_v;
   logic register_seed_haz_v;
   logic data_haz_v, control_haz_v, struct_haz_v;
 
@@ -246,7 +246,13 @@ module bp_be_detector
       frs3_data_haz_v[2] = (decode.frs3_r_v & rs3_match_vector[2])
                            & (dep_status_r[2].fma_fwb_v | dep_status_r[2].long_fwb_v);
 
-      fence_haz_v        = decode.fence_v & ~mem_ordered_i;
+      // ordered_o deliberately separates a quiescent memory pipe from the
+      // cache's externally visible ordering state.  A fence or architectural
+      // context handoff needs both: mem_ordered may already be high while an
+      // older store is still crossing the local memory pipe.  Detached hints
+      // remain advisory because the UCE excludes their credits from
+      // mem_ordered when prefetch_ignore_credits_p is enabled.
+      fence_haz_v        = decode.fence_v & (mem_busy_i | ~mem_ordered_i);
       cmd_haz_v          = cmd_full_i;
 
       fflags_haz_v = (decode.csr_r_v | decode.csr_w_v)
@@ -304,6 +310,13 @@ module bp_be_detector
                          & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
                          & (|dep_npc_seed_r);
 
+      // Do not change register-bank ownership while an older demand or store
+      // still has local pipeline state.  In particular, a fast resident
+      // switch has no context-cache drain phase to repair this race later.
+      ctxtsw_order_haz_v = issue_pkt_cast_i.csrw
+                           & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
+                           & (mem_busy_i | ~mem_ordered_i);
+
       // CSR802 shares each scalar register-file write port with ordinary WB.
       // Drain older work before admitting a seed, then hold younger issue until
       // the seed's own rd writeback has drained. Injected completions remain
@@ -326,8 +339,9 @@ module bp_be_detector
 	                           | (dep_status_r[2].trans_info_v & (check_thread_id_li == dep_thread_id_r[2]))
 	                           | (dep_status_r[3].trans_info_v & (check_thread_id_li == dep_thread_id_r[3])));
 
-	      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v | csr_trans_haz_v
-                          | ctxtsw_rs1_haz_v | ctxtsw_seed_haz_v | register_seed_haz_v;
+      control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v | csr_trans_haz_v
+                          | ctxtsw_rs1_haz_v | ctxtsw_seed_haz_v | ctxtsw_order_haz_v
+                          | register_seed_haz_v;
 
       // Combine all data hazard information
       // TODO: Parameterize away floating point data hazards without hardware support
