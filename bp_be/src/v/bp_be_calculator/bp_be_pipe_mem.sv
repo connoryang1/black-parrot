@@ -139,6 +139,7 @@ module bp_be_pipe_mem
   // stages. Unsupported translations and hot hints remain nonfaulting no-ops;
   // a permitted cold hint rejected by a transient cache conflict replays.
   logic prefetch_mmu_r, prefetch_early_r;
+  logic prefetch_busy_mmu_r, prefetch_busy_early_r;
   bsg_dff_reset
    #(.width_p(2))
    prefetch_pipe
@@ -146,6 +147,19 @@ module bp_be_pipe_mem
      ,.reset_i(reset_i)
      ,.data_i({is_prefetch, prefetch_mmu_r})
      ,.data_o({prefetch_mmu_r, prefetch_early_r})
+     );
+
+  // A hint can be clear to dispatch and then reach the memory pipe one cycle
+  // after another request makes the D-cache busy. dcache_pkt_v suppresses the
+  // hint in that case, so remember the suppression through the same MMU/early
+  // stages and replay it rather than letting an unissued hint retire.
+  bsg_dff_reset
+   #(.width_p(2))
+   prefetch_busy_pipe
+    (.clk_i(negedge_clk)
+     ,.reset_i(reset_i)
+     ,.data_i({is_prefetch & dcache_busy_lo, prefetch_busy_mmu_r})
+     ,.data_o({prefetch_busy_mmu_r, prefetch_busy_early_r})
      );
 
   logic early_v_r;
@@ -407,7 +421,9 @@ module bp_be_pipe_mem
                              & ~(dcache_v |  dcache_late) &  cache_req_yumi_i;
   assign cache_replay_v_o = ~context_cache_dcache_resp_pending_r
                              & early_v_r
-                             & (~prefetch_early_r | dcache_prefetch_replay)
+                             & (~prefetch_early_r
+                                | prefetch_busy_early_r
+                                | dcache_prefetch_replay)
                              & ~(dcache_v & ~dcache_late) & ~cache_req_yumi_i;
 
   bp_be_int_reg_s dcache_idata;
