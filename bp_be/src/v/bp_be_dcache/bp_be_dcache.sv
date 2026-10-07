@@ -1092,14 +1092,17 @@ module bp_be_dcache
       prefetch_buffer_word_v_r <= '0;
       prefetch_buffer_replace_r <= '0;
     end else begin
-      // A pointer hint is one-use at segment granularity. The memory reply
-      // carries two words, but retaining the unrequested neighbor after a hit
-      // would pin this entry indefinitely when software only loads the hinted
-      // pointer. A later miss remains architecturally safe even if a redirect
-      // squashes the consuming instruction.
+      // Consume only the selected word. A 16-byte pointer-stream reply may
+      // contain both the next pointer and adjacent payload, and consecutive
+      // loads must be able to use both words. The rotating replacement pointer
+      // below prevents an unused neighbor from pinning a full advisory buffer.
+      // A later miss remains architecturally safe even if a redirect squashes
+      // the consuming instruction.
       if (prefetch_buffer_hit_tv) begin
-        prefetch_buffer_v_r[prefetch_buffer_hit_slot_tv] <= 1'b0;
-        prefetch_buffer_word_v_r[prefetch_buffer_hit_slot_tv] <= '0;
+        prefetch_buffer_word_v_r[prefetch_buffer_hit_slot_tv][paddr_tv_r[3]] <= 1'b0;
+        if (!(|(prefetch_buffer_word_v_r[prefetch_buffer_hit_slot_tv]
+               & ~(2'(1) << paddr_tv_r[3]))))
+          prefetch_buffer_v_r[prefetch_buffer_hit_slot_tv] <= 1'b0;
       end
 
       // A local store or an authoritative L1 copy supersedes advisory data.
