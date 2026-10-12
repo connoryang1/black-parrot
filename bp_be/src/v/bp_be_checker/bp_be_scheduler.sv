@@ -176,11 +176,16 @@ module bp_be_scheduler
   localparam op_ptr_width_lp = `BSG_WIDTH(entry_cinstr_gp);
   logic ctxtsw_issue_hold_r;
   bp_be_wb_pkt_s ctxtsw_iwb_pkt_r;
+  logic ctxtsw_target_settle_r;
   logic ctxtsw_first_target_dispatch_r;
   logic [3:0] ctxtsw_cancel_drain_r;
   wire ctxtsw_issue_hold_clear_li                  = commit_pkt_cast_i.ctxtsw
                                                      | (commit_pkt_cast_i.npc_w_v & ~commit_pkt_cast_i.ctxtsw);
-  wire fe_queue_en_li                              = ~suppress_iss_i & ~ctxtsw_issue_hold_r & ~ptw_busy_lo & ~hazard_v_i;
+  wire fe_queue_en_li                              = ~suppress_iss_i
+                                                     & ~ctxtsw_issue_hold_r
+                                                     & ~ctxtsw_target_settle_r
+                                                     & ~ptw_busy_lo
+                                                     & ~hazard_v_i;
   wire ctxtsw_commit_accept_li                     = commit_pkt_cast_i.ctxtsw & pending_ctxtsw_sent_i & ~clear_iss_i;
   wire pending_ctxtsw_cancel_li                    = commit_pkt_cast_i.npc_w_v
                                                      & ~commit_pkt_cast_i.ctxtsw
@@ -483,6 +488,15 @@ module bp_be_scheduler
       ctxtsw_iwb_pkt_r <= '0;
     else
       ctxtsw_iwb_pkt_r <= iwb_pkt_cast_i;
+
+  // Physical testing found that the first target instruction must remain out
+  // of dispatch for one edge after a committed switch.  The FE queue may fill
+  // during this cycle; only BE issue waits for switch-adjacent state to settle.
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      ctxtsw_target_settle_r <= 1'b0;
+    else
+      ctxtsw_target_settle_r <= commit_pkt_cast_i.ctxtsw;
 
   // A context-switch redirect can replace the issue-queue PC/instruction one
   // cycle before the queue's registered branch-metadata thread tag.  Preserve
