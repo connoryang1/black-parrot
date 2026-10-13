@@ -145,6 +145,31 @@ module bp_be_regfile_mt
 
       logic [read_ports_p-1:0][context_regs_per_line_p-1:0][data_width_p-1:0] bank_r_data_lo;
       logic [read_ports_p-1:0][bank_select_width_lp-1:0] bank_select_r;
+      // The synchronous BRAM line tap can expose old data when a protected
+      // call immediately follows writes to its implicit a0-a3 operands. Keep
+      // just those four architectural values in flops so RPC capture has
+      // deterministic write-through behavior on FPGA and in simulation.
+      logic [num_threads_p-1:0][3:0][data_width_p-1:0] rpc_arg_shadow_r;
+
+      always_ff @(posedge clk_i) begin
+        if (context_line_w_v_i && (context_line_index_i == '0)) begin
+          for (int i = 0; i < 4; i++)
+            rpc_arg_shadow_r[context_line_thread_id_i][i]
+              <= context_line_data_i[10+i];
+        end else if (rpc_w_v_i) begin
+          for (int i = 0; i < 4; i++)
+            if (rpc_w_mask_i[10+i])
+              rpc_arg_shadow_r[rpc_thread_id_i][i] <= rpc_w_data_i[10+i];
+        end else if (w_v_mux) begin
+          unique case (w_reg_addr_mux)
+            5'd10: rpc_arg_shadow_r[w_thread_id_mux][0] <= w_data_mux;
+            5'd11: rpc_arg_shadow_r[w_thread_id_mux][1] <= w_data_mux;
+            5'd12: rpc_arg_shadow_r[w_thread_id_mux][2] <= w_data_mux;
+            5'd13: rpc_arg_shadow_r[w_thread_id_mux][3] <= w_data_mux;
+            default: begin end
+          endcase
+        end
+      end
 
 `ifndef SYNTHESIS
       always_ff @(posedge clk_i)
@@ -197,7 +222,12 @@ module bp_be_regfile_mt
       // Every bank receives the same line address on a read port. Exposing the
       // full bank vector therefore reads a0-a3 with the pcall capability read,
       // without another BRAM copy or another read cycle.
-      assign context_line_r_data_o = bank_r_data_lo[0];
+      always_comb begin
+        context_line_r_data_o = bank_r_data_lo[0];
+        if (rs_addr_i[0][bank_select_width_lp+:context_line_index_width_p] == '0)
+          for (int i = 0; i < 4; i++)
+            context_line_r_data_o[10+i] = rpc_arg_shadow_r[rs_thread_id_i[0]][i];
+      end
 
     end
   else if ((write_ports_p == 1) && (read_ports_p == 2))
