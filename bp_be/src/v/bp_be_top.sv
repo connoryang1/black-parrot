@@ -422,11 +422,6 @@ module bp_be_top
      ,.w_context_id_i(context_mem_int_w_context_id_li)
      ,.w_reg_addr_i(context_mem_int_w_reg_addr_li)
      ,.w_data_i(context_mem_int_w_data_li)
-     ,.bulk_w_v_i(rpc_install_v_li)
-     ,.bulk_w_context_id_i(pending_ctxtsw_virtual_context_id_r)
-     ,.bulk_w_line_index_i('0)
-     ,.bulk_w_mask_i(rpc_install_w_mask_li)
-     ,.bulk_w_data_i(rpc_install_w_data_li)
      ,.r_v_i(context_mem_int_r_v_li)
      ,.r_context_id_i(context_mem_int_r_context_id_li)
      ,.r_line_index_i(context_mem_int_r_line_index_li)
@@ -1438,6 +1433,7 @@ module bp_be_top
      ,.rpc_install_thread_id_i(rpc_install_thread_id_li)
      ,.rpc_install_w_mask_i(rpc_install_w_mask_li)
      ,.rpc_install_w_data_i(rpc_install_w_data_li)
+     ,.rpc_args_o(fast_rpc_args_lo)
 
      ,.rpush_w_v_i(scheduler_rpush_v_li)
      ,.rpush_fp_w_v_i(scheduler_rpush_fp_v_li)
@@ -1576,7 +1572,6 @@ module bp_be_top
      ,.fast_ctxtsw_resume_npc_o(fast_ctxtsw_resume_npc_lo)
      ,.fast_rpc_call_v_o(fast_rpc_call_v_lo)
      ,.fast_rpc_return_v_o(fast_rpc_return_v_lo)
-     ,.fast_rpc_args_o(fast_rpc_args_lo)
      ,.context_cache_drain_ready_o(context_cache_calculator_drain_ready_lo)
      ,.register_seed_ready_o(register_seed_ready_lo)
      );

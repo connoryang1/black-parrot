@@ -69,6 +69,7 @@ module bp_be_scheduler
    , input [thread_id_width_p-1:0]            rpc_install_thread_id_i
    , input [15:0]                             rpc_install_w_mask_i
    , input [15:0][dpath_width_gp-1:0]         rpc_install_w_data_i
+   , output logic [3:0][dpath_width_gp-1:0]   rpc_args_o
 
    // CSR 0x802 remote register write into another hardware thread context
    , input                                    rpush_w_v_i
@@ -298,6 +299,8 @@ module bp_be_scheduler
 `endif
   assign context_cache_scan_r_data_o = {irf_rs2, irf_rs1};
   logic [15:0][dpath_width_gp-1:0] rpc_line_r_data_lo;
+  logic [3:0][dpath_width_gp-1:0] rpc_args_r;
+  assign rpc_args_o = rpc_args_r;
 
   bp_be_regfile_mt
   #(.bp_params_p(bp_params_p)
@@ -525,6 +528,19 @@ module bp_be_scheduler
     else if (issue_ctxtsw_dispatch_v)
       ctxtsw_issue_hold_r <= 1'b1;
 
+  // Keep implicit operands beside the scheduler instead of widening every
+  // dispatch and reservation stage by four data words. A pending switch token
+  // prevents another switch from replacing them before top-level capture.
+  always_ff @(posedge clk_i)
+    if (reset_i)
+      rpc_args_r <= '0;
+    else if (issue_ctxtsw_dispatch_v & (issue_rpc_call_v | issue_rpc_return_v)) begin
+      rpc_args_r[0] <= rpc_line_r_data_lo[10];
+      rpc_args_r[1] <= rpc_line_r_data_lo[11];
+      rpc_args_r[2] <= rpc_line_r_data_lo[12];
+      rpc_args_r[3] <= rpc_line_r_data_lo[13];
+    end
+
   always_ff @(posedge clk_i)
     if (reset_i)
       ctxtsw_iwb_pkt_r <= '0;
@@ -585,10 +601,6 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.ctxtsw_target_tid = issue_ctxtsw_dispatch_v ? issue_ctxtsw_target_tid : '0;
       dispatch_pkt_cast_o.rpc_call_v = issue_ctxtsw_dispatch_v & issue_rpc_call_v;
       dispatch_pkt_cast_o.rpc_return_v = issue_ctxtsw_dispatch_v & issue_rpc_return_v;
-      dispatch_pkt_cast_o.rpc_args[0] = rpc_line_r_data_lo[10];
-      dispatch_pkt_cast_o.rpc_args[1] = rpc_line_r_data_lo[11];
-      dispatch_pkt_cast_o.rpc_args[2] = rpc_line_r_data_lo[12];
-      dispatch_pkt_cast_o.rpc_args[3] = rpc_line_r_data_lo[13];
       dispatch_pkt_cast_o.pc         = expected_npc_i;
       dispatch_pkt_cast_o.thread_id  = ptw_v_lo
                                        ? ptw_thread_id_r
