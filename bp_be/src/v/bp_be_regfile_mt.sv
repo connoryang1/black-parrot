@@ -86,6 +86,14 @@ module bp_be_regfile_mt
    , input [thread_id_width_p-1:0]                     context_line_thread_id_i
    , input [context_line_index_width_p-1:0]            context_line_index_i
    , input [context_regs_per_line_p-1:0][data_width_p-1:0] context_line_data_i
+   , output logic [context_regs_per_line_p-1:0][data_width_p-1:0] context_line_r_data_o
+
+   // Protected RPC installs a0-a3 or the returned a0 as a single architectural
+   // transition. Each register is already a separate line-bank lane.
+   , input                                              rpc_w_v_i
+   , input [thread_id_width_p-1:0]                     rpc_thread_id_i
+   , input [context_regs_per_line_p-1:0]               rpc_w_mask_i
+   , input [context_regs_per_line_p-1:0][data_width_p-1:0] rpc_w_data_i
    );
 
   // Derived parameters
@@ -148,12 +156,14 @@ module bp_be_regfile_mt
         wire normal_w_v = w_v_mux
                           & (w_reg_addr_mux[0+:bank_select_width_lp]
                              == bank_select_width_lp'(bank));
-        wire bank_w_v = context_line_w_v_i | normal_w_v;
+        wire bank_w_v = context_line_w_v_i | (rpc_w_v_i & rpc_w_mask_i[bank]) | normal_w_v;
         wire [bank_addr_width_lp-1:0] bank_w_addr = context_line_w_v_i
           ? {context_line_thread_id_i, context_line_index_i}
+          : rpc_w_v_i ? {rpc_thread_id_i, context_line_index_width_p'(0)}
           : {w_thread_id_mux, w_reg_addr_mux[bank_select_width_lp+:context_line_index_width_p]};
         wire [data_width_p-1:0] bank_w_data = context_line_w_v_i
           ? context_line_data_i[bank]
+          : rpc_w_v_i ? rpc_w_data_i[bank]
           : w_data_mux;
 
         // A true 2R1W FPGA block memory requires two mirrored 1R1W copies.
@@ -184,9 +194,15 @@ module bp_be_regfile_mt
       for (genvar i = 0; i < read_ports_p; i++)
         assign rs_data_lo[i] = bank_r_data_lo[i][bank_select_r[i]];
 
+      // Every bank receives the same line address on a read port. Exposing the
+      // full bank vector therefore reads a0-a3 with the pcall capability read,
+      // without another BRAM copy or another read cycle.
+      assign context_line_r_data_o = bank_r_data_lo[0];
+
     end
   else if ((write_ports_p == 1) && (read_ports_p == 2))
     begin : twoport
+      assign context_line_r_data_o = '0;
       bsg_mem_2r1w_sync
        #(.width_p(data_width_p), .els_p(total_rf_els_lp))
        regfile_mem
@@ -208,6 +224,7 @@ module bp_be_regfile_mt
     end
   else if ((write_ports_p == 1) && (read_ports_p == 3))
     begin : threeport
+      assign context_line_r_data_o = '0;
       bsg_mem_3r1w_sync
        #(.width_p(data_width_p), .els_p(total_rf_els_lp))
        regfile_mem
@@ -233,6 +250,7 @@ module bp_be_regfile_mt
     end
   else if ((write_ports_p == 2) && ((read_ports_p == 2) || (read_ports_p == 3)))
     begin : twoport_twowrite
+      assign context_line_r_data_o = '0;
       logic [read_ports_p-1:0][reg_addr_width_gp+thread_id_width_p-1:0] rs_addr_mem_r;
 
 `ifndef SYNTHESIS
@@ -270,6 +288,7 @@ module bp_be_regfile_mt
     end
   else
     begin : error
+      assign context_line_r_data_o = '0;
       $error("Error: unsupported number of read ports");
     end
 

@@ -110,6 +110,7 @@ module bp_be_calculator_top
    // Bootstrap: write target NPC for a virtual context (CSR 0x801)
    , output logic                                    ctx_npc_write_v_o
    , output logic                                    ctx_npc_write_rebind_o
+   , output logic                                    ctx_npc_write_rpc_entry_o
    , output logic [context_id_width_p-1:0]           ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]                ctx_npc_write_npc_o
 
@@ -147,6 +148,9 @@ module bp_be_calculator_top
    , output logic [thread_id_width_p-1:0]            fast_ctxtsw_old_physical_thread_id_o
    , output logic [context_id_width_p-1:0]           fast_ctxtsw_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]                fast_ctxtsw_resume_npc_o
+   , output logic                                    fast_rpc_call_v_o
+   , output logic                                    fast_rpc_return_v_o
+   , output logic [3:0][dpath_width_gp-1:0]          fast_rpc_args_o
 
    , output logic                                    context_cache_drain_ready_o
    , output logic                                    register_seed_ready_o
@@ -352,6 +356,7 @@ module bp_be_calculator_top
      ,.csr_context_save_data_o(csr_context_save_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_rebind_o(ctx_npc_write_rebind_o)
+     ,.ctx_npc_write_rpc_entry_o(ctx_npc_write_rpc_entry_o)
      ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
      ,.ctx_rpush_v_o(ctx_rpush_v_o)
@@ -407,6 +412,9 @@ module bp_be_calculator_top
   assign fast_ctxtsw_old_physical_thread_id_o = reservation_r.thread_id[0 +: thread_id_width_p];
   assign fast_ctxtsw_virtual_context_id_o = reservation_r.ctxtsw_target_tid;
   assign fast_ctxtsw_resume_npc_o = reservation_r.pc + (reservation_r.size << 1'b1);
+  assign fast_rpc_call_v_o = fast_ctxtsw_v_o & reservation_r.rpc_call_v;
+  assign fast_rpc_return_v_o = fast_ctxtsw_v_o & reservation_r.rpc_return_v;
+  assign fast_rpc_args_o = reservation_r.rpc_args;
 
   logic [dword_width_gp-1:0] rs2_val_r;
   if (integer_support_p[e_catchup])

@@ -35,6 +35,12 @@ module bp_be_context_mem
    , input [1:0][reg_addr_width_p-1:0] w_reg_addr_i
    , input [1:0][data_width_p-1:0] w_data_i
 
+   , input bulk_w_v_i
+   , input [context_id_width_p-1:0] bulk_w_context_id_i
+   , input [line_index_width_p-1:0] bulk_w_line_index_i
+   , input [regs_per_line_p-1:0] bulk_w_mask_i
+   , input [regs_per_line_p-1:0][data_width_p-1:0] bulk_w_data_i
+
    , input r_v_i
    , input [context_id_width_p-1:0] r_context_id_i
    , input [line_index_width_p-1:0] r_line_index_i
@@ -62,17 +68,20 @@ module bp_be_context_mem
     scalar_w_reg_addr[reg_addr_width_p-1:lane_index_width_lp];
 
   for (genvar lane = 0; lane < regs_per_line_p; lane++) begin : lane
-    wire lane_w_v = scalar_w_v
-                    & (scalar_w_reg_addr[0+:lane_index_width_lp]
-                       == lane_index_width_lp'(lane));
+    wire lane_w_v = (bulk_w_v_i & bulk_w_mask_i[lane])
+                    | (scalar_w_v
+                       & (scalar_w_reg_addr[0+:lane_index_width_lp]
+                          == lane_index_width_lp'(lane)));
     bsg_mem_1r1w_sync
      #(.width_p(data_width_p), .els_p(bank_els_lp), .ram_style_p("block"))
      lane_mem
       (.clk_i(clk_i)
        ,.reset_i(reset_i)
        ,.w_v_i(lane_w_v)
-       ,.w_addr_i({scalar_w_context_id, scalar_w_line_index})
-       ,.w_data_i(scalar_w_data)
+       ,.w_addr_i(bulk_w_v_i
+                  ? {bulk_w_context_id_i, bulk_w_line_index_i}
+                  : {scalar_w_context_id, scalar_w_line_index})
+       ,.w_data_i(bulk_w_v_i ? bulk_w_data_i[lane] : scalar_w_data)
        ,.r_v_i(r_v_i)
        ,.r_addr_i({r_context_id_i, r_line_index_i})
        ,.r_data_o(bank_r_data_lo[lane])
@@ -103,6 +112,10 @@ module bp_be_context_mem
 
       if (scalar_w_v)
         valid_r[scalar_w_context_id][scalar_w_reg_addr] <= 1'b1;
+      if (bulk_w_v_i)
+        for (int lane = 0; lane < regs_per_line_p; lane++)
+          if (bulk_w_mask_i[lane])
+            valid_r[bulk_w_context_id_i][reg_addr_width_p'(bulk_w_line_index_i*regs_per_line_p+lane)] <= 1'b1;
     end
   end
 
