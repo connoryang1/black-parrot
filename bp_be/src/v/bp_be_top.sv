@@ -336,7 +336,11 @@ module bp_be_top
   // its next trap PC without cloning the caller's architectural CSR image.
   // Pending switches can separate active, retiring, and save-bank ownership;
   // exclude all three so a self-seed cannot replace live retirement state.
-  wire csr_context_apc_write_v_li = ctx_npc_write_resident_v_li
+  wire rpc_target_apc_write_v_li = commit_pkt.ctxtsw
+    && pending_rpc_call_v_r
+    && (pending_ctxtsw_physical_thread_id_r < num_threads_p);
+  wire csr_context_apc_write_v_li = rpc_target_apc_write_v_li
+    || (ctx_npc_write_resident_v_li
     && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
     && (ctx_npc_write_physical_thread_id_li < num_threads_p)
     && virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]
@@ -344,10 +348,11 @@ module bp_be_top
     && (ctx_npc_write_physical_thread_id_li != current_physical_thread_id_lo)
     && (ctx_npc_write_physical_thread_id_li != retire_thread_id_lo)
     && (ctx_npc_write_physical_thread_id_li != csr_context_save_physical_thread_id_li)
-    && !csr_context_restore_v_li;
+    && !csr_context_restore_v_li);
   wire [thread_id_width_p-1:0] csr_context_restore_physical_thread_id_li =
     csr_context_cache_restore_v_li ? context_cache_victim_physical_thread_id_r
-                                 : ctx_npc_write_physical_thread_id_li;
+    : rpc_target_apc_write_v_li ? pending_ctxtsw_physical_thread_id_r
+    : ctx_npc_write_physical_thread_id_li;
   wire csr_context_restore_reset_li =
     csr_context_cache_restore_v_li
     & ~virtual_context_csr_valid_r[context_cache_target_virtual_context_id_r];
@@ -358,7 +363,7 @@ module bp_be_top
   wire [vaddr_width_p-1:0] csr_context_restore_npc_li =
     csr_context_cache_restore_v_li
     ? virtual_context_npc_r[context_cache_target_virtual_context_id_r]
-    : ctx_npc_write_npc_lo;
+    : rpc_target_apc_write_v_li ? rpc_entry_r : ctx_npc_write_npc_lo;
   localparam [paddr_width_p-1:0] context_cache_image_base_lp = paddr_width_p'(64'h0000000087f00000);
   localparam int context_cache_image_stride_bytes_lp = 512;
   localparam int context_cache_image_gpr_base_word_lp = 8;
@@ -840,6 +845,16 @@ module bp_be_top
           virtual_context_asid_r[save_virtual_context_id_li] <= trans_info_lo.asid;
           virtual_context_csr_state_r[save_virtual_context_id_li] <= csr_context_save_data_lo;
           virtual_context_csr_valid_r[save_virtual_context_id_li] <= 1'b1;
+        end
+
+        // A protected call always enters through the descriptor's fixed PC.
+        // Rebind the resident target's saved NPC on the commit edge as well
+        // as redirecting the frontend. Otherwise an immediate I-cache miss
+        // replays through the server's stale post-return continuation.
+        if (pending_rpc_call_v_r) begin
+          if (pending_ctxtsw_physical_thread_id_r < num_threads_p)
+            context_npc_r[pending_ctxtsw_physical_thread_id_r] <= rpc_entry_r;
+          virtual_context_npc_r[context_id_width_p'(1)] <= rpc_entry_r;
         end
       end
 
