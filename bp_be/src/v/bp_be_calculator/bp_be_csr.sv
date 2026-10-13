@@ -65,6 +65,7 @@ module bp_be_csr
    // Write format: upper bits = context_id, lower vaddr_width_p bits = target NPC
    , output logic                            ctx_npc_write_v_o
    , output logic                            ctx_npc_write_rebind_o
+   , output logic                            ctx_npc_write_rpc_entry_o
    , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
@@ -563,6 +564,10 @@ module bp_be_csr
           csr_data_lo = '0;
         12'h807:  // Selected trace record
           csr_data_lo = miss_trace_data_i;
+        12'h808:  // Protected call capability operand / status
+          csr_data_lo = '0;
+        12'h809:  // Protected return result operand / status
+          csr_data_lo = '0;
         {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
           csr_data_lo = global_cycle_i;
         default:
@@ -914,7 +919,9 @@ module bp_be_csr
                            | (csr_addr_li == 12'h804)
                            | (csr_addr_li == 12'h805)
                            | (csr_addr_li == 12'h806)
-                           | (csr_addr_li == 12'h807);
+                           | (csr_addr_li == 12'h807)
+                           | (csr_addr_li == 12'h808)
+                           | (csr_addr_li == 12'h809);
 
   assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special.dcache_miss
                                                  ,retire_pkt_cast_i.special.fencei
@@ -996,6 +1003,12 @@ module bp_be_csr
   //               csr_data_li[vaddr_width_p-1:0]                   = target NPC
   assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801);
   assign ctx_npc_write_rebind_o = ctx_npc_write_v_o & csr_data_li[dword_width_gp-1];
+  // Bit 62 requests installation of the single protected-RPC descriptor entry
+  // while using the existing context-id/NPC payload. Top-level commit logic
+  // authorizes it from architectural privilege; the CSR-local is_m_mode also
+  // includes debug mode and is therefore intentionally not a security gate.
+  assign ctx_npc_write_rpc_entry_o = ctx_npc_write_v_o
+                                      & csr_data_li[dword_width_gp-2];
   assign ctx_npc_write_virtual_context_id_o = csr_data_li[vaddr_width_p +: context_id_width_p];
   assign ctx_npc_write_npc_o = csr_data_li[0 +: vaddr_width_p];
 

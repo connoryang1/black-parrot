@@ -79,7 +79,7 @@ module bp_be_detector
   logic register_seed_active_r;
 
   logic fence_haz_v, cmd_haz_v, fflags_haz_v, csr_rs1_haz_v, csr_trans_haz_v, iscore_haz_v, fscore_haz_v;
-  logic ctxtsw_rs1_haz_v, ctxtsw_seed_haz_v, ctxtsw_order_haz_v;
+  logic ctxtsw_rs1_haz_v, ctxtsw_seed_haz_v, ctxtsw_order_haz_v, rpc_args_haz_v;
   logic register_seed_haz_v;
   logic data_haz_v, control_haz_v, struct_haz_v;
 
@@ -297,7 +297,7 @@ module bp_be_detector
                            & (check_thread_id_li == dep_thread_id_r[i])
                            & (check_rs1_li == dep_status_r[i].rd_addr);
       ctxtsw_rs1_haz_v &= issue_pkt_cast_i.csrw
-                         & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
+                         & (issue_pkt_cast_i.instr.t.itype.imm12 inside {12'h800, 12'h808})
                          & (issue_pkt_cast_i.instr inside {`RV64_CSRRW, `RV64_CSRRS, `RV64_CSRRC})
                          & (check_rs1_li != '0);
 
@@ -307,15 +307,29 @@ module bp_be_detector
       // and applies to both register and immediate forms of the switch CSR.
       // As above, issue.v depends on hazard_v_o and must not gate this check.
       ctxtsw_seed_haz_v = issue_pkt_cast_i.csrw
-                         & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
+                         & (issue_pkt_cast_i.instr.t.itype.imm12 inside {12'h800, 12'h808, 12'h809})
                          & (|dep_npc_seed_r);
 
       // Do not change register-bank ownership while an older demand or store
       // still has local pipeline state.  In particular, a fast resident
       // switch has no context-cache drain phase to repair this race later.
       ctxtsw_order_haz_v = issue_pkt_cast_i.csrw
-                           & (issue_pkt_cast_i.instr.t.itype.imm12 == 12'h800)
+                           & (issue_pkt_cast_i.instr.t.itype.imm12 inside {12'h800, 12'h808, 12'h809})
                            & (mem_busy_i | ~mem_ordered_i);
+
+      // pcall implicitly reads a0-a3 and preturn implicitly reads a0. The
+      // line-bank tap is outside the calculator bypass network, so wait until
+      // every implicit source has reached architectural writeback.
+      rpc_args_haz_v = 1'b0;
+      for (int i = 0; i < 4; i++) begin
+        rpc_args_haz_v |= dep_irf_w_r[i]
+                          & (check_thread_id_li == dep_thread_id_r[i])
+                          & (((issue_pkt_cast_i.instr.t.itype.imm12 == 12'h808)
+                              & (dep_status_r[i].rd_addr inside {5'd10, 5'd11, 5'd12, 5'd13}))
+                             | ((issue_pkt_cast_i.instr.t.itype.imm12 == 12'h809)
+                                & (dep_status_r[i].rd_addr == 5'd10)));
+      end
+      rpc_args_haz_v &= issue_pkt_cast_i.csrw;
 
       // CSR802 shares each scalar register-file write port with ordinary WB.
       // Drain older work before admitting a seed, then hold younger issue until
@@ -341,7 +355,7 @@ module bp_be_detector
 
       control_haz_v = fence_haz_v | fflags_haz_v | csr_rs1_haz_v | csr_trans_haz_v
                           | ctxtsw_rs1_haz_v | ctxtsw_seed_haz_v | ctxtsw_order_haz_v
-                          | register_seed_haz_v;
+                          | rpc_args_haz_v | register_seed_haz_v;
 
       // Combine all data hazard information
       // TODO: Parameterize away floating point data hazards without hardware support

@@ -61,6 +61,15 @@ module bp_be_scheduler
    , input [context_id_width_p-1:0]           current_virtual_context_id_i
    , input [thread_id_width_p-1:0]            retire_thread_id_i
 
+   // One immutable protected-RPC descriptor: cap 1, context 0 -> context 1.
+   // Top-level state supplies whether its protected call/return edge is legal.
+   , input                                    rpc_call_ready_i
+   , input                                    rpc_return_ready_i
+   , input                                    rpc_install_v_i
+   , input [thread_id_width_p-1:0]            rpc_install_thread_id_i
+   , input [15:0]                             rpc_install_w_mask_i
+   , input [15:0][dpath_width_gp-1:0]         rpc_install_w_data_i
+
    // CSR 0x802 remote register write into another hardware thread context
    , input                                    rpush_w_v_i
    , input                                    rpush_fp_w_v_i
@@ -106,6 +115,13 @@ module bp_be_scheduler
   `bp_cast_i(bp_be_wb_pkt_s, fwb_pkt);
   `bp_cast_i(bp_be_wb_pkt_s, late_wb_pkt);
   `bp_cast_i(bp_be_trans_info_s, trans_info);
+
+`ifndef SYNTHESIS
+  initial begin
+    assert ($bits(bp_be_dispatch_pkt_s) == dispatch_pkt_width_lp)
+      else $fatal(1, "dispatch packet width macro is stale");
+  end
+`endif
 
   logic ptw_busy_lo;
   logic ptw_v_lo, ptw_walk_lo, ptw_itlb_fill_lo, ptw_dtlb_fill_lo;
@@ -281,6 +297,7 @@ module bp_be_scheduler
     end
 `endif
   assign context_cache_scan_r_data_o = {irf_rs2, irf_rs1};
+  logic [15:0][dpath_width_gp-1:0] rpc_line_r_data_lo;
 
   bp_be_regfile_mt
   #(.bp_params_p(bp_params_p)
@@ -320,6 +337,11 @@ module bp_be_scheduler
      ,.context_line_thread_id_i(context_cache_line_physical_thread_id_i)
      ,.context_line_index_i(context_cache_line_index_i)
      ,.context_line_data_i(context_cache_line_data_i)
+     ,.context_line_r_data_o(rpc_line_r_data_lo)
+     ,.rpc_w_v_i(rpc_install_v_i)
+     ,.rpc_thread_id_i(rpc_install_thread_id_i)
+     ,.rpc_w_mask_i(rpc_install_w_mask_i)
+     ,.rpc_w_data_i(rpc_install_w_data_i)
 
      ,.rs_r_v_i(int_rs_r_v_li)
      ,.rs_thread_id_i(int_rs_thread_id_li)
@@ -396,6 +418,11 @@ module bp_be_scheduler
      ,.context_line_thread_id_i('0)
      ,.context_line_index_i('0)
      ,.context_line_data_i('0)
+     ,.context_line_r_data_o()
+     ,.rpc_w_v_i(1'b0)
+     ,.rpc_thread_id_i('0)
+     ,.rpc_w_mask_i('0)
+     ,.rpc_w_data_i('0)
 
      ,.rs_r_v_i(fp_rs_r_v_li)
      ,.rs_thread_id_i(fp_rs_thread_id_li)
@@ -424,12 +451,24 @@ module bp_be_scheduler
   wire [fetch_ptr_p-1:0] be_exc_size_li = '0;
   wire [fetch_ptr_p-1:0] be_exc_count_li = ptw_v_lo ? ptw_count_lo : writeback_v ? '0 : '0;
 
-  wire issue_ctxtsw_v =
+  wire issue_regular_ctxtsw_v =
     fe_instr_not_exc_li
     & issue_pkt_cast_o.csrw
     & (issue_pkt_cast_o.instr.t.itype.imm12 == 12'h800);
 
-  wire issue_ctxtsw_imm_v =
+  wire issue_rpc_call_candidate_v = fe_instr_not_exc_li
+    & issue_pkt_cast_o.csrw
+    & (issue_pkt_cast_o.instr.t.itype.imm12 == 12'h808);
+  wire issue_rpc_return_candidate_v = fe_instr_not_exc_li
+    & issue_pkt_cast_o.csrw
+    & (issue_pkt_cast_o.instr.t.itype.imm12 == 12'h809);
+  wire issue_rpc_call_v = issue_rpc_call_candidate_v
+                          & rpc_call_ready_i
+                          & (irf_rs1 == dpath_width_gp'(1));
+  wire issue_rpc_return_v = issue_rpc_return_candidate_v & rpc_return_ready_i;
+  wire issue_ctxtsw_v = issue_regular_ctxtsw_v | issue_rpc_call_v | issue_rpc_return_v;
+
+  wire issue_ctxtsw_imm_v = issue_regular_ctxtsw_v &
     issue_pkt_cast_o.instr inside {`RV64_CSRRWI, `RV64_CSRRSI, `RV64_CSRRCI};
 
   wire [thread_id_width_p-1:0] issue_thread_id_li =
@@ -451,7 +490,9 @@ module bp_be_scheduler
       : irf_rs1[0 +: context_id_width_p];
 
   wire [context_id_width_p-1:0] issue_ctxtsw_target_tid =
-    issue_ctxtsw_imm_v
+    issue_rpc_call_v ? context_id_width_p'(1)
+    : issue_rpc_return_v ? context_id_width_p'(0)
+    : issue_ctxtsw_imm_v
       ? context_id_width_p'(issue_pkt_cast_o.instr.t.fmatype.rs1_addr)
       : issue_ctxtsw_register_target_tid;
 
@@ -542,6 +583,12 @@ module bp_be_scheduler
       dispatch_pkt_cast_o.nspec_v    = ptw_v_lo | writeback_v;
       dispatch_pkt_cast_o.ctxtsw_v   = issue_ctxtsw_dispatch_v;
       dispatch_pkt_cast_o.ctxtsw_target_tid = issue_ctxtsw_dispatch_v ? issue_ctxtsw_target_tid : '0;
+      dispatch_pkt_cast_o.rpc_call_v = issue_ctxtsw_dispatch_v & issue_rpc_call_v;
+      dispatch_pkt_cast_o.rpc_return_v = issue_ctxtsw_dispatch_v & issue_rpc_return_v;
+      dispatch_pkt_cast_o.rpc_args[0] = rpc_line_r_data_lo[10];
+      dispatch_pkt_cast_o.rpc_args[1] = rpc_line_r_data_lo[11];
+      dispatch_pkt_cast_o.rpc_args[2] = rpc_line_r_data_lo[12];
+      dispatch_pkt_cast_o.rpc_args[3] = rpc_line_r_data_lo[13];
       dispatch_pkt_cast_o.pc         = expected_npc_i;
       dispatch_pkt_cast_o.thread_id  = ptw_v_lo
                                        ? ptw_thread_id_r
