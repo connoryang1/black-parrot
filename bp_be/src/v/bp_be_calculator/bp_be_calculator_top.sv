@@ -150,7 +150,6 @@ module bp_be_calculator_top
    , output logic [vaddr_width_p-1:0]                fast_ctxtsw_resume_npc_o
    , output logic                                    fast_rpc_call_v_o
    , output logic                                    fast_rpc_return_v_o
-   , output logic [3:0][dpath_width_gp-1:0]          fast_rpc_args_o
 
    , output logic                                    context_cache_drain_ready_o
    , output logic                                    register_seed_ready_o
@@ -414,7 +413,6 @@ module bp_be_calculator_top
   assign fast_ctxtsw_resume_npc_o = reservation_r.pc + (reservation_r.size << 1'b1);
   assign fast_rpc_call_v_o = fast_ctxtsw_v_o & reservation_r.rpc_call_v;
   assign fast_rpc_return_v_o = fast_ctxtsw_v_o & reservation_r.rpc_return_v;
-  assign fast_rpc_args_o = reservation_r.rpc_args;
 
   logic [dword_width_gp-1:0] rs2_val_r;
   if (integer_support_p[e_catchup])

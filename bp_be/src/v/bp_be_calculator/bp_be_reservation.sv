@@ -116,7 +116,6 @@ module bp_be_reservation
       reservation.ctxtsw_target_tid = dispatch_pkt_r.ctxtsw_target_tid;
       reservation.rpc_call_v = dispatch_pkt_r.rpc_call_v;
       reservation.rpc_return_v = dispatch_pkt_r.rpc_return_v;
-      reservation.rpc_args = dispatch_pkt_r.rpc_args;
       reservation.pc     = dispatch_pkt_r.pc;
       reservation.instr  = dispatch_pkt_r.instr;
       reservation.decode = dispatch_pkt_r.decode;
