@@ -68,6 +68,7 @@ module bp_be_csr_wrapper_mt
    , input [thread_id_width_p-1:0]           current_physical_thread_id_i
    // Software-visible virtual context ID returned by CSR 0x800.
    , input [context_id_width_p-1:0]          current_virtual_context_id_i
+   , input                                   legacy_context_user_enable_i
    // CSR reads belong to the instruction in the reservation station.
    , input [thread_id_width_p-1:0]           csr_thread_id_i
    // Retire thread owns the instruction currently committing in the backend.
@@ -208,6 +209,7 @@ module bp_be_csr_wrapper_mt
 
        ,.current_physical_thread_id_i(current_physical_thread_id_i)
        ,.current_virtual_context_id_i(current_virtual_context_id_i)
+       ,.legacy_context_user_enable_i(legacy_context_user_enable_i)
        ,.csr_context_restore_v_i(csr_context_restore_v_i
                                  & (csr_context_restore_physical_thread_id_i == thread_id_width_p'(i)))
        ,.csr_context_apc_write_v_i(csr_context_apc_write_v_i

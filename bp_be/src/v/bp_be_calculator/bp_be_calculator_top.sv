@@ -94,6 +94,7 @@ module bp_be_calculator_top
    , input [thread_id_width_p-1:0]                   current_physical_thread_id_i
    // Software-visible virtual context ID returned by CSR 0x800.
    , input [context_id_width_p-1:0]                  current_virtual_context_id_i
+   , input                                           legacy_context_user_enable_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]                   retire_thread_id_i
 
@@ -344,6 +345,7 @@ module bp_be_calculator_top
      // Context switching
      ,.current_physical_thread_id_i(current_physical_thread_id_i)
      ,.current_virtual_context_id_i(current_virtual_context_id_i)
+     ,.legacy_context_user_enable_i(legacy_context_user_enable_i)
      ,.retire_thread_id_i(retire_thread_id_i)
      ,.csr_context_restore_v_i(csr_context_restore_v_i)
      ,.csr_context_apc_write_v_i(csr_context_apc_write_v_i)

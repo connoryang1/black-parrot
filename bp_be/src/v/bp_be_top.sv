@@ -855,9 +855,14 @@ module bp_be_top
 
       if (ctx_npc_write_v_lo && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)) begin
         virtual_context_npc_r[ctx_npc_write_virtual_context_id_lo] <= ctx_npc_write_npc_lo;
-        virtual_context_priv_mode_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.priv_n;
-        virtual_context_translation_en_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.translation_en_n;
-        virtual_context_asid_r[ctx_npc_write_virtual_context_id_lo] <= trans_info_lo.asid;
+        // Descriptor installation names an already initialized protection
+        // domain.  Keep that domain's privilege and translation image rather
+        // than replacing it with the M-mode installer's execution state.
+        if (!ctx_npc_write_rpc_entry_lo) begin
+          virtual_context_priv_mode_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.priv_n;
+          virtual_context_translation_en_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.translation_en_n;
+          virtual_context_asid_r[ctx_npc_write_virtual_context_id_lo] <= trans_info_lo.asid;
+        end
 
         if (ctx_npc_write_rebind_lo
             || !virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]) begin
@@ -872,9 +877,11 @@ module bp_be_top
 
         if (ctx_npc_write_resident_v_li && (ctx_npc_write_physical_thread_id_li < num_threads_p)) begin
           context_npc_r[ctx_npc_write_physical_thread_id_li] <= ctx_npc_write_npc_lo;
-          context_priv_mode_r[ctx_npc_write_physical_thread_id_li] <= commit_pkt.priv_n;
-          context_translation_en_r[ctx_npc_write_physical_thread_id_li] <= commit_pkt.translation_en_n;
-          context_asid_r[ctx_npc_write_physical_thread_id_li] <= trans_info_lo.asid;
+          if (!ctx_npc_write_rpc_entry_lo) begin
+            context_priv_mode_r[ctx_npc_write_physical_thread_id_li] <= commit_pkt.priv_n;
+            context_translation_en_r[ctx_npc_write_physical_thread_id_li] <= commit_pkt.translation_en_n;
+            context_asid_r[ctx_npc_write_physical_thread_id_li] <= trans_info_lo.asid;
+          end
         end
       end
 
@@ -1426,6 +1433,7 @@ module bp_be_top
 
      ,.current_physical_thread_id_i(scheduler_current_physical_thread_id_li)
      ,.current_virtual_context_id_i(current_virtual_context_id_r)
+     ,.legacy_context_user_enable_i(~rpc_entry_valid_r)
      ,.retire_thread_id_i(retire_thread_id_lo)
      ,.rpc_call_ready_i(rpc_call_ready_li)
      ,.rpc_return_ready_i(rpc_return_ready_li)
@@ -1529,6 +1537,7 @@ module bp_be_top
      // Context switching
      ,.current_physical_thread_id_i(current_physical_thread_id_lo)
      ,.current_virtual_context_id_i(current_virtual_context_id_r)
+     ,.legacy_context_user_enable_i(~rpc_entry_valid_r)
      ,.retire_thread_id_i(retire_thread_id_lo)
      ,.csr_context_restore_v_i(csr_context_restore_v_li)
      ,.csr_context_apc_write_v_i(csr_context_apc_write_v_li)
