@@ -52,6 +52,7 @@ module bp_be_csr
    // Context switching control
    , input [thread_id_width_p-1:0]           current_physical_thread_id_i
    , input [context_id_width_p-1:0]          current_virtual_context_id_i
+   , input                                   legacy_context_user_enable_i
 
    // Physical CSR bank save/restore for nonresident virtual contexts.
    , input                                   csr_context_restore_v_i
@@ -169,6 +170,7 @@ module bp_be_csr
   wire is_m_mode = is_debug_mode | (priv_mode_r == `PRIV_MODE_M);
   wire is_s_mode = (priv_mode_r == `PRIV_MODE_S);
   wire is_u_mode = (priv_mode_r == `PRIV_MODE_U);
+  wire legacy_context_access_li = legacy_context_user_enable_i | is_m_mode;
 
   `declare_csr(dcsr);
   `declare_csr_addr(dpc, vaddr_width_p, paddr_width_p);
@@ -555,15 +557,17 @@ module bp_be_csr
         12'h802:  // Thread register seed / remote register write - write-only, reads as 0
           csr_data_lo = '0;
         12'h803:  // Context-cache L1 service data/result
-          csr_data_lo = ctx_l1_data_r;
+          csr_data_lo = legacy_context_access_li ? ctx_l1_data_r : '0;
         12'h804:  // Context-cache L1 service status
-          csr_data_lo = {{(dword_width_gp-2){1'b0}}, ctx_l1_resp_v_i, ctx_l1_ready_i};
+          csr_data_lo = legacy_context_access_li
+                        ? {{(dword_width_gp-2){1'b0}}, ctx_l1_resp_v_i, ctx_l1_ready_i}
+                        : '0;
         12'h805:  // Accepted cache-miss trace control/status
-          csr_data_lo = miss_trace_status_i;
+          csr_data_lo = legacy_context_access_li ? miss_trace_status_i : '0;
         12'h806:  // Trace read selector - write-only, reads as 0
           csr_data_lo = '0;
         12'h807:  // Selected trace record
-          csr_data_lo = miss_trace_data_i;
+          csr_data_lo = legacy_context_access_li ? miss_trace_data_i : '0;
         12'h808:  // Protected call capability operand / status
           csr_data_lo = '0;
         12'h809:  // Protected return result operand / status
@@ -1001,7 +1005,8 @@ module bp_be_csr
   // the caller. Ordinary reseeds preserve the target's private CSR state.
   // Write format: csr_data_li[vaddr_width_p +: context_id_width_p] = context_id
   //               csr_data_li[vaddr_width_p-1:0]                   = target NPC
-  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801);
+  assign ctx_npc_write_v_o   = csr_w_v_li & (csr_addr_li == 12'h801)
+                               & legacy_context_access_li;
   assign ctx_npc_write_rebind_o = ctx_npc_write_v_o & csr_data_li[dword_width_gp-1];
   // Bit 62 requests installation of the single protected-RPC descriptor entry
   // while using the existing context-id/NPC payload. Top-level commit logic
@@ -1018,15 +1023,18 @@ module bp_be_csr
   //               bits[38+context_id_width_p+reg_addr_width_gp : 39+context_id_width_p] = reg_addr
   //               next bit                                      = fp_sel (1=FP regfile, 0=INT regfile)
   localparam fp_sel_bit_lp = vaddr_width_p + context_id_width_p + reg_addr_width_gp;
-  wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h802);
+  wire rpush_v = csr_w_v_li & (csr_addr_li == 12'h802)
+                 & legacy_context_access_li;
   assign ctx_rpush_v_o    = rpush_v & ~csr_data_li[fp_sel_bit_lp];
   assign ctx_rpush_fp_v_o = rpush_v &  csr_data_li[fp_sel_bit_lp];
   assign ctx_rpush_virtual_context_id_o  = csr_data_li[vaddr_width_p +: context_id_width_p];
   assign ctx_rpush_reg_o  = csr_data_li[vaddr_width_p + context_id_width_p +: reg_addr_width_gp];
   assign ctx_rpush_data_o = {{(dpath_width_gp - vaddr_width_p){1'b0}}, csr_data_li[0 +: vaddr_width_p]};
 
-  wire ctx_l1_data_write_v_li = csr_w_v_li & (csr_addr_li == 12'h803);
-  wire ctx_l1_cmd_write_v_li = csr_w_v_li & (csr_addr_li == 12'h804);
+  wire ctx_l1_data_write_v_li = csr_w_v_li & (csr_addr_li == 12'h803)
+                                & legacy_context_access_li;
+  wire ctx_l1_cmd_write_v_li = csr_w_v_li & (csr_addr_li == 12'h804)
+                               & legacy_context_access_li;
   assign ctx_l1_cmd_v_o = ctx_l1_cmd_write_v_li & ctx_l1_ready_i;
   assign ctx_l1_cmd_w_o = csr_data_li[dword_width_gp-1];
   assign ctx_l1_cmd_paddr_o = csr_data_li[0+:paddr_width_p];
@@ -1035,10 +1043,12 @@ module bp_be_csr
   // A control write sets the desired armed state directly. Bit 1 also clears
   // counts and overflow flags. A selector write initiates the recorder's
   // synchronous BRAM read; bit 8 chooses D (1) or I (0), bits 7:0 select entry.
-  assign miss_trace_ctrl_v_o = csr_w_v_li & (csr_addr_li == 12'h805);
+  assign miss_trace_ctrl_v_o = csr_w_v_li & (csr_addr_li == 12'h805)
+                               & legacy_context_access_li;
   assign miss_trace_arm_o = csr_data_li[0];
   assign miss_trace_clear_o = miss_trace_ctrl_v_o & csr_data_li[1];
-  assign miss_trace_read_v_o = csr_w_v_li & (csr_addr_li == 12'h806);
+  assign miss_trace_read_v_o = csr_w_v_li & (csr_addr_li == 12'h806)
+                               & legacy_context_access_li;
   assign miss_trace_read_source_o = csr_data_li[8];
   assign miss_trace_read_index_o = csr_data_li[7:0];
 

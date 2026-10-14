@@ -63,6 +63,7 @@ module bp_be_scheduler
 
    // One immutable protected-RPC descriptor: cap 1, context 0 -> context 1.
    // Top-level state supplies whether its protected call/return edge is legal.
+   , input                                    legacy_context_user_enable_i
    , input                                    rpc_call_ready_i
    , input                                    rpc_return_ready_i
    , input                                    rpc_install_v_i
@@ -115,6 +116,7 @@ module bp_be_scheduler
   `bp_cast_i(bp_be_wb_pkt_s, iwb_pkt);
   `bp_cast_i(bp_be_wb_pkt_s, fwb_pkt);
   `bp_cast_i(bp_be_wb_pkt_s, late_wb_pkt);
+  `bp_cast_i(bp_be_decode_info_s, decode_info);
   `bp_cast_i(bp_be_trans_info_s, trans_info);
 
 `ifndef SYNTHESIS
@@ -454,10 +456,13 @@ module bp_be_scheduler
   wire [fetch_ptr_p-1:0] be_exc_size_li = '0;
   wire [fetch_ptr_p-1:0] be_exc_count_li = ptw_v_lo ? ptw_count_lo : writeback_v ? '0 : '0;
 
-  wire issue_regular_ctxtsw_v =
+  wire issue_regular_ctxtsw_candidate_v =
     fe_instr_not_exc_li
     & issue_pkt_cast_o.csrw
     & (issue_pkt_cast_o.instr.t.itype.imm12 == 12'h800);
+  wire issue_regular_ctxtsw_v = issue_regular_ctxtsw_candidate_v
+                                 & (legacy_context_user_enable_i
+                                    | decode_info_cast_i.m_mode);
 
   wire issue_rpc_call_candidate_v = fe_instr_not_exc_li
     & issue_pkt_cast_o.csrw
