@@ -64,6 +64,7 @@ module bp_be_pipe_sys
    , input [thread_id_width_p-1:0]           current_physical_thread_id_i
    // Software-visible virtual context ID returned by CSR 0x800.
    , input [context_id_width_p-1:0]          current_virtual_context_id_i
+   , input                                   legacy_context_user_enable_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
 
@@ -80,6 +81,7 @@ module bp_be_pipe_sys
    // Bootstrap: write target NPC for a virtual context (CSR 0x801)
    , output logic                            ctx_npc_write_v_o
    , output logic                            ctx_npc_write_rebind_o
+   , output logic                            ctx_npc_write_rpc_entry_o
    , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
@@ -171,6 +173,7 @@ module bp_be_pipe_sys
      // and memory translation information.
      ,.current_physical_thread_id_i(current_physical_thread_id_i)
      ,.current_virtual_context_id_i(current_virtual_context_id_i)
+     ,.legacy_context_user_enable_i(legacy_context_user_enable_i)
      ,.csr_thread_id_i(reservation_physical_thread_id)
      ,.retire_thread_id_i(retire_thread_id_i)
      ,.csr_context_restore_v_i(csr_context_restore_v_i)
@@ -183,6 +186,7 @@ module bp_be_pipe_sys
      ,.csr_context_save_data_o(csr_context_save_data_o)
      ,.ctx_npc_write_v_o(ctx_npc_write_v_o)
      ,.ctx_npc_write_rebind_o(ctx_npc_write_rebind_o)
+     ,.ctx_npc_write_rpc_entry_o(ctx_npc_write_rpc_entry_o)
      ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_o)
      ,.ctx_npc_write_npc_o(ctx_npc_write_npc_o)
      ,.ctx_rpush_v_o(ctx_rpush_v_o)

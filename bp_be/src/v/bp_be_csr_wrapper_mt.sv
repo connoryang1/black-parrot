@@ -68,6 +68,7 @@ module bp_be_csr_wrapper_mt
    , input [thread_id_width_p-1:0]           current_physical_thread_id_i
    // Software-visible virtual context ID returned by CSR 0x800.
    , input [context_id_width_p-1:0]          current_virtual_context_id_i
+   , input                                   legacy_context_user_enable_i
    // CSR reads belong to the instruction in the reservation station.
    , input [thread_id_width_p-1:0]           csr_thread_id_i
    // Retire thread owns the instruction currently committing in the backend.
@@ -86,6 +87,7 @@ module bp_be_csr_wrapper_mt
    // Bootstrap: write target NPC for a virtual context (CSR 0x801)
    , output logic                            ctx_npc_write_v_o
    , output logic                            ctx_npc_write_rebind_o
+   , output logic                            ctx_npc_write_rpc_entry_o
    , output logic [context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_o
    , output logic [vaddr_width_p-1:0]        ctx_npc_write_npc_o
 
@@ -126,6 +128,7 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            irq_waiting_co;
   logic [num_threads_p-1:0]                            ctx_npc_write_v_co;
   logic [num_threads_p-1:0]                            ctx_npc_write_rebind_co;
+  logic [num_threads_p-1:0]                            ctx_npc_write_rpc_entry_co;
   logic [num_threads_p-1:0][context_id_width_p-1:0]   ctx_npc_write_virtual_context_id_co;
   logic [num_threads_p-1:0][vaddr_width_p-1:0]        ctx_npc_write_npc_co;
   logic [num_threads_p-1:0]                            ctx_rpush_v_co;
@@ -206,6 +209,7 @@ module bp_be_csr_wrapper_mt
 
        ,.current_physical_thread_id_i(current_physical_thread_id_i)
        ,.current_virtual_context_id_i(current_virtual_context_id_i)
+       ,.legacy_context_user_enable_i(legacy_context_user_enable_i)
        ,.csr_context_restore_v_i(csr_context_restore_v_i
                                  & (csr_context_restore_physical_thread_id_i == thread_id_width_p'(i)))
        ,.csr_context_apc_write_v_i(csr_context_apc_write_v_i
@@ -216,6 +220,7 @@ module bp_be_csr_wrapper_mt
        ,.csr_context_save_data_o(csr_context_save_data_co[i])
        ,.ctx_npc_write_v_o(ctx_npc_write_v_co[i])
        ,.ctx_npc_write_rebind_o(ctx_npc_write_rebind_co[i])
+       ,.ctx_npc_write_rpc_entry_o(ctx_npc_write_rpc_entry_co[i])
        ,.ctx_npc_write_virtual_context_id_o(ctx_npc_write_virtual_context_id_co[i])
        ,.ctx_npc_write_npc_o(ctx_npc_write_npc_co[i])
 
@@ -254,6 +259,7 @@ module bp_be_csr_wrapper_mt
   assign irq_waiting_o         = irq_waiting_co[current_physical_thread_id_i];
   assign ctx_npc_write_v_o     = ctx_npc_write_v_co[current_physical_thread_id_i];
   assign ctx_npc_write_rebind_o = ctx_npc_write_rebind_co[current_physical_thread_id_i];
+  assign ctx_npc_write_rpc_entry_o = ctx_npc_write_rpc_entry_co[current_physical_thread_id_i];
   assign ctx_npc_write_virtual_context_id_o   = ctx_npc_write_virtual_context_id_co[current_physical_thread_id_i];
   assign ctx_npc_write_npc_o   = ctx_npc_write_npc_co[current_physical_thread_id_i];
   assign ctx_rpush_v_o         = ctx_rpush_v_co[current_physical_thread_id_i];

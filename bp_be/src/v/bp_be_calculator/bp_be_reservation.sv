@@ -22,6 +22,15 @@ module bp_be_reservation
   `bp_cast_i(bp_be_dispatch_pkt_s, dispatch_pkt);
   `bp_cast_o(bp_be_reservation_s, reservation);
 
+`ifndef SYNTHESIS
+  initial begin
+    assert ($bits(bp_be_dispatch_pkt_s) == dispatch_pkt_width_lp)
+      else $fatal(1, "dispatch packet width macro is stale");
+    assert ($bits(bp_be_reservation_s) == reservation_width_lp)
+      else $fatal(1, "reservation packet width macro is stale");
+  end
+`endif
+
   // TODO: Input boxing
   bp_be_dispatch_pkt_s dispatch_pkt_n, dispatch_pkt_r;
   always_comb
@@ -105,6 +114,8 @@ module bp_be_reservation
       reservation.thread_id = dispatch_pkt_r.thread_id;
       reservation.ctxtsw_v = dispatch_pkt_r.ctxtsw_v;
       reservation.ctxtsw_target_tid = dispatch_pkt_r.ctxtsw_target_tid;
+      reservation.rpc_call_v = dispatch_pkt_r.rpc_call_v;
+      reservation.rpc_return_v = dispatch_pkt_r.rpc_return_v;
       reservation.pc     = dispatch_pkt_r.pc;
       reservation.instr  = dispatch_pkt_r.instr;
       reservation.decode = dispatch_pkt_r.decode;
