@@ -250,6 +250,7 @@ module bp_fe_controller
     '{vaddr: next_pc_i
       ,op  : (is_run & icache_fence_v) ? e_icache_inval : e_icache_fetch
       ,spec: !icache_fill_response_v
+      ,prefetch: 1'b0
       };
 
   assign redirect_instr_o = itlb_fill_response_v
