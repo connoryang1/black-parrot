@@ -49,6 +49,12 @@ module bp_uce
     , output logic                                   cache_req_lock_o
     , input [cache_req_metadata_width_lp-1:0]        cache_req_metadata_i
     , input                                          cache_req_metadata_v_i
+    // Physical, already permission-checked advisory requests enter here
+    // without occupying the architectural cache request/metadata pair.
+    , input [paddr_width_p-1:0]                      preview_paddr_i
+    , input                                          preview_v_i
+    , input                                          preview_cancel_i
+    , output logic                                   preview_ready_o
     , output logic [id_width_p-1:0]                  cache_req_id_o
     , output logic                                   cache_req_critical_o
     , output logic                                   cache_req_last_o
@@ -99,6 +105,9 @@ module bp_uce
   localparam prefetch_tag_width_lp = `BSG_SAFE_CLOG2(lce_assoc_p);
   localparam prefetch_state_width_lp = $bits(bp_coh_states_e);
   localparam prefetch_id_width_lp = prefetch_tag_width_lp + prefetch_state_width_lp;
+  localparam preview_queue_els_lp = 4;
+  localparam preview_queue_ptr_width_lp = `BSG_SAFE_CLOG2(preview_queue_els_lp);
+  localparam preview_queue_count_width_lp = `BSG_SAFE_CLOG2(preview_queue_els_lp+1);
 
   localparam bp_bedrock_msg_size_e block_msg_size_lp = (block_width_p == 512)
                                                        ? e_bedrock_msg_size_64
@@ -123,6 +132,8 @@ module bp_uce
   wire prefetch_v_li = prefetch_p & cache_req_v_i
     & (cache_req_cast_i.msg_type == e_cache_prefetch);
   logic [prefetch_els_p-1:0] prefetch_valid_r, prefetch_sent_r, prefetch_way_v_r;
+  logic [prefetch_els_p-1:0] prefetch_preview_r;
+  logic [prefetch_els_p-1:0] prefetch_preview_canceled_r;
   logic [prefetch_els_p-1:0][paddr_width_p-1:0] prefetch_addr_r;
   logic [prefetch_els_p-1:0][`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_way_r;
   logic [prefetch_els_p-1:0][fill_cnt_width_lp-1:0] prefetch_fill_count_r;
@@ -143,6 +154,49 @@ module bp_uce
   wire prefetch_accept = cache_req_yumi_o & prefetch_v_li;
   wire prefetch_allocate = prefetch_accept & prefetch_free_v & ~prefetch_duplicate_v;
   wire prefetch_drop = prefetch_accept & (~prefetch_free_v | prefetch_duplicate_v);
+  logic [preview_queue_els_lp-1:0][paddr_width_p-1:0] preview_queue_r;
+  logic [preview_queue_ptr_width_lp-1:0] preview_head_r, preview_tail_r;
+  logic [preview_queue_count_width_lp-1:0] preview_count_r;
+  bp_cache_req_s cache_req_r;
+  logic cache_req_v_r;
+  logic preview_duplicate_v;
+  wire [paddr_width_p-1:0] preview_head_addr = preview_queue_r[preview_head_r];
+  assign preview_ready_o = prefetch_p & ~reset_i & ~preview_cancel_i
+    & (preview_count_r < preview_queue_els_lp);
+  wire preview_enqueue = preview_v_i & preview_ready_o;
+  wire preview_demand_match = cache_req_v_r
+    & (cache_req_r.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]
+       == preview_head_addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]);
+  // Architectural requests and their following metadata retain the cache
+  // port. The queued physical hint only takes a free table slot on an idle
+  // input cycle; its later memory issue already has lower priority than demand.
+  wire preview_dequeue = (preview_count_r != '0) & ~cache_req_v_i
+    & ~preview_cancel_i & ~prefetch_accept
+    & (prefetch_free_v | preview_duplicate_v | preview_demand_match);
+  wire preview_allocate = preview_dequeue & ~preview_duplicate_v
+    & ~preview_demand_match;
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i | preview_cancel_i) begin
+      preview_head_r <= '0;
+      preview_tail_r <= '0;
+      preview_count_r <= '0;
+    end else begin
+      if (preview_enqueue) begin
+        preview_queue_r[preview_tail_r] <=
+          {preview_paddr_i[paddr_width_p-1:prefetch_buffer_offset_width_lp]
+           ,prefetch_buffer_offset_width_lp'(0)};
+        preview_tail_r <= preview_tail_r + 1'b1;
+      end
+      if (preview_dequeue)
+        preview_head_r <= preview_head_r + 1'b1;
+      case ({preview_enqueue, preview_dequeue})
+        2'b10: preview_count_r <= preview_count_r + 1'b1;
+        2'b01: preview_count_r <= preview_count_r - 1'b1;
+        default: preview_count_r <= preview_count_r;
+      endcase
+    end
+  end
 
   // The cache replacement metadata is computed independently for each hint.
   // Prevent multiple outstanding fills to the same set from reserving the
@@ -152,7 +206,7 @@ module bp_uce
   always_comb begin
     prefetch_reserved_ways = '0;
     for (int i = 0; i < prefetch_els_p; i++) begin
-      if (prefetch_valid_r[i] & prefetch_way_v_r[i]
+      if (prefetch_valid_r[i] & prefetch_way_v_r[i] & ~prefetch_preview_r[i]
           & (prefetch_slot_width_lp'(i) != prefetch_metadata_pending_slot_r)
           & (prefetch_addr_r[i][block_offset_width_lp+:index_width_lp]
              == prefetch_addr_r[prefetch_metadata_pending_slot_r][block_offset_width_lp+:index_width_lp]))
@@ -178,13 +232,16 @@ module bp_uce
     prefetch_issue_v = 1'b0;
     prefetch_issue_slot = '0;
     prefetch_duplicate_v = 1'b0;
+    preview_duplicate_v = 1'b0;
     prefetch_demand_match = 1'b0;
     for (int i = prefetch_els_p-1; i >= 0; i--) begin
       if (!prefetch_valid_r[i]) begin
         prefetch_free_v = 1'b1;
         prefetch_free_slot = prefetch_slot_width_lp'(i);
       end
-      if (prefetch_valid_r[i] & prefetch_way_v_r[i] & ~prefetch_sent_r[i]) begin
+      if (prefetch_valid_r[i] & prefetch_way_v_r[i] & ~prefetch_sent_r[i]
+          & ~prefetch_preview_canceled_r[i]
+          & ~(prefetch_preview_r[i] & preview_cancel_i)) begin
         prefetch_issue_v = 1'b1;
         prefetch_issue_slot = prefetch_slot_width_lp'(i);
       end
@@ -196,6 +253,9 @@ module bp_uce
       prefetch_duplicate_v |= prefetch_valid_r[i]
         & (prefetch_addr_r[i][paddr_width_p-1:prefetch_buffer_offset_width_lp]
            == cache_req_cast_i.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]);
+      preview_duplicate_v |= prefetch_valid_r[i]
+        & (prefetch_addr_r[i][paddr_width_p-1:prefetch_buffer_offset_width_lp]
+           == preview_head_addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]);
     end
   end
   assign prefetch_response_id = {fsm_rev_header_li.payload.state
@@ -244,8 +304,7 @@ module bp_uce
   wire is_uc_read_wait    = (state_r == e_uc_read_wait);
 
   logic cache_req_ready_lo;
-  bp_cache_req_s cache_req_r;
-  logic cache_req_v_r, cache_req_done;
+  logic cache_req_done;
   bsg_two_fifo
    #(.width_p($bits(bp_cache_req_s)), .ready_THEN_valid_p(1))
    cache_req_fifo
@@ -537,7 +596,7 @@ module bp_uce
   always_comb begin
     prefetch_install_reserved_ways = '0;
     for (int i = 0; i < prefetch_els_p; i++) begin
-      if (prefetch_valid_r[i] & prefetch_way_v_r[i]
+      if (prefetch_valid_r[i] & prefetch_way_v_r[i] & ~prefetch_preview_r[i]
           & (prefetch_slot_width_lp'(i) != prefetch_install_slot_r)
           & (prefetch_addr_r[i][block_offset_width_lp+:index_width_lp]
              == prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp]))
@@ -581,7 +640,8 @@ module bp_uce
   assign cache_req_credits_empty_o = ~cache_req_v_r
     && (prefetch_ignore_credits_p
         ? (credit_count_lo == prefetch_sent_count)
-        : ((credit_count_lo == 0) && !(|prefetch_valid_r)));
+        : ((credit_count_lo == 0) && !(|prefetch_valid_r)
+           && (preview_count_r == '0)));
   wire cache_req_credit_ready_lo = ~cache_req_credits_full_o | ~fsm_fwd_new_lo;
   logic [fill_width_p-1:0] writeback_data;
   wire [fill_cnt_width_lp-1:0] dirty_data_select = fsm_fwd_addr_lo[fill_offset_width_lp+:fill_cnt_width_lp];
@@ -1088,8 +1148,10 @@ module bp_uce
         data_mem_pkt_cast_o.addr = prefetch_addr_r[prefetch_response_slot]
           + (paddr_width_p'(prefetch_fill_count_r[prefetch_response_slot]) << 3);
         data_mem_pkt_cast_o.data = fsm_rev_data_li;
-        data_mem_pkt_v_o = 1'b1;
-        prefetch_response_yumi = data_mem_pkt_yumi_i;
+        data_mem_pkt_v_o = ~prefetch_preview_canceled_r[prefetch_response_slot]
+          & ~(preview_cancel_i & prefetch_preview_r[prefetch_response_slot]);
+        prefetch_response_yumi = data_mem_pkt_v_o
+          ? data_mem_pkt_yumi_i : 1'b1;
       end
 
       // The shared reverse stream must make progress even if an ordinary miss
@@ -1219,6 +1281,8 @@ module bp_uce
       prefetch_valid_r <= '0;
       prefetch_sent_r <= '0;
       prefetch_way_v_r <= '0;
+      prefetch_preview_r <= '0;
+      prefetch_preview_canceled_r <= '0;
       prefetch_addr_r <= '0;
       prefetch_way_r <= '0;
       prefetch_fill_count_r <= '0;
@@ -1256,17 +1320,43 @@ module bp_uce
         prefetch_valid_r[prefetch_free_slot] <= 1'b1;
         prefetch_sent_r[prefetch_free_slot] <= 1'b0;
         prefetch_way_v_r[prefetch_free_slot] <= 1'b0;
+        prefetch_preview_r[prefetch_free_slot] <= 1'b0;
+        prefetch_preview_canceled_r[prefetch_free_slot] <= 1'b0;
         prefetch_addr_r[prefetch_free_slot]
           <= {cache_req_cast_i.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]
               ,prefetch_buffer_offset_width_lp'(0)};
         prefetch_fill_count_r[prefetch_free_slot] <= '0;
       end
+      if (preview_allocate) begin
+        prefetch_valid_r[prefetch_free_slot] <= 1'b1;
+        prefetch_sent_r[prefetch_free_slot] <= 1'b0;
+        prefetch_way_v_r[prefetch_free_slot] <= 1'b1;
+        prefetch_preview_r[prefetch_free_slot] <= 1'b1;
+        prefetch_preview_canceled_r[prefetch_free_slot] <= 1'b0;
+        prefetch_way_r[prefetch_free_slot] <= '0;
+        prefetch_addr_r[prefetch_free_slot] <= preview_head_addr;
+        prefetch_fill_count_r[prefetch_free_slot] <= '0;
+      end
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
+      if (preview_cancel_i)
+        for (int i = 0; i < prefetch_els_p; i++)
+          if (prefetch_valid_r[i] & prefetch_preview_r[i]) begin
+            if (prefetch_sent_r[i])
+              prefetch_preview_canceled_r[i] <= 1'b1;
+            else begin
+              prefetch_valid_r[i] <= 1'b0;
+              prefetch_way_v_r[i] <= 1'b0;
+              prefetch_preview_r[i] <= 1'b0;
+              prefetch_preview_canceled_r[i] <= 1'b0;
+            end
+          end
       if (prefetch_response_yumi & fsm_rev_last_li) begin
         prefetch_valid_r[prefetch_response_slot] <= 1'b0;
         prefetch_sent_r[prefetch_response_slot] <= 1'b0;
         prefetch_way_v_r[prefetch_response_slot] <= 1'b0;
+        prefetch_preview_r[prefetch_response_slot] <= 1'b0;
+        prefetch_preview_canceled_r[prefetch_response_slot] <= 1'b0;
         prefetch_fill_count_r[prefetch_response_slot] <= '0;
       end else if (prefetch_response_yumi) begin
         prefetch_fill_count_r[prefetch_response_slot]
