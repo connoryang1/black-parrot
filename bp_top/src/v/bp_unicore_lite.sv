@@ -64,9 +64,45 @@ module bp_unicore_lite
   logic icache_stat_mem_pkt_v_li, icache_stat_mem_pkt_yumi_lo;
   bp_fe_icache_stat_info_s icache_stat_mem_lo;
 
+  wire posedge_clk = clk_i;
+  wire negedge_clk = ~clk_i;
+
   bp_be_dcache_req_s dcache_req_lo;
   logic dcache_req_v_lo, dcache_req_yumi_li, dcache_req_lock_li, dcache_req_metadata_v_lo;
   bp_be_dcache_req_metadata_s dcache_req_metadata_lo;
+  logic dcache_uce_req_yumi_lo, dcache_preview_ready_lo;
+  logic dcache_preview_metadata_r, dcache_normal_metadata_r;
+  wire dcache_preview_req = dcache_req_v_lo
+    & (dcache_req_lo.msg_type == e_cache_prefetch);
+  wire dcache_normal_req_v = dcache_req_v_lo & ~dcache_preview_req;
+  wire dcache_normal_req_accept = dcache_normal_req_v & dcache_uce_req_yumi_lo;
+  wire dcache_preview_accept = dcache_preview_req & dcache_preview_ready_lo;
+  wire dcache_uce_metadata_v = dcache_req_metadata_v_lo & ~dcache_preview_metadata_r;
+
+  // The D-cache emits replacement metadata one UCE clock after every
+  // accepted request. The physical preview lane needs only its address, so
+  // discard precisely that hint's delayed metadata while forwarding the
+  // metadata of each architectural request to the ordinary UCE port.
+  assign dcache_req_yumi_li = dcache_preview_req
+    ? dcache_preview_ready_lo : dcache_uce_req_yumi_lo;
+  always_ff @(posedge negedge_clk) begin
+    if (reset_i) begin
+      dcache_preview_metadata_r <= 1'b0;
+      dcache_normal_metadata_r <= 1'b0;
+    end else begin
+      dcache_preview_metadata_r <= dcache_preview_accept;
+      dcache_normal_metadata_r <= dcache_normal_req_accept;
+    end
+  end
+  // synopsys translate_off
+  always_ff @(negedge negedge_clk) if (!reset_i) begin
+    assert (dcache_req_metadata_v_lo
+            == (dcache_preview_metadata_r | dcache_normal_metadata_r))
+      else $error("D-cache request/metadata timing diverged at preview arbiter");
+    assert (dcache_uce_metadata_v == dcache_normal_metadata_r)
+      else $error("D-cache preview metadata reached ordinary UCE port");
+  end
+  // synopsys translate_on
   logic [dcache_req_id_width_p-1:0] dcache_req_id_li;
   logic dcache_req_critical_li, dcache_req_last_li;
   logic dcache_req_credits_full_li, dcache_req_credits_empty_li;
@@ -80,9 +116,6 @@ module bp_unicore_lite
   bp_be_dcache_stat_mem_pkt_s dcache_stat_mem_pkt_li;
   logic dcache_stat_mem_pkt_v_li, dcache_stat_mem_pkt_yumi_lo;
   bp_be_dcache_stat_info_s dcache_stat_mem_lo;
-
-  wire posedge_clk = clk_i;
-  wire negedge_clk = ~clk_i;
 
   wire [did_width_p-1:0] did_li = cfg_bus_cast_i.did;
   wire [1:0][lce_id_width_p-1:0] lce_id_li = {cfg_bus_cast_i.dcache_id, cfg_bus_cast_i.icache_id};
@@ -243,15 +276,15 @@ module bp_unicore_lite
      ,.lce_id_i(lce_id_li[1])
 
      ,.cache_req_i(dcache_req_lo)
-     ,.cache_req_v_i(dcache_req_v_lo)
-     ,.cache_req_yumi_o(dcache_req_yumi_li)
+     ,.cache_req_v_i(dcache_normal_req_v)
+     ,.cache_req_yumi_o(dcache_uce_req_yumi_lo)
      ,.cache_req_lock_o(dcache_req_lock_li)
      ,.cache_req_metadata_i(dcache_req_metadata_lo)
-     ,.cache_req_metadata_v_i(dcache_req_metadata_v_lo)
-     ,.preview_paddr_i('0)
-     ,.preview_v_i(1'b0)
+     ,.cache_req_metadata_v_i(dcache_uce_metadata_v)
+     ,.preview_paddr_i(dcache_req_lo.addr)
+     ,.preview_v_i(dcache_preview_req)
      ,.preview_cancel_i(1'b0)
-     ,.preview_ready_o()
+     ,.preview_ready_o(dcache_preview_ready_lo)
      ,.cache_req_id_o(dcache_req_id_li)
      ,.cache_req_critical_o(dcache_req_critical_li)
      ,.cache_req_last_o(dcache_req_last_li)
