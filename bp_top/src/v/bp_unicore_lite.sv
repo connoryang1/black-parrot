@@ -70,27 +70,29 @@ module bp_unicore_lite
   bp_be_dcache_req_s dcache_req_lo;
   logic dcache_req_v_lo, dcache_req_yumi_li, dcache_req_lock_li, dcache_req_metadata_v_lo;
   bp_be_dcache_req_metadata_s dcache_req_metadata_lo;
-  logic dcache_uce_req_yumi_lo, dcache_preview_ready_lo;
+  logic dcache_uce_req_yumi_lo;
   logic dcache_preview_metadata_r, dcache_normal_metadata_r;
   wire dcache_preview_req = dcache_req_v_lo
     & (dcache_req_lo.msg_type == e_cache_prefetch);
   wire dcache_normal_req_v = dcache_req_v_lo & ~dcache_preview_req;
   wire dcache_normal_req_accept = dcache_normal_req_v & dcache_uce_req_yumi_lo;
-  wire dcache_preview_accept = dcache_preview_req & dcache_preview_ready_lo;
+  wire dcache_preview_retire = dcache_preview_req;
   wire dcache_uce_metadata_v = dcache_req_metadata_v_lo & ~dcache_preview_metadata_r;
 
   // The D-cache emits replacement metadata one UCE clock after every
   // accepted request. The physical preview lane needs only its address, so
   // discard precisely that hint's delayed metadata while forwarding the
-  // metadata of each architectural request to the ordinary UCE port.
+  // metadata of each architectural request to the ordinary UCE port. A hint
+  // is best effort: retire it even when the preview queue is full so a
+  // scheduler-issued hint cannot hold the D-cache pipeline waiting for space.
   assign dcache_req_yumi_li = dcache_preview_req
-    ? dcache_preview_ready_lo : dcache_uce_req_yumi_lo;
+    ? 1'b1 : dcache_uce_req_yumi_lo;
   always_ff @(posedge negedge_clk) begin
     if (reset_i) begin
       dcache_preview_metadata_r <= 1'b0;
       dcache_normal_metadata_r <= 1'b0;
     end else begin
-      dcache_preview_metadata_r <= dcache_preview_accept;
+      dcache_preview_metadata_r <= dcache_preview_retire;
       dcache_normal_metadata_r <= dcache_normal_req_accept;
     end
   end
@@ -284,7 +286,7 @@ module bp_unicore_lite
      ,.preview_paddr_i(dcache_req_lo.addr)
      ,.preview_v_i(dcache_preview_req)
      ,.preview_cancel_i(1'b0)
-     ,.preview_ready_o(dcache_preview_ready_lo)
+     ,.preview_ready_o()
      ,.cache_req_id_o(dcache_req_id_li)
      ,.cache_req_critical_o(dcache_req_critical_li)
      ,.cache_req_last_o(dcache_req_last_li)
