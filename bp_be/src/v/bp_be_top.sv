@@ -73,6 +73,7 @@ module bp_be_top
    , output logic [dcache_block_width_p-1:0]         data_mem_o
    , output logic                                    data_mem_pkt_yumi_o
    , output logic [33:0]                             prefetch_remove_event_o
+   , output logic [63:0]                             prefetch_remove_meta_o
 
    // stat_mem
    , input                                           stat_mem_pkt_v_i
@@ -1488,6 +1489,7 @@ module bp_be_top
      ,.mem_busy_o(mem_busy_lo)
      ,.mem_ordered_o(mem_ordered_lo)
      ,.prefetch_remove_event_o(prefetch_remove_event_o)
+     ,.prefetch_remove_meta_o(prefetch_remove_meta_o)
      ,.idiv_busy_o(idiv_busy_lo)
      ,.fdiv_busy_o(fdiv_busy_lo)
 

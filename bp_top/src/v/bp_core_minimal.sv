@@ -114,6 +114,7 @@ module bp_core_minimal
   logic miss_trace_read_v_lo, miss_trace_read_source_lo;
   logic [7:0] miss_trace_read_index_lo;
   logic [33:0] prefetch_remove_event_lo;
+  logic [63:0] prefetch_remove_meta_lo;
 
   // This temporary measurement block records accepted physical demand misses,
   // after translation and before the I/D memory engines. Separate memories
@@ -163,15 +164,24 @@ module bp_core_minimal
                                             : {cycle_r, prefetch_remove_event_lo[31:0]};
     wire icache_trace_preview_write = ~miss_trace_clear_lo & preview_record
                                       & (preview_count_r < 4'd8);
+    // Match each D-side removal to an I-history metadata slot by removal
+    // index. Publication wins a same-cycle write; overflow rejects that trial.
+    wire icache_trace_remove_meta_write = ~miss_trace_clear_lo
+                                           & prefetch_remove_record & ~preview_record
+                                           & (prefetch_remove_count_r < 5'd16);
     wire icache_trace_write = (~miss_trace_clear_lo & icache_miss_accept
                                & (icache_count_r < 9'd256))
-                              | icache_trace_preview_write;
+                              | icache_trace_preview_write | icache_trace_remove_meta_write;
     wire [7:0] icache_trace_write_addr = icache_trace_preview_write
                                           ? (8'd248 + {5'b0, preview_count_r[2:0]})
-                                          : icache_count_r[7:0];
+                                          : icache_trace_remove_meta_write
+                                            ? (8'd232 + {4'b0, prefetch_remove_count_r[3:0]})
+                                            : icache_count_r[7:0];
     wire [63:0] icache_trace_write_data = icache_trace_preview_write
                                             ? {cycle_r, 2'b11, preview_publish_addr_i[33:4]}
-                                            : {cycle_r, icache_req_cast.msg_type, icache_req_cast.addr[33:6]};
+                                            : icache_trace_remove_meta_write
+                                              ? prefetch_remove_meta_lo
+                                              : {cycle_r, icache_req_cast.msg_type, icache_req_cast.addr[33:6]};
 
     assign miss_trace_status_li =
       {prefetch_remove_count_r, preview_trace_r, preview_overflow_r, preview_count_r,
@@ -240,6 +250,8 @@ module bp_core_minimal
           // remains explicit, as does a D-cache TV/removal collision.
           if (prefetch_remove_record
               & (dcache_miss_accept | prefetch_remove_event_lo[32]))
+            preview_overflow_r <= 1'b1;
+          if (prefetch_remove_record & preview_record)
             preview_overflow_r <= 1'b1;
           if (dcache_miss_accept) begin
             if (dcache_count_r < (preview_trace_r ? 9'd232 : 9'd256)) begin
@@ -375,6 +387,7 @@ module bp_core_minimal
      ,.data_mem_pkt_v_i(dcache_data_mem_pkt_v_i)
      ,.data_mem_pkt_yumi_o(dcache_data_mem_pkt_yumi_o)
      ,.prefetch_remove_event_o(prefetch_remove_event_lo)
+     ,.prefetch_remove_meta_o(prefetch_remove_meta_lo)
      ,.data_mem_o(dcache_data_mem_o)
 
      ,.tag_mem_pkt_i(dcache_tag_mem_pkt_i)

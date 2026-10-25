@@ -127,6 +127,7 @@ module bp_be_dcache
    , input                                           ptag_dram_i
    , input [data_width_p-1:0]                        st_data_i
    , input                                           flush_i
+   , input [vaddr_width_p-1:0]                       request_pc_i
 
    // Cycle 2: "Tag Verify"
    // Data (or miss result) comes out of the cache
@@ -145,6 +146,7 @@ module bp_be_dcache
    // Diagnostic: a one-cycle record of a side-buffer word/entry removal.
    // {collision, reason[1:0], physical 16-byte segment[33:4]}.
    , output logic [33:0]                             prefetch_remove_event_o
+   , output logic [63:0]                             prefetch_remove_meta_o
 
    // Cache Engine Interface
    // This is considered the "slow path", handling uncached requests
@@ -316,6 +318,8 @@ module bp_be_dcache
   bp_be_dcache_decode_s decode_tl_r;
   logic [thread_id_width_p-1:0] thread_id_tl_r;
   logic [page_offset_width_gp-1:0] offset_tl_r;
+  logic [vaddr_width_p-1:0] request_pc_tl_r, request_pc_tv_r;
+  logic request_pc_valid_tl_r, request_pc_valid_tv_r;
 
   assign safe_tl_we = v_i & ~busy_o;
   assign tl_we = safe_tl_we & ~flush_tl;
@@ -337,6 +341,15 @@ module bp_be_dcache
      ,.data_i({offset, dcache_pkt_cast_i.thread_id, decode_lo})
      ,.data_o({offset_tl_r, thread_id_tl_r, decode_tl_r})
      );
+
+  // Keep diagnostic instruction identity in the same two D-cache stages as
+  // the address. A snoop or fill restart has no ordinary request PC.
+  always_ff @(posedge clk_i) begin
+    request_pc_tl_r <= request_pc_i;
+    request_pc_valid_tl_r <= tl_we;
+    request_pc_tv_r <= request_pc_tl_r;
+    request_pc_valid_tv_r <= tv_we & request_pc_valid_tl_r & ~snoop_v;
+  end
 
   wire [paddr_width_p-1:0]   paddr_tl = {ptag_i, offset_tl_r};
   wire [sindex_width_lp-1:0] index_tl = paddr_tl[block_offset_width_lp+:sindex_width_lp];
@@ -478,7 +491,9 @@ module bp_be_dcache
   logic [29:0] prefetch_remove_addr_n;
   logic prefetch_remove_v_r;
   logic [32:0] prefetch_remove_data_r;
+  logic [63:0] prefetch_remove_meta_r;
   assign prefetch_remove_event_o = {prefetch_remove_v_r, prefetch_remove_data_r};
+  assign prefetch_remove_meta_o = prefetch_remove_meta_r;
   // The data array has one synchronous write and one asynchronous selected
   // read. Leaving its contents unreset lets FPGA tools map it to compact
   // distributed RAM; word-valid state guards every architectural read.
@@ -1132,6 +1147,7 @@ module bp_be_dcache
     if (reset_i) begin
       prefetch_remove_v_r <= 1'b0;
       prefetch_remove_data_r <= '0;
+      prefetch_remove_meta_r <= '0;
       prefetch_buffer_v_r <= '0;
       prefetch_buffer_addr_r <= '0;
       prefetch_buffer_word_v_r <= '0;
@@ -1140,6 +1156,9 @@ module bp_be_dcache
       prefetch_remove_v_r <= prefetch_remove_v_n;
       prefetch_remove_data_r <= {prefetch_remove_collision_n,
                                  prefetch_remove_reason_n, prefetch_remove_addr_n};
+      prefetch_remove_meta_r <= (prefetch_remove_v_n && prefetch_buffer_hit_tv)
+        ? 64'({request_pc_valid_tv_r, thread_id_tv_r, request_pc_tv_r})
+        : '0;
       // Consume only the selected word. A 16-byte pointer-stream reply may
       // contain both the next pointer and adjacent payload, and consecutive
       // loads must be able to use both words. The rotating replacement pointer
