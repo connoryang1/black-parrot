@@ -142,6 +142,9 @@ module bp_be_dcache
    , output logic                                    ret_o
    , output logic                                    late_o
    , output logic                                    prefetch_replay_o
+   // Diagnostic: a one-cycle record of a side-buffer word/entry removal.
+   // {collision, reason[1:0], physical 16-byte segment[33:4]}.
+   , output logic [33:0]                             prefetch_remove_event_o
 
    // Cache Engine Interface
    // This is considered the "slow path", handling uncached requests
@@ -470,6 +473,12 @@ module bp_be_dcache
   logic [prefetch_buffer_els_lp-1:0][paddr_width_p-1:4] prefetch_buffer_addr_r;
   logic [prefetch_buffer_els_lp-1:0][1:0] prefetch_buffer_word_v_r;
   logic [prefetch_buffer_slot_width_lp-1:0] prefetch_buffer_replace_r;
+  logic prefetch_remove_v_n, prefetch_remove_collision_n;
+  logic [1:0] prefetch_remove_reason_n;
+  logic [29:0] prefetch_remove_addr_n;
+  logic prefetch_remove_v_r;
+  logic [32:0] prefetch_remove_data_r;
+  assign prefetch_remove_event_o = {prefetch_remove_v_r, prefetch_remove_data_r};
   // The data array has one synchronous write and one asynchronous selected
   // read. Leaving its contents unreset lets FPGA tools map it to compact
   // distributed RAM; word-valid state guards every architectural read.
@@ -1070,6 +1079,40 @@ module bp_be_dcache
     end
   end
 
+  // Record the state transition at the D-cache edge. A replacement can occur
+  // alongside a TV-stage removal; the collision bit rejects such a transcript
+  // rather than silently attributing the later miss to only one event.
+  always_comb begin
+    prefetch_remove_v_n = 1'b0;
+    prefetch_remove_collision_n = 1'b0;
+    prefetch_remove_reason_n = '0;
+    prefetch_remove_addr_n = '0;
+    if (prefetch_buffer_hit_tv) begin
+      prefetch_remove_v_n = 1'b1;
+      prefetch_remove_addr_n = paddr_tv_r[33:4];
+    end else begin
+      for (int i = 0; i < prefetch_buffer_els_lp; i++) begin
+        if (prefetch_buffer_v_r[i]
+            & (prefetch_buffer_addr_r[i] == paddr_tv_r[paddr_width_p-1:4])
+            & v_tv_r & (decode_tv_r.store_op | cache_load_hit_tv)) begin
+          prefetch_remove_v_n = 1'b1;
+          prefetch_remove_reason_n = decode_tv_r.store_op ? 2'd1 : 2'd2;
+          prefetch_remove_addr_n = paddr_tv_r[33:4];
+        end
+      end
+    end
+    if (prefetch_buffer_write & data_mem_pkt_yumi_o
+        & !prefetch_buffer_write_match & (&prefetch_buffer_v_r)) begin
+      if (prefetch_remove_v_n)
+        prefetch_remove_collision_n = 1'b1;
+      else begin
+        prefetch_remove_v_n = 1'b1;
+        prefetch_remove_reason_n = 2'd3;
+        prefetch_remove_addr_n = prefetch_buffer_addr_r[prefetch_buffer_write_slot][33:4];
+      end
+    end
+  end
+
   wire data_mem_pkt_sram_yumi = data_mem_pkt_v_i
     & ~lrsc_lock
     & ~{|data_mem_fast_read & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_read)}
@@ -1087,11 +1130,16 @@ module bp_be_dcache
 
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
+      prefetch_remove_v_r <= 1'b0;
+      prefetch_remove_data_r <= '0;
       prefetch_buffer_v_r <= '0;
       prefetch_buffer_addr_r <= '0;
       prefetch_buffer_word_v_r <= '0;
       prefetch_buffer_replace_r <= '0;
     end else begin
+      prefetch_remove_v_r <= prefetch_remove_v_n;
+      prefetch_remove_data_r <= {prefetch_remove_collision_n,
+                                 prefetch_remove_reason_n, prefetch_remove_addr_n};
       // Consume only the selected word. A 16-byte pointer-stream reply may
       // contain both the next pointer and adjacent payload, and consecutive
       // loads must be able to use both words. The rotating replacement pointer

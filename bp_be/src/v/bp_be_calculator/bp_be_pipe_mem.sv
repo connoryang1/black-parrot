@@ -32,6 +32,7 @@ module bp_be_pipe_mem
 
    , output logic                         busy_o
    , output logic                         ordered_o
+   , output logic [33:0]                  prefetch_remove_event_o
 
    , input [reservation_width_lp-1:0]     reservation_i
    , input [dword_width_gp-1:0]           rs2_val_i
@@ -378,6 +379,7 @@ module bp_be_pipe_mem
      ,.ret_o(dcache_ret)
      ,.late_o(dcache_late)
      ,.prefetch_replay_o(dcache_prefetch_replay)
+     ,.prefetch_remove_event_o(prefetch_remove_event_o)
 
      // D$-LCE Interface
      ,.cache_req_o(cache_req_cast_o)

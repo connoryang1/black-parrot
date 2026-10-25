@@ -113,6 +113,7 @@ module bp_core_minimal
   logic miss_trace_clear_lo;
   logic miss_trace_read_v_lo, miss_trace_read_source_lo;
   logic [7:0] miss_trace_read_index_lo;
+  logic [33:0] prefetch_remove_event_lo;
 
   // This temporary measurement block records accepted physical demand misses,
   // after translation and before the I/D memory engines. Separate memories
@@ -127,6 +128,7 @@ module bp_core_minimal
     logic icache_overflow_r, dcache_overflow_r;
     logic [8:0] icache_count_r, dcache_count_r;
     logic [3:0] preview_count_r;
+    logic [4:0] prefetch_remove_count_r;
     logic [7:0] preview_physical_count_r, preview_admit_count_r;
     logic [7:0] preview_issue_count_r, preview_publish_count_r;
     logic [31:0] cycle_r;
@@ -143,20 +145,30 @@ module bp_core_minimal
                             & (dcache_req_cast.msg_type == e_cache_prefetch);
     // Publication timing is independent of when software arms demand misses.
     wire preview_record = preview_trace_r & preview_events_i[2];
+    wire prefetch_remove_record = preview_trace_r & prefetch_remove_event_lo[33];
     wire dcache_trace_demand_write = ~miss_trace_clear_lo & dcache_miss_accept
-                                      & (dcache_count_r < (preview_trace_r ? 9'd248 : 9'd256));
+                                      & (dcache_count_r < (preview_trace_r ? 9'd232 : 9'd256));
+    wire dcache_trace_remove_write = ~miss_trace_clear_lo & ~dcache_miss_accept
+                                      & prefetch_remove_record
+                                      & (prefetch_remove_count_r < 5'd16);
     wire dcache_trace_preview_write = ~miss_trace_clear_lo & ~dcache_miss_accept
+                                       & ~prefetch_remove_record
                                        & preview_record & (preview_count_r < 4'd8);
-    wire dcache_trace_write = dcache_trace_demand_write | dcache_trace_preview_write;
+    wire dcache_trace_write = dcache_trace_demand_write | dcache_trace_remove_write
+                              | dcache_trace_preview_write;
     wire [7:0] dcache_trace_write_addr = dcache_trace_demand_write
                                           ? dcache_count_r[7:0]
-                                          : (8'd248 + {5'b0, preview_count_r[2:0]});
+                                          : dcache_trace_remove_write
+                                            ? (8'd232 + {4'b0, prefetch_remove_count_r[3:0]})
+                                            : (8'd248 + {5'b0, preview_count_r[2:0]});
     wire [63:0] dcache_trace_write_data = dcache_trace_demand_write
                                             ? {cycle_r, dcache_req_cast.msg_type, dcache_req_cast.addr[33:6]}
-                                            : {cycle_r, 2'b11, preview_publish_addr_i[33:4]};
+                                            : dcache_trace_remove_write
+                                              ? {cycle_r, prefetch_remove_event_lo[31:0]}
+                                              : {cycle_r, 2'b11, preview_publish_addr_i[33:4]};
 
     assign miss_trace_status_li =
-      {5'b0, preview_trace_r, preview_overflow_r, preview_count_r,
+      {prefetch_remove_count_r, preview_trace_r, preview_overflow_r, preview_count_r,
        preview_publish_count_r, preview_issue_count_r,
        preview_admit_count_r, preview_physical_count_r,
        armed_r, dcache_overflow_r, icache_overflow_r
@@ -171,6 +183,7 @@ module bp_core_minimal
         preview_trace_r <= 1'b0;
         preview_overflow_r <= 1'b0;
         preview_count_r <= '0;
+        prefetch_remove_count_r <= '0;
         icache_overflow_r <= 1'b0;
         dcache_overflow_r <= 1'b0;
         icache_count_r <= '0;
@@ -196,6 +209,7 @@ module bp_core_minimal
           dcache_count_r <= '0;
           preview_overflow_r <= 1'b0;
           preview_count_r <= '0;
+          prefetch_remove_count_r <= '0;
           preview_physical_count_r <= '0;
           preview_admit_count_r <= '0;
           preview_issue_count_r <= '0;
@@ -221,14 +235,23 @@ module bp_core_minimal
           // In optional address mode, reserve the last eight D-history words
           // for final 16-byte publication addresses. Demand has priority on a
           // simultaneous write; overflow explicitly rejects that transcript.
-          if (preview_record & dcache_miss_accept)
+          if ((preview_record & (dcache_miss_accept | prefetch_remove_record))
+              | (prefetch_remove_record
+                 & (dcache_miss_accept | prefetch_remove_event_lo[32])))
             preview_overflow_r <= 1'b1;
           if (dcache_miss_accept) begin
-            if (dcache_count_r < (preview_trace_r ? 9'd248 : 9'd256)) begin
+            if (dcache_count_r < (preview_trace_r ? 9'd232 : 9'd256)) begin
               dcache_count_r <= dcache_count_r + 1'b1;
             end else
               dcache_overflow_r <= 1'b1;
-          end else if (preview_record) begin
+          end
+          if (prefetch_remove_record) begin
+            if (prefetch_remove_count_r < 5'd16)
+              prefetch_remove_count_r <= prefetch_remove_count_r + 1'b1;
+            else
+              preview_overflow_r <= 1'b1;
+          end
+          if (preview_record) begin
             if (preview_count_r < 4'd8) begin
               preview_count_r <= preview_count_r + 1'b1;
             end else
@@ -347,6 +370,7 @@ module bp_core_minimal
      ,.data_mem_pkt_i(dcache_data_mem_pkt_i)
      ,.data_mem_pkt_v_i(dcache_data_mem_pkt_v_i)
      ,.data_mem_pkt_yumi_o(dcache_data_mem_pkt_yumi_o)
+     ,.prefetch_remove_event_o(prefetch_remove_event_lo)
      ,.data_mem_o(dcache_data_mem_o)
 
      ,.tag_mem_pkt_i(dcache_tag_mem_pkt_i)

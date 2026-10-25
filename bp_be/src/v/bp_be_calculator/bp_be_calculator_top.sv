@@ -41,6 +41,7 @@ module bp_be_calculator_top
    , output logic                                    fdiv_busy_o
    , output logic                                    mem_busy_o
    , output logic                                    mem_ordered_o
+   , output logic [33:0]                             prefetch_remove_event_o
    , output logic [decode_info_width_lp-1:0]         decode_info_o
    , output logic [trans_info_width_lp-1:0]          trans_info_o
    , input                                           cmd_full_n_i
@@ -530,6 +531,7 @@ module bp_be_calculator_top
 
      ,.busy_o(mem_busy_o)
      ,.ordered_o(mem_ordered_o)
+     ,.prefetch_remove_event_o(prefetch_remove_event_o)
 
      ,.reservation_i(reservation_r)
      ,.rs2_val_i(rs2_val_r)
