@@ -133,6 +133,7 @@ module bp_unicore_lite
      ,.reset_i(reset_i)
      ,.cfg_bus_i(cfg_bus_cast_i)
      ,.preview_events_i(preview_events)
+     ,.preview_publish_addr_i(dcache_data_mem_pkt_li.addr)
 
      ,.icache_req_o(icache_req_lo)
      ,.icache_req_v_o(icache_req_v_lo)

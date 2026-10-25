@@ -66,6 +66,7 @@ module bp_core_minimal
    , input                                           dcache_req_credits_empty_i
    // {published, issued, admitted} physical preview events from the UCE.
    , input [2:0]                                     preview_events_i
+   , input [paddr_width_p-1:0]                       preview_publish_addr_i
 
    , input [dcache_tag_mem_pkt_width_lp-1:0]         dcache_tag_mem_pkt_i
    , input                                           dcache_tag_mem_pkt_v_i
@@ -108,7 +109,8 @@ module bp_core_minimal
   logic [asid_width_p-1:0] fe_ctxtsw_asid_lo;
 
   logic [dword_width_gp-1:0] miss_trace_status_li, miss_trace_data_li;
-  logic miss_trace_ctrl_v_lo, miss_trace_arm_lo, miss_trace_clear_lo;
+  logic miss_trace_ctrl_v_lo, miss_trace_arm_lo, miss_trace_preview_lo;
+  logic miss_trace_clear_lo;
   logic miss_trace_read_v_lo, miss_trace_read_source_lo;
   logic [7:0] miss_trace_read_index_lo;
 
@@ -121,8 +123,10 @@ module bp_core_minimal
     assign icache_req_cast = icache_req_o;
     assign dcache_req_cast = dcache_req_o;
 
-    logic armed_r, icache_overflow_r, dcache_overflow_r;
+    logic armed_r, preview_trace_r, preview_overflow_r;
+    logic icache_overflow_r, dcache_overflow_r;
     logic [8:0] icache_count_r, dcache_count_r;
+    logic [3:0] preview_count_r;
     logic [7:0] preview_physical_count_r, preview_admit_count_r;
     logic [7:0] preview_issue_count_r, preview_publish_count_r;
     logic [31:0] cycle_r;
@@ -137,9 +141,12 @@ module bp_core_minimal
                               & (dcache_req_cast.msg_type == e_miss_load);
     wire preview_physical = dcache_req_v_o & dcache_req_yumi_i
                             & (dcache_req_cast.msg_type == e_cache_prefetch);
+    // Publication timing is independent of when software arms demand misses.
+    wire preview_record = preview_trace_r & preview_events_i[2];
 
     assign miss_trace_status_li =
-      {11'b0, preview_publish_count_r, preview_issue_count_r,
+      {5'b0, preview_trace_r, preview_overflow_r, preview_count_r,
+       preview_publish_count_r, preview_issue_count_r,
        preview_admit_count_r, preview_physical_count_r,
        armed_r, dcache_overflow_r, icache_overflow_r
        ,dcache_count_r, icache_count_r};
@@ -150,6 +157,9 @@ module bp_core_minimal
     always_ff @(posedge clk_i)
       if (reset_i) begin
         armed_r <= 1'b0;
+        preview_trace_r <= 1'b0;
+        preview_overflow_r <= 1'b0;
+        preview_count_r <= '0;
         icache_overflow_r <= 1'b0;
         dcache_overflow_r <= 1'b0;
         icache_count_r <= '0;
@@ -163,14 +173,18 @@ module bp_core_minimal
       end else begin
         cycle_r <= cycle_r + 1'b1;
 
-        if (miss_trace_ctrl_v_lo)
+        if (miss_trace_ctrl_v_lo) begin
           armed_r <= miss_trace_arm_lo;
+          preview_trace_r <= miss_trace_preview_lo;
+        end
 
         if (miss_trace_clear_lo) begin
           icache_overflow_r <= 1'b0;
           dcache_overflow_r <= 1'b0;
           icache_count_r <= '0;
           dcache_count_r <= '0;
+          preview_overflow_r <= 1'b0;
+          preview_count_r <= '0;
           preview_physical_count_r <= '0;
           preview_admit_count_r <= '0;
           preview_issue_count_r <= '0;
@@ -193,13 +207,26 @@ module bp_core_minimal
               icache_overflow_r <= 1'b1;
           end
 
+          // In optional address mode, reserve the last eight D-history words
+          // for final 16-byte publication addresses. Demand has priority on a
+          // simultaneous write; overflow explicitly rejects that transcript.
+          if (preview_record & dcache_miss_accept)
+            preview_overflow_r <= 1'b1;
           if (dcache_miss_accept) begin
-            if (dcache_count_r < 9'd256) begin
+            if (dcache_count_r < (preview_trace_r ? 9'd248 : 9'd256)) begin
               dcache_trace_mem[dcache_count_r[7:0]]
                 <= {cycle_r, dcache_req_cast.msg_type, dcache_req_cast.addr[33:6]};
               dcache_count_r <= dcache_count_r + 1'b1;
             end else
               dcache_overflow_r <= 1'b1;
+          end else if (preview_record) begin
+            if (preview_count_r < 4'd8) begin
+              // Low half: event kind 11 and exact 16-byte physical segment.
+              dcache_trace_mem[8'd248 + preview_count_r[2:0]]
+                <= {cycle_r, 2'b11, preview_publish_addr_i[33:4]};
+              preview_count_r <= preview_count_r + 1'b1;
+            end else
+              preview_overflow_r <= 1'b1;
           end
         end
 
@@ -330,6 +357,7 @@ module bp_core_minimal
      ,.miss_trace_data_i(miss_trace_data_li)
      ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_lo)
      ,.miss_trace_arm_o(miss_trace_arm_lo)
+     ,.miss_trace_preview_o(miss_trace_preview_lo)
      ,.miss_trace_clear_o(miss_trace_clear_lo)
      ,.miss_trace_read_v_o(miss_trace_read_v_lo)
      ,.miss_trace_read_source_o(miss_trace_read_source_lo)

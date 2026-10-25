@@ -94,6 +94,7 @@ module bp_be_csr
    , input [dword_width_gp-1:0]              miss_trace_data_i
    , output logic                            miss_trace_ctrl_v_o
    , output logic                            miss_trace_arm_o
+   , output logic                            miss_trace_preview_o
    , output logic                            miss_trace_clear_o
    , output logic                            miss_trace_read_v_o
    , output logic                            miss_trace_read_source_o
@@ -1000,9 +1001,11 @@ module bp_be_csr
   // A control write sets the desired armed state directly. Bit 1 also clears
   // counts and overflow flags. A selector write initiates the recorder's
   // synchronous BRAM read; bit 8 chooses D (1) or I (0), bits 7:0 select entry.
+  // Control bit 2 opts into the reserved publication-address trace window.
   assign miss_trace_ctrl_v_o = csr_w_v_li & (csr_addr_li == 12'h805)
                                & legacy_context_access_li;
   assign miss_trace_arm_o = csr_data_li[0];
+  assign miss_trace_preview_o = csr_data_li[2];
   assign miss_trace_clear_o = miss_trace_ctrl_v_o & csr_data_li[1];
   assign miss_trace_read_v_o = csr_w_v_li & (csr_addr_li == 12'h806)
                                & legacy_context_access_li;

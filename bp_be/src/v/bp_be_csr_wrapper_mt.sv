@@ -111,6 +111,7 @@ module bp_be_csr_wrapper_mt
    , input [dword_width_gp-1:0]              miss_trace_data_i
    , output logic                            miss_trace_ctrl_v_o
    , output logic                            miss_trace_arm_o
+   , output logic                            miss_trace_preview_o
    , output logic                            miss_trace_clear_o
    , output logic                            miss_trace_read_v_o
    , output logic                            miss_trace_read_source_o
@@ -142,6 +143,7 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][dword_width_gp-1:0]        ctx_l1_cmd_data_co;
   logic [num_threads_p-1:0]                            miss_trace_ctrl_v_co;
   logic [num_threads_p-1:0]                            miss_trace_arm_co;
+  logic [num_threads_p-1:0]                            miss_trace_preview_co;
   logic [num_threads_p-1:0]                            miss_trace_clear_co;
   logic [num_threads_p-1:0]                            miss_trace_read_v_co;
   logic [num_threads_p-1:0]                            miss_trace_read_source_co;
@@ -240,6 +242,7 @@ module bp_be_csr_wrapper_mt
        ,.miss_trace_data_i(miss_trace_data_i)
        ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_co[i])
        ,.miss_trace_arm_o(miss_trace_arm_co[i])
+       ,.miss_trace_preview_o(miss_trace_preview_co[i])
        ,.miss_trace_clear_o(miss_trace_clear_co[i])
        ,.miss_trace_read_v_o(miss_trace_read_v_co[i])
        ,.miss_trace_read_source_o(miss_trace_read_source_co[i])
@@ -273,6 +276,7 @@ module bp_be_csr_wrapper_mt
   assign ctx_l1_cmd_data_o     = ctx_l1_cmd_data_co[current_physical_thread_id_i];
   assign miss_trace_ctrl_v_o   = miss_trace_ctrl_v_co[retire_thread_id_i];
   assign miss_trace_arm_o      = miss_trace_arm_co[retire_thread_id_i];
+  assign miss_trace_preview_o  = miss_trace_preview_co[retire_thread_id_i];
   assign miss_trace_clear_o    = miss_trace_clear_co[retire_thread_id_i];
   assign miss_trace_read_v_o   = miss_trace_read_v_co[retire_thread_id_i];
   assign miss_trace_read_source_o = miss_trace_read_source_co[retire_thread_id_i];

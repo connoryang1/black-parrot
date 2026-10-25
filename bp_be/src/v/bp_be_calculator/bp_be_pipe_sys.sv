@@ -105,6 +105,7 @@ module bp_be_pipe_sys
    , input [dword_width_gp-1:0]              miss_trace_data_i
    , output logic                            miss_trace_ctrl_v_o
    , output logic                            miss_trace_arm_o
+   , output logic                            miss_trace_preview_o
    , output logic                            miss_trace_clear_o
    , output logic                            miss_trace_read_v_o
    , output logic                            miss_trace_read_source_o
@@ -205,6 +206,7 @@ module bp_be_pipe_sys
      ,.miss_trace_data_i(miss_trace_data_i)
      ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_o)
      ,.miss_trace_arm_o(miss_trace_arm_o)
+     ,.miss_trace_preview_o(miss_trace_preview_o)
      ,.miss_trace_clear_o(miss_trace_clear_o)
      ,.miss_trace_read_v_o(miss_trace_read_v_o)
      ,.miss_trace_read_source_o(miss_trace_read_source_o)
