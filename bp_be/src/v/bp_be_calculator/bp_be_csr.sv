@@ -205,26 +205,10 @@ module bp_be_csr
   `declare_csr_addr(mtval, vaddr_width_p, paddr_width_p);
   `declare_csr(mip);
 
-  // OpenSBI probes PMP before entering Linux.  This configuration does not
-  // implement PMP enforcement, so advertise no usable entries through legal,
-  // hardwired-zero WARL CSRs.  Treating the probes as illegal instructions
-  // depends on an exception path before platform initialization is complete
-  // and can leave firmware retrying the probe indefinitely.
-  wire [dword_width_gp-1:0] pmpcfg0_lo = '0;
-  wire [dword_width_gp-1:0] pmpaddr0_lo = '0;
-  wire [dword_width_gp-1:0] pmpaddr1_lo = '0;
-  wire [dword_width_gp-1:0] pmpaddr2_lo = '0;
-  wire [dword_width_gp-1:0] pmpaddr3_lo = '0;
-
   `declare_csr(mcycle);
   `declare_csr(minstret);
-  // BlackParrot has no programmable hardware-performance monitors.  Their
-  // standard machine CSRs remain legal and hardwired to zero because OpenSBI
-  // probes them during bootstrap.
-  wire csr_hpm_unimplemented_li = csr_r_addr_i inside {[12'hb03:12'hb1f]
-                                                        ,[12'h323:12'h33f]};
-  // Unsupported optional privileged CSRs must trap on reads.  OpenSBI uses
-  // a legal read as evidence that the corresponding extension exists.
+  // Preserve the pre-6a absent-CSR behavior while retaining later preview
+  // and miss-trace CSRs.  Firmware probes must take the illegal-CSR path.
   `declare_csr(mcountinhibit);
 
   // sstatus subset of mstatus
@@ -493,9 +477,7 @@ module bp_be_csr
   always_comb
     begin
       csr_r_illegal_o = 1'b0;
-      if (csr_hpm_unimplemented_li)
-        csr_data_lo = '0;
-      else unique casez (csr_r_addr_i)
+      unique casez (csr_r_addr_i)
         {`CSR_ADDR_FFLAGS       }: csr_data_lo = fcsr_lo.fflags;
         {`CSR_ADDR_FRM          }: csr_data_lo = fcsr_lo.frm;
         {`CSR_ADDR_FCSR         }: csr_data_lo = fcsr_lo;
@@ -525,12 +507,6 @@ module bp_be_csr
         {`CSR_ADDR_MTVEC        }: csr_data_lo = mtvec_lo;
         {`CSR_ADDR_MCOUNTEREN   }: csr_data_lo = mcounteren_lo;
         {`CSR_ADDR_MIP          }: csr_data_lo = mip_lo;
-        {`CSR_ADDR_PMPCFG0      }: csr_data_lo = pmpcfg0_lo;
-        {`CSR_ADDR_PMPCFG2      }: csr_data_lo = '0;
-        {`CSR_ADDR_PMPADDR0     }: csr_data_lo = pmpaddr0_lo;
-        {`CSR_ADDR_PMPADDR1     }: csr_data_lo = pmpaddr1_lo;
-        {`CSR_ADDR_PMPADDR2     }: csr_data_lo = pmpaddr2_lo;
-        {`CSR_ADDR_PMPADDR3     }: csr_data_lo = pmpaddr3_lo;
         {`CSR_ADDR_MSCRATCH     }: csr_data_lo = mscratch_lo;
         {`CSR_ADDR_MEPC         }: csr_data_lo = mepc_lo;
         {`CSR_ADDR_MCAUSE       }: csr_data_lo = mcause_lo;
@@ -618,10 +594,7 @@ module bp_be_csr
       exception_v_lo    = '0;
       interrupt_v_lo    = '0;
 
-      if (csr_w_v_li & (csr_addr_li inside {[12'hb03:12'hb1f]
-                                             ,[12'h323:12'h33f]}))
-        begin end
-      else unique casez ({csr_w_v_li, csr_addr_li})
+      unique casez ({csr_w_v_li, csr_addr_li})
         {1'b1, `CSR_ADDR_FFLAGS       }: fcsr_li = '{frm: fcsr_lo.frm, fflags: csr_data_li, default: '0};
         {1'b1, `CSR_ADDR_FRM          }: fcsr_li = '{frm: csr_data_li, fflags: fcsr_lo.fflags, default: '0};
         {1'b1, `CSR_ADDR_FCSR         }: fcsr_li = csr_data_li;
@@ -651,12 +624,6 @@ module bp_be_csr
         {1'b1, `CSR_ADDR_MTVEC        }: mtvec_li = csr_data_li;
         {1'b1, `CSR_ADDR_MCOUNTEREN   }: mcounteren_li = csr_data_li;
         {1'b1, `CSR_ADDR_MIP          }: mip_li = csr_data_li;
-        {1'b1, `CSR_ADDR_PMPCFG0      }: begin end
-        {1'b1, `CSR_ADDR_PMPCFG2      }: begin end
-        {1'b1, `CSR_ADDR_PMPADDR0     }: begin end
-        {1'b1, `CSR_ADDR_PMPADDR1     }: begin end
-        {1'b1, `CSR_ADDR_PMPADDR2     }: begin end
-        {1'b1, `CSR_ADDR_PMPADDR3     }: begin end
         {1'b1, `CSR_ADDR_MSCRATCH     }: mscratch_li = csr_data_li;
         {1'b1, `CSR_ADDR_MEPC         }: mepc_li = csr_data_li;
         {1'b1, `CSR_ADDR_MCAUSE       }: mcause_li = csr_data_li;
