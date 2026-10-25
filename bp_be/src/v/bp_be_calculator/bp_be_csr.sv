@@ -223,15 +223,15 @@ module bp_be_csr
   // probes them during bootstrap.
   wire csr_hpm_unimplemented_li = csr_r_addr_i inside {[12'hb03:12'hb1f]
                                                         ,[12'h323:12'h33f]};
-  // Optional privileged-ISA features that this core does not implement.  A
-  // zero WARL value reports the capability as absent without relying on the
-  // temporary early-boot trap path.
+  // These optional CSR probes retain zero WARL readback.  Do not include
+  // stimecmp: OpenSBI treats any legal read as proof of Sstc and would then
+  // program this core's nonexistent supervisor timer compare instead of the
+  // platform timer device.
   wire csr_optional_probe_li = csr_r_addr_i inside {12'h30a  // menvcfg
                                                      ,12'h30c  // mstateen0
                                                      ,12'h321  // mcyclecfg
                                                      ,12'hda0  // scountovf
                                                      ,12'hfb0  // mtopi
-                                                     ,12'h14d  // stimecmp
                                                      };
   `declare_csr(mcountinhibit);
 
@@ -629,7 +629,7 @@ module bp_be_csr
       if (csr_w_v_li & (csr_addr_li inside {[12'hb03:12'hb1f]
                                              ,[12'h323:12'h33f]
                                              ,12'h30a, 12'h30c, 12'h321
-                                             ,12'hda0, 12'hfb0, 12'h14d}))
+                                             ,12'hda0, 12'hfb0}))
         begin end
       else unique casez ({csr_w_v_li, csr_addr_li})
         {1'b1, `CSR_ADDR_FFLAGS       }: fcsr_li = '{frm: fcsr_lo.frm, fflags: csr_data_li, default: '0};
