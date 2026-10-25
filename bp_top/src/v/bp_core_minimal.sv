@@ -64,6 +64,8 @@ module bp_core_minimal
    , input                                           dcache_req_last_i
    , input                                           dcache_req_credits_full_i
    , input                                           dcache_req_credits_empty_i
+   // {published, issued, admitted} physical preview events from the UCE.
+   , input [2:0]                                     preview_events_i
 
    , input [dcache_tag_mem_pkt_width_lp-1:0]         dcache_tag_mem_pkt_i
    , input                                           dcache_tag_mem_pkt_v_i
@@ -121,6 +123,8 @@ module bp_core_minimal
 
     logic armed_r, icache_overflow_r, dcache_overflow_r;
     logic [8:0] icache_count_r, dcache_count_r;
+    logic [7:0] preview_physical_count_r, preview_admit_count_r;
+    logic [7:0] preview_issue_count_r, preview_publish_count_r;
     logic [31:0] cycle_r;
     (* ram_style = "block" *) logic [63:0] icache_trace_mem [0:255];
     (* ram_style = "block" *) logic [63:0] dcache_trace_mem [0:255];
@@ -131,9 +135,13 @@ module bp_core_minimal
                               & (icache_req_cast.msg_type == e_miss_load);
     wire dcache_miss_accept = armed_r & dcache_req_v_o & dcache_req_yumi_i
                               & (dcache_req_cast.msg_type == e_miss_load);
+    wire preview_physical = dcache_req_v_o & dcache_req_yumi_i
+                            & (dcache_req_cast.msg_type == e_cache_prefetch);
 
     assign miss_trace_status_li =
-      {{(dword_width_gp-21){1'b0}}, armed_r, dcache_overflow_r, icache_overflow_r
+      {11'b0, preview_publish_count_r, preview_issue_count_r,
+       preview_admit_count_r, preview_physical_count_r,
+       armed_r, dcache_overflow_r, icache_overflow_r
        ,dcache_count_r, icache_count_r};
     assign miss_trace_data_li = miss_trace_read_source_r
                                 ? dcache_trace_data_r
@@ -146,6 +154,10 @@ module bp_core_minimal
         dcache_overflow_r <= 1'b0;
         icache_count_r <= '0;
         dcache_count_r <= '0;
+        preview_physical_count_r <= '0;
+        preview_admit_count_r <= '0;
+        preview_issue_count_r <= '0;
+        preview_publish_count_r <= '0;
         cycle_r <= '0;
         miss_trace_read_source_r <= 1'b0;
       end else begin
@@ -159,7 +171,19 @@ module bp_core_minimal
           dcache_overflow_r <= 1'b0;
           icache_count_r <= '0;
           dcache_count_r <= '0;
+          preview_physical_count_r <= '0;
+          preview_admit_count_r <= '0;
+          preview_issue_count_r <= '0;
+          preview_publish_count_r <= '0;
         end else begin
+          if (preview_physical & ~(&preview_physical_count_r))
+            preview_physical_count_r <= preview_physical_count_r + 1'b1;
+          if (preview_events_i[0] & ~(&preview_admit_count_r))
+            preview_admit_count_r <= preview_admit_count_r + 1'b1;
+          if (preview_events_i[1] & ~(&preview_issue_count_r))
+            preview_issue_count_r <= preview_issue_count_r + 1'b1;
+          if (preview_events_i[2] & ~(&preview_publish_count_r))
+            preview_publish_count_r <= preview_publish_count_r + 1'b1;
           if (icache_miss_accept) begin
             if (icache_count_r < 9'd256) begin
               icache_trace_mem[icache_count_r[7:0]]

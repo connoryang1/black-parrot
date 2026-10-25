@@ -74,6 +74,9 @@ module bp_unicore_lite
   logic dcache_preview_metadata_r, dcache_normal_metadata_r;
   wire dcache_preview_req = dcache_req_v_lo
     & (dcache_req_lo.msg_type == e_cache_prefetch);
+  logic dcache_preview_ready, dcache_preview_issue, dcache_preview_publish;
+  wire [2:0] preview_events = {dcache_preview_publish, dcache_preview_issue,
+                                dcache_preview_req & dcache_preview_ready};
   wire dcache_normal_req_v = dcache_req_v_lo & ~dcache_preview_req;
   wire dcache_normal_req_accept = dcache_normal_req_v & dcache_uce_req_yumi_lo;
   wire dcache_preview_retire = dcache_preview_req;
@@ -129,6 +132,7 @@ module bp_unicore_lite
     (.clk_i(posedge_clk)
      ,.reset_i(reset_i)
      ,.cfg_bus_i(cfg_bus_cast_i)
+     ,.preview_events_i(preview_events)
 
      ,.icache_req_o(icache_req_lo)
      ,.icache_req_v_o(icache_req_v_lo)
@@ -219,6 +223,8 @@ module bp_unicore_lite
      ,.preview_v_i(1'b0)
      ,.preview_cancel_i(1'b0)
      ,.preview_ready_o()
+     ,.preview_issue_o()
+     ,.preview_publish_o()
      ,.cache_req_id_o(icache_req_id_li)
      ,.cache_req_critical_o(icache_req_critical_li)
      ,.cache_req_last_o(icache_req_last_li)
@@ -286,7 +292,9 @@ module bp_unicore_lite
      ,.preview_paddr_i(dcache_req_lo.addr)
      ,.preview_v_i(dcache_preview_req)
      ,.preview_cancel_i(1'b0)
-     ,.preview_ready_o()
+     ,.preview_ready_o(dcache_preview_ready)
+     ,.preview_issue_o(dcache_preview_issue)
+     ,.preview_publish_o(dcache_preview_publish)
      ,.cache_req_id_o(dcache_req_id_li)
      ,.cache_req_critical_o(dcache_req_critical_li)
      ,.cache_req_last_o(dcache_req_last_li)

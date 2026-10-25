@@ -55,6 +55,8 @@ module bp_uce
     , input                                          preview_v_i
     , input                                          preview_cancel_i
     , output logic                                   preview_ready_o
+    , output logic                                   preview_issue_o
+    , output logic                                   preview_publish_o
     , output logic [id_width_p-1:0]                  cache_req_id_o
     , output logic                                   cache_req_critical_o
     , output logic                                   cache_req_last_o
@@ -164,6 +166,11 @@ module bp_uce
   assign preview_ready_o = prefetch_p & ~reset_i & ~preview_cancel_i
     & (preview_count_r < preview_queue_els_lp);
   wire preview_enqueue = preview_v_i & preview_ready_o;
+  // Diagnostic events describe detached physical previews only. Publication
+  // requires the final returned word to be accepted by the D-cache buffer.
+  assign preview_issue_o = prefetch_issue & prefetch_preview_r[prefetch_issue_slot];
+  assign preview_publish_o = prefetch_response & prefetch_preview_r[prefetch_response_slot]
+    & fsm_rev_last_li & data_mem_pkt_v_o & data_mem_pkt_yumi_i;
   wire preview_demand_match = cache_req_v_r
     & (cache_req_r.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]
        == preview_head_addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]);
