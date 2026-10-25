@@ -137,7 +137,10 @@ module bp_core_minimal
     logic [63:0] icache_trace_data_r, dcache_trace_data_r;
     logic miss_trace_read_source_r;
 
-    wire icache_miss_accept = armed_r & icache_req_v_o & icache_req_yumi_i
+    // Address-preview mode reuses the I history for D-side publications. The
+    // Linux diagnostic reads no I misses in that mode, and separating these
+    // writes preserves simultaneous publication and removal records.
+    wire icache_miss_accept = armed_r & ~preview_trace_r & icache_req_v_o & icache_req_yumi_i
                               & (icache_req_cast.msg_type == e_miss_load);
     wire dcache_miss_accept = armed_r & dcache_req_v_o & dcache_req_yumi_i
                               & (dcache_req_cast.msg_type == e_miss_load);
@@ -151,21 +154,24 @@ module bp_core_minimal
     wire dcache_trace_remove_write = ~miss_trace_clear_lo & ~dcache_miss_accept
                                       & prefetch_remove_record
                                       & (prefetch_remove_count_r < 5'd16);
-    wire dcache_trace_preview_write = ~miss_trace_clear_lo & ~dcache_miss_accept
-                                       & ~prefetch_remove_record
-                                       & preview_record & (preview_count_r < 4'd8);
-    wire dcache_trace_write = dcache_trace_demand_write | dcache_trace_remove_write
-                              | dcache_trace_preview_write;
+    wire dcache_trace_write = dcache_trace_demand_write | dcache_trace_remove_write;
     wire [7:0] dcache_trace_write_addr = dcache_trace_demand_write
                                           ? dcache_count_r[7:0]
-                                          : dcache_trace_remove_write
-                                            ? (8'd232 + {4'b0, prefetch_remove_count_r[3:0]})
-                                            : (8'd248 + {5'b0, preview_count_r[2:0]});
+                                          : (8'd232 + {4'b0, prefetch_remove_count_r[3:0]});
     wire [63:0] dcache_trace_write_data = dcache_trace_demand_write
                                             ? {cycle_r, dcache_req_cast.msg_type, dcache_req_cast.addr[33:6]}
-                                            : dcache_trace_remove_write
-                                              ? {cycle_r, prefetch_remove_event_lo[31:0]}
-                                              : {cycle_r, 2'b11, preview_publish_addr_i[33:4]};
+                                            : {cycle_r, prefetch_remove_event_lo[31:0]};
+    wire icache_trace_preview_write = ~miss_trace_clear_lo & preview_record
+                                      & (preview_count_r < 4'd8);
+    wire icache_trace_write = (~miss_trace_clear_lo & icache_miss_accept
+                               & (icache_count_r < 9'd256))
+                              | icache_trace_preview_write;
+    wire [7:0] icache_trace_write_addr = icache_trace_preview_write
+                                          ? (8'd248 + {5'b0, preview_count_r[2:0]})
+                                          : icache_count_r[7:0];
+    wire [63:0] icache_trace_write_data = icache_trace_preview_write
+                                            ? {cycle_r, 2'b11, preview_publish_addr_i[33:4]}
+                                            : {cycle_r, icache_req_cast.msg_type, icache_req_cast.addr[33:6]};
 
     assign miss_trace_status_li =
       {prefetch_remove_count_r, preview_trace_r, preview_overflow_r, preview_count_r,
@@ -225,19 +231,15 @@ module bp_core_minimal
             preview_publish_count_r <= preview_publish_count_r + 1'b1;
           if (icache_miss_accept) begin
             if (icache_count_r < 9'd256) begin
-              icache_trace_mem[icache_count_r[7:0]]
-                <= {cycle_r, icache_req_cast.msg_type, icache_req_cast.addr[33:6]};
               icache_count_r <= icache_count_r + 1'b1;
             end else
               icache_overflow_r <= 1'b1;
           end
 
-          // In optional address mode, reserve the last eight D-history words
-          // for final 16-byte publication addresses. Demand has priority on a
-          // simultaneous write; overflow explicitly rejects that transcript.
-          if ((preview_record & (dcache_miss_accept | prefetch_remove_record))
-              | (prefetch_remove_record
-                 & (dcache_miss_accept | prefetch_remove_event_lo[32])))
+          // D-demand and removal still share one write port. Their collision
+          // remains explicit, as does a D-cache TV/removal collision.
+          if (prefetch_remove_record
+              & (dcache_miss_accept | prefetch_remove_event_lo[32]))
             preview_overflow_r <= 1'b1;
           if (dcache_miss_accept) begin
             if (dcache_count_r < (preview_trace_r ? 9'd232 : 9'd256)) begin
@@ -259,8 +261,10 @@ module bp_core_minimal
           end
         end
 
-        // One physical write port is required for BRAM inference. The demand
-        // and preview counters above retain their independent overflow rules.
+        // Each 256x64 history retains one physical write port for BRAM
+        // inference; simultaneous I-publication and D-removal now both land.
+        if (icache_trace_write)
+          icache_trace_mem[icache_trace_write_addr] <= icache_trace_write_data;
         if (dcache_trace_write)
           dcache_trace_mem[dcache_trace_write_addr] <= dcache_trace_write_data;
 
