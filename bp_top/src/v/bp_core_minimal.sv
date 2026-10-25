@@ -143,6 +143,17 @@ module bp_core_minimal
                             & (dcache_req_cast.msg_type == e_cache_prefetch);
     // Publication timing is independent of when software arms demand misses.
     wire preview_record = preview_trace_r & preview_events_i[2];
+    wire dcache_trace_demand_write = ~miss_trace_clear_lo & dcache_miss_accept
+                                      & (dcache_count_r < (preview_trace_r ? 9'd248 : 9'd256));
+    wire dcache_trace_preview_write = ~miss_trace_clear_lo & ~dcache_miss_accept
+                                       & preview_record & (preview_count_r < 4'd8);
+    wire dcache_trace_write = dcache_trace_demand_write | dcache_trace_preview_write;
+    wire [7:0] dcache_trace_write_addr = dcache_trace_demand_write
+                                          ? dcache_count_r[7:0]
+                                          : (8'd248 + {5'b0, preview_count_r[2:0]});
+    wire [63:0] dcache_trace_write_data = dcache_trace_demand_write
+                                            ? {cycle_r, dcache_req_cast.msg_type, dcache_req_cast.addr[33:6]}
+                                            : {cycle_r, 2'b11, preview_publish_addr_i[33:4]};
 
     assign miss_trace_status_li =
       {5'b0, preview_trace_r, preview_overflow_r, preview_count_r,
@@ -214,21 +225,21 @@ module bp_core_minimal
             preview_overflow_r <= 1'b1;
           if (dcache_miss_accept) begin
             if (dcache_count_r < (preview_trace_r ? 9'd248 : 9'd256)) begin
-              dcache_trace_mem[dcache_count_r[7:0]]
-                <= {cycle_r, dcache_req_cast.msg_type, dcache_req_cast.addr[33:6]};
               dcache_count_r <= dcache_count_r + 1'b1;
             end else
               dcache_overflow_r <= 1'b1;
           end else if (preview_record) begin
             if (preview_count_r < 4'd8) begin
-              // Low half: event kind 11 and exact 16-byte physical segment.
-              dcache_trace_mem[8'd248 + preview_count_r[2:0]]
-                <= {cycle_r, 2'b11, preview_publish_addr_i[33:4]};
               preview_count_r <= preview_count_r + 1'b1;
             end else
               preview_overflow_r <= 1'b1;
           end
         end
+
+        // One physical write port is required for BRAM inference. The demand
+        // and preview counters above retain their independent overflow rules.
+        if (dcache_trace_write)
+          dcache_trace_mem[dcache_trace_write_addr] <= dcache_trace_write_data;
 
         if (miss_trace_read_v_lo) begin
           // Keep the two registered read ports structurally independent so
