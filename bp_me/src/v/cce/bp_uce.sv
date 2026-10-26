@@ -53,6 +53,7 @@ module bp_uce
     // without occupying the architectural cache request/metadata pair.
     , input [paddr_width_p-1:0]                      preview_paddr_i
     , input                                          preview_v_i
+    , input                                          preview_physical_i
     , input                                          preview_cancel_i
     , output logic                                   preview_ready_o
     , output logic                                   preview_issue_o
@@ -135,6 +136,7 @@ module bp_uce
     & (cache_req_cast_i.msg_type == e_cache_prefetch);
   logic [prefetch_els_p-1:0] prefetch_valid_r, prefetch_sent_r, prefetch_way_v_r;
   logic [prefetch_els_p-1:0] prefetch_preview_r;
+  logic [prefetch_els_p-1:0] prefetch_physical_r;
   logic [prefetch_els_p-1:0] prefetch_preview_canceled_r;
   logic [prefetch_els_p-1:0][paddr_width_p-1:0] prefetch_addr_r;
   logic [prefetch_els_p-1:0][`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_way_r;
@@ -157,6 +159,7 @@ module bp_uce
   wire prefetch_allocate = prefetch_accept & prefetch_free_v & ~prefetch_duplicate_v;
   wire prefetch_drop = prefetch_accept & (~prefetch_free_v | prefetch_duplicate_v);
   logic [preview_queue_els_lp-1:0][paddr_width_p-1:0] preview_queue_r;
+  logic [preview_queue_els_lp-1:0] preview_queue_physical_r;
   logic [preview_queue_ptr_width_lp-1:0] preview_head_r, preview_tail_r;
   logic [preview_queue_count_width_lp-1:0] preview_count_r;
   bp_cache_req_s cache_req_r;
@@ -166,11 +169,15 @@ module bp_uce
   assign preview_ready_o = prefetch_p & ~reset_i & ~preview_cancel_i
     & (preview_count_r < preview_queue_els_lp);
   wire preview_enqueue = preview_v_i & preview_ready_o;
-  // Diagnostic events describe detached physical previews only. Publication
-  // requires the final returned word to be accepted by the D-cache buffer.
+  // Both translated and physical previews report detached progress. A
+  // physical publication drains its L2 response; a translated publication
+  // accepts the final word into the D-cache side buffer.
   assign preview_issue_o = prefetch_issue & prefetch_preview_r[prefetch_issue_slot];
+  // The queue contains both translated and physical previews. Only a
+  // privileged physical preview warms L2 without entering the L1 side buffer.
   assign preview_publish_o = prefetch_response & prefetch_preview_r[prefetch_response_slot]
-    & fsm_rev_last_li & data_mem_pkt_v_o & data_mem_pkt_yumi_i;
+    & ~prefetch_preview_canceled_r[prefetch_response_slot] & ~preview_cancel_i
+    & fsm_rev_last_li & prefetch_response_yumi;
   wire preview_demand_match = cache_req_v_r
     & (cache_req_r.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]
        == preview_head_addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]);
@@ -193,6 +200,7 @@ module bp_uce
         preview_queue_r[preview_tail_r] <=
           {preview_paddr_i[paddr_width_p-1:prefetch_buffer_offset_width_lp]
            ,prefetch_buffer_offset_width_lp'(0)};
+        preview_queue_physical_r[preview_tail_r] <= preview_physical_i;
         preview_tail_r <= preview_tail_r + 1'b1;
       end
       if (preview_dequeue)
@@ -1136,6 +1144,9 @@ module bp_uce
         fsm_fwd_header_lo.addr = prefetch_addr_r[prefetch_issue_slot];
         fsm_fwd_header_lo.size = prefetch_msg_size_lp;
         fsm_fwd_header_lo.payload.prefetch = 1'b1;
+        // Distinguish privileged physical hints from translated hints at the
+        // destination router; both arrive through the preview queue.
+        fsm_fwd_header_lo.payload.speculative = prefetch_physical_r[prefetch_issue_slot];
         fsm_fwd_header_lo.payload.way_id = prefetch_tag_width_lp'(prefetch_issue_slot);
         fsm_fwd_header_lo.payload.state = bp_coh_states_e'
           (prefetch_issue_slot >> prefetch_tag_width_lp);
@@ -1146,16 +1157,17 @@ module bp_uce
         prefetch_issue = fsm_fwd_v_lo & fsm_fwd_last_lo;
       end
 
-      // Narrow detached replies bypass L1 replacement. Each returned word is
-      // written into the D$ side buffer and therefore never locks the cache
-      // SRAMs or blocks an unrelated hit.
+      // Translated hints retain the narrow D$ side-buffer path. Physical
+      // previews warmed L2 on their forward path; never allow their returned
+      // data to override a newer dirty L1 line on a later demand miss.
       if (prefetch_response) begin
         data_mem_pkt_cast_o = '0;
         data_mem_pkt_cast_o.opcode = e_cache_data_mem_prefetch;
         data_mem_pkt_cast_o.addr = prefetch_addr_r[prefetch_response_slot]
           + (paddr_width_p'(prefetch_fill_count_r[prefetch_response_slot]) << 3);
         data_mem_pkt_cast_o.data = fsm_rev_data_li;
-        data_mem_pkt_v_o = ~prefetch_preview_canceled_r[prefetch_response_slot]
+        data_mem_pkt_v_o = ~prefetch_physical_r[prefetch_response_slot]
+          & ~prefetch_preview_canceled_r[prefetch_response_slot]
           & ~(preview_cancel_i & prefetch_preview_r[prefetch_response_slot]);
         prefetch_response_yumi = data_mem_pkt_v_o
           ? data_mem_pkt_yumi_i : 1'b1;
@@ -1289,6 +1301,7 @@ module bp_uce
       prefetch_sent_r <= '0;
       prefetch_way_v_r <= '0;
       prefetch_preview_r <= '0;
+      prefetch_physical_r <= '0;
       prefetch_preview_canceled_r <= '0;
       prefetch_addr_r <= '0;
       prefetch_way_r <= '0;
@@ -1328,6 +1341,7 @@ module bp_uce
         prefetch_sent_r[prefetch_free_slot] <= 1'b0;
         prefetch_way_v_r[prefetch_free_slot] <= 1'b0;
         prefetch_preview_r[prefetch_free_slot] <= 1'b0;
+        prefetch_physical_r[prefetch_free_slot] <= 1'b0;
         prefetch_preview_canceled_r[prefetch_free_slot] <= 1'b0;
         prefetch_addr_r[prefetch_free_slot]
           <= {cache_req_cast_i.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp]
@@ -1339,6 +1353,8 @@ module bp_uce
         prefetch_sent_r[prefetch_free_slot] <= 1'b0;
         prefetch_way_v_r[prefetch_free_slot] <= 1'b1;
         prefetch_preview_r[prefetch_free_slot] <= 1'b1;
+        prefetch_physical_r[prefetch_free_slot]
+          <= preview_queue_physical_r[preview_head_r];
         prefetch_preview_canceled_r[prefetch_free_slot] <= 1'b0;
         prefetch_way_r[prefetch_free_slot] <= '0;
         prefetch_addr_r[prefetch_free_slot] <= preview_head_addr;
@@ -1355,6 +1371,7 @@ module bp_uce
               prefetch_valid_r[i] <= 1'b0;
               prefetch_way_v_r[i] <= 1'b0;
               prefetch_preview_r[i] <= 1'b0;
+              prefetch_physical_r[i] <= 1'b0;
               prefetch_preview_canceled_r[i] <= 1'b0;
             end
           end
@@ -1363,6 +1380,7 @@ module bp_uce
         prefetch_sent_r[prefetch_response_slot] <= 1'b0;
         prefetch_way_v_r[prefetch_response_slot] <= 1'b0;
         prefetch_preview_r[prefetch_response_slot] <= 1'b0;
+        prefetch_physical_r[prefetch_response_slot] <= 1'b0;
         prefetch_preview_canceled_r[prefetch_response_slot] <= 1'b0;
         prefetch_fill_count_r[prefetch_response_slot] <= '0;
       end else if (prefetch_response_yumi) begin
@@ -1406,6 +1424,9 @@ module bp_uce
     if (prefetch_install_state_r == e_pf_drop && prefetch_install_packet)
       assert (prefetch_response_yumi)
         else $error("UCE dropped prefetch blocks the reverse stream");
+    if (prefetch_response && prefetch_physical_r[prefetch_response_slot])
+      assert (!data_mem_pkt_v_o && prefetch_response_yumi)
+        else $error("UCE physical preview wrote L1 advisory data or blocked its reply");
   end
   always_ff @(negedge clk_i) if (!reset_i && prefetch_response_header) begin
     assert (prefetch_response_id_v

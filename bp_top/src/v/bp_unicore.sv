@@ -191,6 +191,9 @@ module bp_unicore
       wire is_dcache_prefetch_fwd = prefetch_bypass_p
         && (i == dcache_proc_id_lp)
         && proc_fwd_header_lo[i].payload.prefetch
+        // Physical previews use L2 as an advisory warming destination. Their
+        // data must not bypass dirty L2 state or feed the L1 side buffer.
+        && ~proc_fwd_header_lo[i].payload.speculative
         && (proc_fwd_header_lo[i].msg_type == e_bedrock_mem_rd)
         && ~is_local & ~is_io_fwd;
       wire is_l2s_fwd      = ~is_local & ~is_io_fwd & ~is_dcache_prefetch_fwd;
