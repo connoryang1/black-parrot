@@ -164,10 +164,13 @@ module bp_core_minimal
                                             : {cycle_r, prefetch_remove_event_lo[31:0]};
     wire icache_trace_preview_write = ~miss_trace_clear_lo & preview_record
                                       & (preview_count_r < 4'd8);
-    // Match each D-side removal to an I-history metadata slot by removal
-    // index. Publication wins a same-cycle write; overflow rejects that trial.
+    // Only a TV-stage consume has a PC. Replacement/store/L1 invalidations
+    // need no I-side metadata write, so they may overlap publication safely.
+    // Software reports zero metadata for those non-consume removal records.
+    wire prefetch_consume_record = prefetch_remove_record
+                                   & (prefetch_remove_event_lo[31:30] == 2'd0);
     wire icache_trace_remove_meta_write = ~miss_trace_clear_lo
-                                           & prefetch_remove_record & ~preview_record
+                                           & prefetch_consume_record & ~preview_record
                                            & (prefetch_remove_count_r < 5'd16);
     wire icache_trace_write = (~miss_trace_clear_lo & icache_miss_accept
                                & (icache_count_r < 9'd256))
@@ -254,7 +257,9 @@ module bp_core_minimal
           if (prefetch_remove_record
               & (dcache_miss_accept | prefetch_remove_event_lo[32]))
             preview_overflow_r <= 1'b1;
-          if (prefetch_remove_record & preview_record)
+          // A true consume still requires its PC and cannot share the I RAM
+          // write port with a publication; reject that ambiguous transcript.
+          if (prefetch_consume_record & preview_record)
             preview_overflow_r <= 1'b1;
           if (dcache_miss_accept) begin
             if (dcache_count_r < (preview_trace_r ? 9'd232 : 9'd256)) begin
