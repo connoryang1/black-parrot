@@ -177,11 +177,14 @@ module bp_core_minimal
                                           : icache_trace_remove_meta_write
                                             ? (8'd232 + {4'b0, prefetch_remove_count_r[3:0]})
                                             : icache_count_r[7:0];
-    wire [63:0] icache_trace_write_data = icache_trace_preview_write
-                                            ? {cycle_r, 2'b11, preview_publish_addr_i[33:4]}
-                                            : icache_trace_remove_meta_write
-                                              ? prefetch_remove_meta_lo
-                                              : {cycle_r, icache_req_cast.msg_type, icache_req_cast.addr[33:6]};
+    // These sources are mutually exclusive. One-hot terms avoid a 64-bit
+    // priority mux on the single BRAM write port in this slice-dense build.
+    wire [63:0] icache_trace_write_data =
+        ({64{icache_trace_preview_write}}
+         & {cycle_r, 2'b11, preview_publish_addr_i[33:4]})
+      | ({64{icache_trace_remove_meta_write}} & prefetch_remove_meta_lo)
+      | ({64{icache_miss_accept}}
+         & {cycle_r, icache_req_cast.msg_type, icache_req_cast.addr[33:6]});
 
     assign miss_trace_status_li =
       {prefetch_remove_count_r, preview_trace_r, preview_overflow_r, preview_count_r,

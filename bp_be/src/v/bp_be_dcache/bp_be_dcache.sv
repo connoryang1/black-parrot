@@ -1156,9 +1156,10 @@ module bp_be_dcache
       prefetch_remove_v_r <= prefetch_remove_v_n;
       prefetch_remove_data_r <= {prefetch_remove_collision_n,
                                  prefetch_remove_reason_n, prefetch_remove_addr_n};
-      prefetch_remove_meta_r <= (prefetch_remove_v_n && prefetch_buffer_hit_tv)
-        ? 64'({request_pc_valid_tv_r, thread_id_tv_r, request_pc_tv_r})
-        : '0;
+      // The valid bit qualifies the PC and thread. Avoid gating every PC bit
+      // on a hit: non-consume removals have valid=0, so their payload is ignored.
+      prefetch_remove_meta_r <= 64'({prefetch_buffer_hit_tv & request_pc_valid_tv_r
+                                     ,thread_id_tv_r, request_pc_tv_r});
       // Consume only the selected word. A 16-byte pointer-stream reply may
       // contain both the next pointer and adjacent payload, and consecutive
       // loads must be able to use both words. The rotating replacement pointer
