@@ -79,6 +79,27 @@ module bp_unicore_lite
   bp_be_dcache_req_s dcache_req_lo;
   logic dcache_req_v_lo, dcache_req_yumi_li, dcache_req_lock_li, dcache_req_metadata_v_lo;
   bp_be_dcache_req_metadata_s dcache_req_metadata_lo;
+  logic physical_preview_v_lo;
+  logic [paddr_width_p-1:0] physical_preview_paddr_lo;
+  logic physical_preview_uncached_lo, physical_preview_nonidem_lo;
+  logic physical_preview_dram_lo;
+  bp_pma
+   #(.bp_params_p(bp_params_p))
+   physical_preview_pma
+    (.clk_i(posedge_clk)
+     ,.reset_i(reset_i)
+     ,.ptag_i(physical_preview_paddr_lo[page_offset_width_gp+:ptag_width_p])
+     ,.uncached_mode_i(1'b0)
+     ,.nonspec_mode_i(1'b0)
+     ,.uncached_o(physical_preview_uncached_lo)
+     ,.nonidem_o(physical_preview_nonidem_lo)
+     ,.dram_o(physical_preview_dram_lo)
+     );
+  // Only cached, idempotent DRAM may be read speculatively. The request is
+  // best effort and never backpressures architectural retirement.
+  wire physical_preview_allowed_lo = physical_preview_v_lo
+    & physical_preview_dram_lo & ~physical_preview_uncached_lo
+    & ~physical_preview_nonidem_lo;
   logic [dcache_req_id_width_p-1:0] dcache_req_id_li;
   logic dcache_req_critical_li, dcache_req_last_li;
   logic dcache_req_credits_full_li, dcache_req_credits_empty_li;
@@ -108,6 +129,8 @@ module bp_unicore_lite
     (.clk_i(posedge_clk)
      ,.reset_i(reset_i)
      ,.cfg_bus_i(cfg_bus_cast_i)
+     ,.physical_preview_v_o(physical_preview_v_lo)
+     ,.physical_preview_paddr_o(physical_preview_paddr_lo)
 
      ,.icache_req_o(icache_req_lo)
      ,.icache_req_v_o(icache_req_v_lo)
@@ -311,8 +334,8 @@ module bp_unicore_lite
      ,.cache_req_lock_o(dcache_req_lock_li)
      ,.cache_req_metadata_i(dcache_req_metadata_lo)
      ,.cache_req_metadata_v_i(dcache_req_metadata_v_lo)
-     ,.preview_paddr_i('0)
-     ,.preview_v_i(1'b0)
+     ,.preview_paddr_i(physical_preview_paddr_lo)
+     ,.preview_v_i(physical_preview_allowed_lo)
      ,.preview_cancel_i(1'b0)
      ,.preview_ready_o()
      ,.cache_req_id_o(dcache_req_id_li)

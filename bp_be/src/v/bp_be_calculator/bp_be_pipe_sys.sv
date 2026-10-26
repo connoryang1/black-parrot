@@ -121,6 +121,8 @@ module bp_be_pipe_sys
    , output logic [8:0]                      icache_prefix_count_o
    , output logic                            icache_prefix_trigger_v_o
    , output logic                            icache_prefix_clear_v_o
+   , output logic                            physical_preview_v_o
+   , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
    );
 
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
@@ -232,6 +234,8 @@ module bp_be_pipe_sys
      ,.icache_prefix_count_o(icache_prefix_count_o)
      ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
      ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
+     ,.physical_preview_v_o(physical_preview_v_o)
+     ,.physical_preview_paddr_o(physical_preview_paddr_o)
      );
 
   logic [vaddr_width_p-1:0] retire_npc_r;

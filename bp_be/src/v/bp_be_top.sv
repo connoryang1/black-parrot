@@ -104,6 +104,8 @@ module bp_be_top
    , output logic [8:0]                              icache_prefix_count_o
    , output logic                                    icache_prefix_trigger_v_o
    , output logic                                    icache_prefix_clear_v_o
+   , output logic                                    physical_preview_v_o
+   , output logic [paddr_width_p-1:0]                physical_preview_paddr_o
    );
 
   // Declare parameterized structures
@@ -1597,6 +1599,8 @@ module bp_be_top
      ,.icache_prefix_count_o(icache_prefix_count_o)
      ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
      ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
+     ,.physical_preview_v_o(physical_preview_v_o)
+     ,.physical_preview_paddr_o(physical_preview_paddr_o)
      ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
      ,.fast_ctxtsw_old_physical_thread_id_o(fast_ctxtsw_old_physical_thread_id_lo)
      ,.fast_ctxtsw_virtual_context_id_o(fast_ctxtsw_virtual_context_id_lo)

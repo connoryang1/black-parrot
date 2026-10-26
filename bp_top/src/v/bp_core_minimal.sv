@@ -67,6 +67,10 @@ module bp_core_minimal
    , input                                           dcache_req_credits_full_i
    , input                                           dcache_req_credits_empty_i
 
+   // Retirement-qualified physical preview, registered for the negedge UCE.
+   , output logic                                    physical_preview_v_o
+   , output logic [paddr_width_p-1:0]                physical_preview_paddr_o
+
    , input [dcache_tag_mem_pkt_width_lp-1:0]         dcache_tag_mem_pkt_i
    , input                                           dcache_tag_mem_pkt_v_i
    , output logic                                    dcache_tag_mem_pkt_yumi_o
@@ -127,6 +131,18 @@ module bp_core_minimal
   logic miss_trace_ctrl_v_lo, miss_trace_arm_lo, miss_trace_clear_lo;
   logic miss_trace_read_v_lo, miss_trace_read_source_lo;
   logic [7:0] miss_trace_read_index_lo;
+  logic physical_preview_v_lo;
+  logic [paddr_width_p-1:0] physical_preview_paddr_lo;
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      physical_preview_v_o <= 1'b0;
+      physical_preview_paddr_o <= '0;
+    end else begin
+      physical_preview_v_o <= physical_preview_v_lo;
+      physical_preview_paddr_o <= physical_preview_paddr_lo;
+    end
+  end
 
   // This temporary measurement block records accepted physical demand misses,
   // after translation and before the I/D memory engines. Separate memories
@@ -346,6 +362,8 @@ module bp_core_minimal
      ,.icache_prefix_count_o(icache_prefix_count_o)
      ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
      ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
+     ,.physical_preview_v_o(physical_preview_v_lo)
+     ,.physical_preview_paddr_o(physical_preview_paddr_lo)
      );
 
 endmodule

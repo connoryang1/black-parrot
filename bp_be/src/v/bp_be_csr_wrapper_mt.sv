@@ -127,6 +127,8 @@ module bp_be_csr_wrapper_mt
    , output logic [8:0]                      icache_prefix_count_o
    , output logic                            icache_prefix_trigger_v_o
    , output logic                            icache_prefix_clear_v_o
+   , output logic                            physical_preview_v_o
+   , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
    );
 
   // Per-thread output arrays
@@ -167,6 +169,8 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][8:0]                       icache_prefix_count_co;
   logic [num_threads_p-1:0]                            icache_prefix_trigger_v_co;
   logic [num_threads_p-1:0]                            icache_prefix_clear_v_co;
+  logic [num_threads_p-1:0]                            physical_preview_v_co;
+  logic [num_threads_p-1:0][paddr_width_p-1:0]         physical_preview_paddr_co;
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
@@ -276,6 +280,8 @@ module bp_be_csr_wrapper_mt
        ,.icache_prefix_count_o(icache_prefix_count_co[i])
        ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_co[i])
        ,.icache_prefix_clear_v_o(icache_prefix_clear_v_co[i])
+       ,.physical_preview_v_o(physical_preview_v_co[i])
+       ,.physical_preview_paddr_o(physical_preview_paddr_co[i])
        );
   end
 
@@ -318,6 +324,8 @@ module bp_be_csr_wrapper_mt
   assign icache_prefix_count_o = icache_prefix_count_co[retire_thread_id_i];
   assign icache_prefix_trigger_v_o = icache_prefix_trigger_v_co[retire_thread_id_i];
   assign icache_prefix_clear_v_o = icache_prefix_clear_v_co[retire_thread_id_i];
+  assign physical_preview_v_o = physical_preview_v_co[retire_thread_id_i];
+  assign physical_preview_paddr_o = physical_preview_paddr_co[retire_thread_id_i];
   assign csr_context_save_data_o = csr_context_save_data_co[csr_context_save_physical_thread_id_i];
 
 endmodule

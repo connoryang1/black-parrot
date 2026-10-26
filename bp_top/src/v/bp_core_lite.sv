@@ -124,6 +124,8 @@ module bp_core_lite
     (.clk_i(posedge_clk)
      ,.reset_i(reset_i)
      ,.cfg_bus_i(cfg_bus_cast_i)
+     ,.physical_preview_v_o()
+     ,.physical_preview_paddr_o()
 
      ,.icache_req_o(icache_req_lo)
      ,.icache_req_v_o(icache_req_v_lo)

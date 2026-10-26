@@ -155,6 +155,8 @@ module bp_be_calculator_top
    , output logic [8:0]                              icache_prefix_count_o
    , output logic                                    icache_prefix_trigger_v_o
    , output logic                                    icache_prefix_clear_v_o
+   , output logic                                    physical_preview_v_o
+   , output logic [paddr_width_p-1:0]                physical_preview_paddr_o
 
    // Early classified ctxtsw event. Observable only until BE context state
    // consumes it as an architectural mini-commit.
@@ -404,6 +406,8 @@ module bp_be_calculator_top
      ,.icache_prefix_count_o(icache_prefix_count_o)
      ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
      ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
+     ,.physical_preview_v_o(physical_preview_v_o)
+     ,.physical_preview_paddr_o(physical_preview_paddr_o)
      );
 
   // Integer pipe: 1 cycle latency
