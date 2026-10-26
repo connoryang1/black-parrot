@@ -260,7 +260,9 @@ module bp_uce
         prefetch_issue_v = 1'b1;
         prefetch_issue_slot = prefetch_slot_width_lp'(i);
       end
-      if (prefetch_valid_r[i]
+      // cache_req_r retains its last address after the request retires. A
+      // detached hint for that line must not wait for an inactive demand.
+      if (cache_req_v_r & prefetch_valid_r[i]
           & (prefetch_addr_r[i][paddr_width_p-1:prefetch_buffer_offset_width_lp]
              == cache_req_r.addr[paddr_width_p-1:prefetch_buffer_offset_width_lp])) begin
         prefetch_demand_match = 1'b1;
