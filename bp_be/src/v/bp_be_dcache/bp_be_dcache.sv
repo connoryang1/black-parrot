@@ -164,6 +164,7 @@ module bp_be_dcache
    // Unused
    , input                                           cache_req_credits_full_i
    , input                                           cache_req_credits_empty_i
+   , input                                           preview_flush_i
 
    , input                                           data_mem_pkt_v_i
    , input [dcache_data_mem_pkt_width_lp-1:0]        data_mem_pkt_i
@@ -1204,6 +1205,13 @@ module bp_be_dcache
           else
             prefetch_buffer_replace_r <= prefetch_buffer_replace_r + 1'b1;
         end
+      end
+      // A software page-release fence invalidates advisory physical tags
+      // before the page can be recycled for another address space. Cancellation
+      // also prevents a same-cycle preview response from repopulating them.
+      if (preview_flush_i) begin
+        prefetch_buffer_v_r <= '0;
+        prefetch_buffer_word_v_r <= '0;
       end
     end
   end

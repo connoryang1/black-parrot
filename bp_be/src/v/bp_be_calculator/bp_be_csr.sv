@@ -91,6 +91,7 @@ module bp_be_csr
    // Core-wide accepted cache-miss trace: 0x805 control/status,
    // 0x806 read selector, and 0x807 selected record.
    , input [dword_width_gp-1:0]              miss_trace_status_i
+   , input                                   preview_idle_i
    , input [dword_width_gp-1:0]              miss_trace_data_i
    , output logic                            miss_trace_ctrl_v_o
    , output logic                            miss_trace_arm_o
@@ -545,8 +546,8 @@ module bp_be_csr
           csr_data_lo = '0;
         12'h809:  // Protected return result operand / status
           csr_data_lo = '0;
-        12'h9c0:  // Supervisor physical preview; write-only, reads as zero
-          csr_data_lo = '0;
+        12'h9c0:  // Supervisor physical preview; bit zero reports drain completion
+          csr_data_lo = dword_width_gp'(preview_idle_i);
         {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
           csr_data_lo = global_cycle_i;
         default:

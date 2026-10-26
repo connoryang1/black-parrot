@@ -141,6 +141,7 @@ module bp_cacc_vdp
      ,.v_i(acache_v_li)
      ,.busy_o(acache_busy_lo)
      ,.flush_i(1'b0)
+     ,.preview_flush_i(1'b0)
      ,.ordered_o()
 
      ,.ptag_v_i(1'b1)

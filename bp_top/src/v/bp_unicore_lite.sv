@@ -76,6 +76,8 @@ module bp_unicore_lite
     & (dcache_req_lo.msg_type == e_cache_prefetch);
   logic physical_preview_v;
   logic [paddr_width_p-1:0] physical_preview_paddr;
+  logic dcache_preview_idle;
+  wire preview_cancel = physical_preview_v & (physical_preview_paddr == '0);
   logic physical_preview_uncached, physical_preview_nonidem, physical_preview_dram;
   bp_pma
    #(.bp_params_p(bp_params_p))
@@ -92,7 +94,8 @@ module bp_unicore_lite
   // Only cached, idempotent DRAM is eligible for a speculative physical
   // read. Physical hints win a simultaneous translated-hint collision;
   // both producers remain best effort and never stall architectural work.
-  wire physical_preview_allowed = physical_preview_v & physical_preview_dram
+  wire physical_preview_allowed = physical_preview_v & ~preview_cancel
+                                  & physical_preview_dram
                                   & ~physical_preview_uncached & ~physical_preview_nonidem;
   wire preview_request_v = physical_preview_allowed | dcache_preview_req;
   wire [paddr_width_p-1:0] preview_request_paddr = physical_preview_allowed
@@ -159,6 +162,7 @@ module bp_unicore_lite
      ,.preview_publish_addr_i(dcache_data_mem_pkt_li.addr)
      ,.physical_preview_v_o(physical_preview_v)
      ,.physical_preview_paddr_o(physical_preview_paddr)
+     ,.preview_idle_i(dcache_preview_idle)
 
      ,.icache_req_o(icache_req_lo)
      ,.icache_req_v_o(icache_req_v_lo)
@@ -249,6 +253,7 @@ module bp_unicore_lite
      ,.preview_v_i(1'b0)
      ,.preview_physical_i(1'b0)
      ,.preview_cancel_i(1'b0)
+     ,.preview_idle_o()
      ,.preview_ready_o()
      ,.preview_issue_o()
      ,.preview_publish_o()
@@ -319,7 +324,8 @@ module bp_unicore_lite
      ,.preview_paddr_i(preview_request_paddr)
      ,.preview_v_i(preview_request_v)
      ,.preview_physical_i(physical_preview_allowed)
-     ,.preview_cancel_i(1'b0)
+     ,.preview_cancel_i(preview_cancel)
+     ,.preview_idle_o(dcache_preview_idle)
      ,.preview_ready_o(dcache_preview_ready)
      ,.preview_issue_o(dcache_preview_issue)
      ,.preview_publish_o(dcache_preview_publish)

@@ -76,6 +76,7 @@ module bp_be_calculator_top
    , input                                           cache_req_last_i
    , input                                           cache_req_credits_full_i
    , input                                           cache_req_credits_empty_i
+   , input                                           preview_flush_i
 
    , input                                           data_mem_pkt_v_i
    , input [dcache_data_mem_pkt_width_lp-1:0]        data_mem_pkt_i
@@ -137,6 +138,7 @@ module bp_be_calculator_top
    , output logic [dword_width_gp-1:0]               context_cache_dcache_resp_data_o
 
    , input [dword_width_gp-1:0]                      miss_trace_status_i
+   , input                                           preview_idle_i
    , input [dword_width_gp-1:0]                      miss_trace_data_i
    , output logic                                    miss_trace_ctrl_v_o
    , output logic                                    miss_trace_arm_o
@@ -378,6 +380,7 @@ module bp_be_calculator_top
      ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_lo)
      ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_lo)
      ,.miss_trace_status_i(miss_trace_status_i)
+     ,.preview_idle_i(preview_idle_i)
      ,.miss_trace_data_i(miss_trace_data_i)
      ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_o)
      ,.miss_trace_arm_o(miss_trace_arm_o)
@@ -555,6 +558,7 @@ module bp_be_calculator_top
      ,.cache_req_last_i(cache_req_last_i)
      ,.cache_req_credits_full_i(cache_req_credits_full_i)
      ,.cache_req_credits_empty_i(cache_req_credits_empty_i)
+     ,.preview_flush_i(preview_flush_i)
 
      ,.data_mem_pkt_i(data_mem_pkt_i)
      ,.data_mem_pkt_v_i(data_mem_pkt_v_i)

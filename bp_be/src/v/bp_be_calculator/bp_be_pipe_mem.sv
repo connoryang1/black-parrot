@@ -87,6 +87,7 @@ module bp_be_pipe_mem
    , input                                           cache_req_last_i
    , input                                           cache_req_credits_full_i
    , input                                           cache_req_credits_empty_i
+   , input                                           preview_flush_i
 
    , input                                           data_mem_pkt_v_i
    , input [dcache_data_mem_pkt_width_lp-1:0]        data_mem_pkt_i
@@ -353,6 +354,7 @@ module bp_be_pipe_mem
    dcache
     (.clk_i(negedge_clk)
      ,.reset_i(reset_i)
+     ,.preview_flush_i(preview_flush_i)
 
      ,.busy_o(dcache_busy_lo)
      ,.ordered_o(dcache_ordered_lo)
