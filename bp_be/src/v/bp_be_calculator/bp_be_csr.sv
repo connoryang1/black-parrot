@@ -99,6 +99,10 @@ module bp_be_csr
    , output logic                            miss_trace_read_v_o
    , output logic                            miss_trace_read_source_o
    , output logic [7:0]                      miss_trace_read_index_o
+   // Supervisor physical preview request. The address is advisory and
+   // becomes visible only when the CSR instruction retires.
+   , output logic                            physical_preview_v_o
+   , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
    );
 
   // Declare parameterizable structs
@@ -541,6 +545,8 @@ module bp_be_csr
           csr_data_lo = '0;
         12'h809:  // Protected return result operand / status
           csr_data_lo = '0;
+        12'h9c0:  // Supervisor physical preview; write-only, reads as zero
+          csr_data_lo = '0;
         {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
           csr_data_lo = global_cycle_i;
         default:
@@ -883,7 +889,8 @@ module bp_be_csr
                            | (csr_addr_li == 12'h806)
                            | (csr_addr_li == 12'h807)
                            | (csr_addr_li == 12'h808)
-                           | (csr_addr_li == 12'h809);
+                           | (csr_addr_li == 12'h809)
+                           | (csr_addr_li == 12'h9c0);
 
   assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special.dcache_miss
                                                  ,retire_pkt_cast_i.special.fencei
@@ -1011,6 +1018,15 @@ module bp_be_csr
                                & legacy_context_access_li;
   assign miss_trace_read_source_o = csr_data_li[8];
   assign miss_trace_read_index_o = csr_data_li[7:0];
+
+  // CSR 0x9c0 is in the supervisor custom CSR range. The instruction
+  // decoder rejects U-mode access; repeat the privilege and width checks
+  // here before allowing a physical address to escape the CSR bank.
+  assign physical_preview_v_o = csr_w_v_li & retire_pkt_cast_i.instret
+                                & (csr_addr_li == 12'h9c0)
+                                & (is_s_mode | is_m_mode)
+                                & ~(|csr_data_li[dword_width_gp-1:paddr_width_p]);
+  assign physical_preview_paddr_o = csr_data_li[0+:paddr_width_p];
 
   always_ff @(posedge clk_i)
     if (reset_i)

@@ -96,6 +96,8 @@ module bp_be_top
    , output logic                                    miss_trace_read_v_o
    , output logic                                    miss_trace_read_source_o
    , output logic [7:0]                              miss_trace_read_index_o
+   , output logic                                    physical_preview_v_o
+   , output logic [paddr_width_p-1:0]                physical_preview_paddr_o
    );
 
   // Declare parameterized structures
@@ -1581,6 +1583,8 @@ module bp_be_top
      ,.miss_trace_read_v_o(miss_trace_read_v_o)
      ,.miss_trace_read_source_o(miss_trace_read_source_o)
      ,.miss_trace_read_index_o(miss_trace_read_index_o)
+     ,.physical_preview_v_o(physical_preview_v_o)
+     ,.physical_preview_paddr_o(physical_preview_paddr_o)
      ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
      ,.fast_ctxtsw_old_physical_thread_id_o(fast_ctxtsw_old_physical_thread_id_lo)
      ,.fast_ctxtsw_virtual_context_id_o(fast_ctxtsw_virtual_context_id_lo)

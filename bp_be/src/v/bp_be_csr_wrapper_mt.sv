@@ -116,6 +116,8 @@ module bp_be_csr_wrapper_mt
    , output logic                            miss_trace_read_v_o
    , output logic                            miss_trace_read_source_o
    , output logic [7:0]                      miss_trace_read_index_o
+   , output logic                            physical_preview_v_o
+   , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
    );
 
   // Per-thread output arrays
@@ -148,6 +150,8 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            miss_trace_read_v_co;
   logic [num_threads_p-1:0]                            miss_trace_read_source_co;
   logic [num_threads_p-1:0][7:0]                       miss_trace_read_index_co;
+  logic [num_threads_p-1:0]                            physical_preview_v_co;
+  logic [num_threads_p-1:0][paddr_width_p-1:0]          physical_preview_paddr_co;
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
@@ -247,12 +251,16 @@ module bp_be_csr_wrapper_mt
        ,.miss_trace_read_v_o(miss_trace_read_v_co[i])
        ,.miss_trace_read_source_o(miss_trace_read_source_co[i])
        ,.miss_trace_read_index_o(miss_trace_read_index_co[i])
+       ,.physical_preview_v_o(physical_preview_v_co[i])
+       ,.physical_preview_paddr_o(physical_preview_paddr_co[i])
        );
   end
 
   // Select each output using its architectural owner.
   assign csr_r_data_o          = csr_r_data_co[csr_thread_id_i];
   assign csr_r_illegal_o       = csr_r_illegal_co[csr_thread_id_i];
+  assign physical_preview_v_o = physical_preview_v_co[retire_thread_id_i];
+  assign physical_preview_paddr_o = physical_preview_paddr_co[retire_thread_id_i];
   assign commit_pkt_o          = commit_pkt_co[current_physical_thread_id_i];
   assign decode_info_o         = decode_info_co[current_physical_thread_id_i];
   assign trans_info_o          = trans_info_co[current_physical_thread_id_i];

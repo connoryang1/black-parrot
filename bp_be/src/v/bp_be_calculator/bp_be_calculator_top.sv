@@ -145,6 +145,8 @@ module bp_be_calculator_top
    , output logic                                    miss_trace_read_v_o
    , output logic                                    miss_trace_read_source_o
    , output logic [7:0]                              miss_trace_read_index_o
+   , output logic                                    physical_preview_v_o
+   , output logic [paddr_width_p-1:0]                physical_preview_paddr_o
 
    // Early classified ctxtsw event. Observable only until BE context state
    // consumes it as an architectural mini-commit.
@@ -384,6 +386,8 @@ module bp_be_calculator_top
      ,.miss_trace_read_v_o(miss_trace_read_v_o)
      ,.miss_trace_read_source_o(miss_trace_read_source_o)
      ,.miss_trace_read_index_o(miss_trace_read_index_o)
+     ,.physical_preview_v_o(physical_preview_v_o)
+     ,.physical_preview_paddr_o(physical_preview_paddr_o)
      );
 
   // Integer pipe: 1 cycle latency

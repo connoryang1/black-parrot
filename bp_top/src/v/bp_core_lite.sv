@@ -126,6 +126,8 @@ module bp_core_lite
      ,.cfg_bus_i(cfg_bus_cast_i)
      ,.preview_events_i('0)
      ,.preview_publish_addr_i('0)
+     ,.physical_preview_v_o()
+     ,.physical_preview_paddr_o()
 
      ,.icache_req_o(icache_req_lo)
      ,.icache_req_v_o(icache_req_v_lo)

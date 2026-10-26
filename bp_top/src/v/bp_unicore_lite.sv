@@ -74,9 +74,32 @@ module bp_unicore_lite
   logic dcache_preview_metadata_r, dcache_normal_metadata_r;
   wire dcache_preview_req = dcache_req_v_lo
     & (dcache_req_lo.msg_type == e_cache_prefetch);
+  logic physical_preview_v;
+  logic [paddr_width_p-1:0] physical_preview_paddr;
+  logic physical_preview_uncached, physical_preview_nonidem, physical_preview_dram;
+  bp_pma
+   #(.bp_params_p(bp_params_p))
+   physical_preview_pma
+    (.clk_i(posedge_clk)
+     ,.reset_i(reset_i)
+     ,.ptag_i(physical_preview_paddr[page_offset_width_gp+:ptag_width_p])
+     ,.uncached_mode_i(1'b0)
+     ,.nonspec_mode_i(1'b0)
+     ,.uncached_o(physical_preview_uncached)
+     ,.nonidem_o(physical_preview_nonidem)
+     ,.dram_o(physical_preview_dram)
+     );
+  // Only cached, idempotent DRAM is eligible for a speculative physical
+  // read. Physical hints win a simultaneous translated-hint collision;
+  // both producers remain best effort and never stall architectural work.
+  wire physical_preview_allowed = physical_preview_v & physical_preview_dram
+                                  & ~physical_preview_uncached & ~physical_preview_nonidem;
+  wire preview_request_v = physical_preview_allowed | dcache_preview_req;
+  wire [paddr_width_p-1:0] preview_request_paddr = physical_preview_allowed
+                                                  ? physical_preview_paddr : dcache_req_lo.addr;
   logic dcache_preview_ready, dcache_preview_issue, dcache_preview_publish;
   wire [2:0] preview_events = {dcache_preview_publish, dcache_preview_issue,
-                                dcache_preview_req & dcache_preview_ready};
+                                preview_request_v & dcache_preview_ready};
   wire dcache_normal_req_v = dcache_req_v_lo & ~dcache_preview_req;
   wire dcache_normal_req_accept = dcache_normal_req_v & dcache_uce_req_yumi_lo;
   wire dcache_preview_retire = dcache_preview_req;
@@ -134,6 +157,8 @@ module bp_unicore_lite
      ,.cfg_bus_i(cfg_bus_cast_i)
      ,.preview_events_i(preview_events)
      ,.preview_publish_addr_i(dcache_data_mem_pkt_li.addr)
+     ,.physical_preview_v_o(physical_preview_v)
+     ,.physical_preview_paddr_o(physical_preview_paddr)
 
      ,.icache_req_o(icache_req_lo)
      ,.icache_req_v_o(icache_req_v_lo)
@@ -290,8 +315,8 @@ module bp_unicore_lite
      ,.cache_req_lock_o(dcache_req_lock_li)
      ,.cache_req_metadata_i(dcache_req_metadata_lo)
      ,.cache_req_metadata_v_i(dcache_uce_metadata_v)
-     ,.preview_paddr_i(dcache_req_lo.addr)
-     ,.preview_v_i(dcache_preview_req)
+     ,.preview_paddr_i(preview_request_paddr)
+     ,.preview_v_i(preview_request_v)
      ,.preview_cancel_i(1'b0)
      ,.preview_ready_o(dcache_preview_ready)
      ,.preview_issue_o(dcache_preview_issue)
