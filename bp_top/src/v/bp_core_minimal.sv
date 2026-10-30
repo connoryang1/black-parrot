@@ -13,6 +13,8 @@ module bp_core_minimal
  import bp_fe_pkg::*;
  import bp_be_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter bit icache_replay_buffer_p = 1'b0
+   , parameter icache_replay_buffer_els_p = 16
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_fe_icache_engine_if_widths(paddr_width_p, icache_tag_width_p, icache_sets_p, icache_assoc_p, icache_data_width_p, icache_block_width_p, icache_fill_width_p, icache_req_id_width_p)
    `declare_bp_be_dcache_engine_if_widths(paddr_width_p, dcache_tag_width_p, dcache_sets_p, dcache_assoc_p, dcache_data_width_p, dcache_block_width_p, dcache_fill_width_p, dcache_req_id_width_p)
@@ -91,6 +93,18 @@ module bp_core_minimal
    , input                                           software_irq_i
    , input                                           m_external_irq_i
    , input                                           s_external_irq_i
+
+   , input                                           icache_replay_ready_i
+   , output logic                                    icache_replay_v_o
+   , output logic [paddr_width_p-1:0]                icache_replay_paddr_o
+   , input [dword_width_gp-1:0]                      icache_prefix_status_i
+   , output logic                                    icache_prefix_entry_v_o
+   , output logic [7:0]                              icache_prefix_entry_index_o
+   , output logic [paddr_width_p-1:0]                icache_prefix_entry_paddr_o
+   , output logic                                    icache_prefix_count_v_o
+   , output logic [8:0]                              icache_prefix_count_o
+   , output logic                                    icache_prefix_trigger_v_o
+   , output logic                                    icache_prefix_clear_v_o
    );
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
@@ -322,7 +336,10 @@ module bp_core_minimal
   end
 
   bp_fe_top
-   #(.bp_params_p(bp_params_p))
+   #(.bp_params_p(bp_params_p)
+     ,.icache_replay_buffer_p(icache_replay_buffer_p)
+     ,.icache_replay_buffer_els_p(icache_replay_buffer_els_p)
+     )
    fe
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
@@ -446,6 +463,17 @@ module bp_core_minimal
      ,.miss_trace_read_index_o(miss_trace_read_index_lo)
      ,.physical_preview_v_o(physical_preview_v_lo)
      ,.physical_preview_paddr_o(physical_preview_paddr_lo)
+     ,.icache_replay_ready_i(icache_replay_ready_i)
+     ,.icache_replay_v_o(icache_replay_v_o)
+     ,.icache_replay_paddr_o(icache_replay_paddr_o)
+     ,.icache_prefix_status_i(icache_prefix_status_i)
+     ,.icache_prefix_entry_v_o(icache_prefix_entry_v_o)
+     ,.icache_prefix_entry_index_o(icache_prefix_entry_index_o)
+     ,.icache_prefix_entry_paddr_o(icache_prefix_entry_paddr_o)
+     ,.icache_prefix_count_v_o(icache_prefix_count_v_o)
+     ,.icache_prefix_count_o(icache_prefix_count_o)
+     ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
+     ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
      );
 
 endmodule

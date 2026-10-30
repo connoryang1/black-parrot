@@ -150,6 +150,19 @@ module bp_be_calculator_top
    , output logic                                    physical_preview_v_o
    , output logic [paddr_width_p-1:0]                physical_preview_paddr_o
 
+   , input                                           icache_replay_ready_i
+   , output logic                                    icache_replay_v_o
+   , output logic [paddr_width_p-1:0]                icache_replay_paddr_o
+
+   , input [dword_width_gp-1:0]                      icache_prefix_status_i
+   , output logic                                    icache_prefix_entry_v_o
+   , output logic [7:0]                              icache_prefix_entry_index_o
+   , output logic [paddr_width_p-1:0]                icache_prefix_entry_paddr_o
+   , output logic                                    icache_prefix_count_v_o
+   , output logic [8:0]                              icache_prefix_count_o
+   , output logic                                    icache_prefix_trigger_v_o
+   , output logic                                    icache_prefix_clear_v_o
+
    // Early classified ctxtsw event. Observable only until BE context state
    // consumes it as an architectural mini-commit.
    , output logic                                    fast_ctxtsw_v_o
@@ -391,6 +404,17 @@ module bp_be_calculator_top
      ,.miss_trace_read_index_o(miss_trace_read_index_o)
      ,.physical_preview_v_o(physical_preview_v_o)
      ,.physical_preview_paddr_o(physical_preview_paddr_o)
+     ,.icache_replay_ready_i(icache_replay_ready_i)
+     ,.icache_replay_v_o(icache_replay_v_o)
+     ,.icache_replay_paddr_o(icache_replay_paddr_o)
+     ,.icache_prefix_status_i(icache_prefix_status_i)
+     ,.icache_prefix_entry_v_o(icache_prefix_entry_v_o)
+     ,.icache_prefix_entry_index_o(icache_prefix_entry_index_o)
+     ,.icache_prefix_entry_paddr_o(icache_prefix_entry_paddr_o)
+     ,.icache_prefix_count_v_o(icache_prefix_count_v_o)
+     ,.icache_prefix_count_o(icache_prefix_count_o)
+     ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
+     ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
      );
 
   // Integer pipe: 1 cycle latency

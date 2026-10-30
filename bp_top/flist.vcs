@@ -321,6 +321,7 @@ $BP_DIR/bp_top/src/v/bp_io_tile_node.sv
 $BP_DIR/bp_top/src/v/bp_mem_complex.sv
 $BP_DIR/bp_top/src/v/bp_multicore.sv
 $BP_DIR/bp_top/src/v/bp_unicore.sv
+$BP_DIR/bp_top/src/v/bp_icache_replay_ctrl.sv
 $BP_DIR/bp_top/src/v/bp_unicore_lite.sv
 $BP_DIR/bp_top/src/v/bp_core_tile.sv
 $BP_DIR/bp_top/src/v/bp_core_tile_node.sv

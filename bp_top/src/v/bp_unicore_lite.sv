@@ -53,6 +53,16 @@ module bp_unicore_lite
   logic [icache_req_id_width_p-1:0] icache_req_id_li;
   logic icache_req_critical_li, icache_req_last_li;
   logic icache_req_credits_full_li, icache_req_credits_empty_li;
+  logic icache_replay_v_lo, icache_replay_direct_ready_lo;
+  logic [paddr_width_p-1:0] icache_replay_paddr_lo;
+  logic icache_replay_lane_v_lo, icache_replay_lane_ready_li;
+  logic [paddr_width_p-1:0] icache_replay_lane_paddr_lo;
+  logic [dword_width_gp-1:0] icache_prefix_status_lo;
+  logic icache_prefix_entry_v_lo, icache_prefix_count_v_lo;
+  logic icache_prefix_trigger_v_lo, icache_prefix_clear_v_lo;
+  logic [7:0] icache_prefix_entry_index_lo;
+  logic [8:0] icache_prefix_count_lo;
+  logic [paddr_width_p-1:0] icache_prefix_entry_paddr_lo;
 
   bp_fe_icache_tag_mem_pkt_s icache_tag_mem_pkt_li;
   logic icache_tag_mem_pkt_v_li, icache_tag_mem_pkt_yumi_lo;
@@ -153,6 +163,8 @@ module bp_unicore_lite
   bp_core_minimal
    #(.bp_params_p(bp_params_p)
      ,.cache_miss_trace_p(cache_miss_trace_p)
+     ,.icache_replay_buffer_p(1'b1)
+     ,.icache_replay_buffer_els_p(16)
      )
    core_minimal
     (.clk_i(posedge_clk)
@@ -223,6 +235,38 @@ module bp_unicore_lite
      ,.software_irq_i(software_irq_i)
      ,.m_external_irq_i(m_external_irq_i)
      ,.s_external_irq_i(s_external_irq_i)
+     ,.icache_replay_ready_i(icache_replay_direct_ready_lo)
+     ,.icache_replay_v_o(icache_replay_v_lo)
+     ,.icache_replay_paddr_o(icache_replay_paddr_lo)
+     ,.icache_prefix_status_i(icache_prefix_status_lo)
+     ,.icache_prefix_entry_v_o(icache_prefix_entry_v_lo)
+     ,.icache_prefix_entry_index_o(icache_prefix_entry_index_lo)
+     ,.icache_prefix_entry_paddr_o(icache_prefix_entry_paddr_lo)
+     ,.icache_prefix_count_v_o(icache_prefix_count_v_lo)
+     ,.icache_prefix_count_o(icache_prefix_count_lo)
+     ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_lo)
+     ,.icache_prefix_clear_v_o(icache_prefix_clear_v_lo)
+     );
+
+  bp_icache_replay_ctrl
+   #(.paddr_width_p(paddr_width_p))
+   icache_replay_ctrl
+    (.clk_i(posedge_clk)
+     ,.reset_i(reset_i)
+     ,.direct_v_i(icache_replay_v_lo)
+     ,.direct_paddr_i(icache_replay_paddr_lo)
+     ,.direct_ready_o(icache_replay_direct_ready_lo)
+     ,.entry_write_v_i(icache_prefix_entry_v_lo)
+     ,.entry_write_index_i(icache_prefix_entry_index_lo)
+     ,.entry_write_paddr_i(icache_prefix_entry_paddr_lo)
+     ,.count_write_v_i(icache_prefix_count_v_lo)
+     ,.count_i(icache_prefix_count_lo)
+     ,.clear_counters_i(icache_prefix_clear_v_lo)
+     ,.trigger_v_i(icache_prefix_trigger_v_lo)
+     ,.replay_v_o(icache_replay_lane_v_lo)
+     ,.replay_paddr_o(icache_replay_lane_paddr_lo)
+     ,.replay_ready_i(icache_replay_lane_ready_li)
+     ,.status_o(icache_prefix_status_lo)
      );
 
   bp_uce
@@ -235,6 +279,12 @@ module bp_unicore_lite
      ,.tag_width_p(icache_tag_width_p)
      ,.id_width_p(icache_req_id_width_p)
      ,.writeback_p(icache_features_p[e_cfg_writeback])
+     ,.prefetch_p(1'b1)
+     ,.prefetch_els_p(4)
+     ,.prefetch_full_line_p(1'b1)
+     ,.prefetch_demand_priority_p(1'b1)
+     ,.prefetch_critical_forward_p(1'b0)
+     ,.prefetch_side_buffer_p(1'b1)
      )
    icache_uce
     (.clk_i(posedge_clk)
@@ -262,6 +312,10 @@ module bp_unicore_lite
      ,.cache_req_last_o(icache_req_last_li)
      ,.cache_req_credits_full_o(icache_req_credits_full_li)
      ,.cache_req_credits_empty_o(icache_req_credits_empty_li)
+
+     ,.detached_prefetch_addr_i(icache_replay_lane_paddr_lo)
+     ,.detached_prefetch_v_i(icache_replay_lane_v_lo)
+     ,.detached_prefetch_ready_and_o(icache_replay_lane_ready_li)
 
      ,.tag_mem_pkt_o(icache_tag_mem_pkt_li)
      ,.tag_mem_pkt_v_o(icache_tag_mem_pkt_v_li)
@@ -306,6 +360,7 @@ module bp_unicore_lite
      ,.id_width_p(dcache_req_id_width_p)
      ,.writeback_p(dcache_features_p[e_cfg_writeback])
      ,.prefetch_els_p(dcache_prefetch_els_p)
+     ,.prefetch_full_line_p(dcache_prefetch_full_line_p)
      ,.prefetch_ignore_credits_p(1'b1)
      )
    dcache_uce
@@ -334,6 +389,10 @@ module bp_unicore_lite
      ,.cache_req_last_o(dcache_req_last_li)
      ,.cache_req_credits_full_o(dcache_req_credits_full_li)
      ,.cache_req_credits_empty_o(dcache_req_credits_empty_li)
+
+     ,.detached_prefetch_addr_i('0)
+     ,.detached_prefetch_v_i(1'b0)
+     ,.detached_prefetch_ready_and_o()
 
      ,.tag_mem_pkt_o(dcache_tag_mem_pkt_li)
      ,.tag_mem_pkt_v_o(dcache_tag_mem_pkt_v_li)

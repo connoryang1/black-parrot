@@ -104,6 +104,25 @@ module bp_be_csr
    // becomes visible only when the CSR instruction retires.
    , output logic                            physical_preview_v_o
    , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
+
+   // Machine-mode physical instruction replay enqueue. The address is
+   // advisory; architectural fetch still performs its ordinary translation
+   // and execute-permission checks before consuming an installed line.
+   , input                                   icache_replay_ready_i
+   , output logic                            icache_replay_v_o
+   , output logic [paddr_width_p-1:0]        icache_replay_paddr_o
+
+   // Core-wide shared instruction-prefix replay control. Machine mode owns
+   // physical table contents and length; supervisor mode may only trigger the
+   // already configured table and inspect its aggregate status.
+   , input [dword_width_gp-1:0]              icache_prefix_status_i
+   , output logic                            icache_prefix_entry_v_o
+   , output logic [7:0]                      icache_prefix_entry_index_o
+   , output logic [paddr_width_p-1:0]        icache_prefix_entry_paddr_o
+   , output logic                            icache_prefix_count_v_o
+   , output logic [8:0]                      icache_prefix_count_o
+   , output logic                            icache_prefix_trigger_v_o
+   , output logic                            icache_prefix_clear_v_o
    );
 
   // Declare parameterizable structs
@@ -213,8 +232,10 @@ module bp_be_csr
 
   `declare_csr(mcycle);
   `declare_csr(minstret);
-  // Preserve the pre-6a absent-CSR behavior while retaining later preview
-  // and miss-trace CSRs.  Firmware probes must take the illegal-CSR path.
+  // Preserve the physically qualified pre-6a behavior for absent privileged
+  // facilities: OpenSBI discovers them through illegal-instruction traps.
+  // Returning zero for these unimplemented CSRs advertises extensions whose
+  // execution paths this core cannot actually service and prevents Linux boot.
   `declare_csr(mcountinhibit);
 
   // sstatus subset of mstatus
@@ -548,6 +569,14 @@ module bp_be_csr
           csr_data_lo = '0;
         12'h9c0:  // Supervisor physical preview; bit zero reports drain completion
           csr_data_lo = dword_width_gp'(preview_idle_i);
+        12'h7c0:  // M-mode physical I-cache replay enqueue/status
+          csr_data_lo = {{(dword_width_gp-1){1'b0}}, icache_replay_ready_i};
+        12'h7c1:  // M-mode shared-prefix table entry (write-only)
+          csr_data_lo = '0;
+        12'h7c2:  // M-mode shared-prefix length/control
+          csr_data_lo = is_m_mode ? icache_prefix_status_i : '0;
+        12'h5c0:  // S-mode shared-prefix trigger/status
+          csr_data_lo = icache_prefix_status_i;
         {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
           csr_data_lo = global_cycle_i;
         default:
@@ -1028,6 +1057,34 @@ module bp_be_csr
                                 & (is_s_mode | is_m_mode)
                                 & ~(|csr_data_li[dword_width_gp-1:paddr_width_p]);
   assign physical_preview_paddr_o = csr_data_li[0+:paddr_width_p];
+  // 0x7c0 is in the standard machine-custom CSR range. Keep an explicit
+  // privilege gate in addition to the generic CSR legality check so lower
+  // privilege software can never inject physical addresses speculatively.
+  // Valid must not depend combinationally on downstream ready. The replay
+  // controller's ready depends on request identity for duplicate admission;
+  // gating valid with ready forms a loop that FPGA synthesis must break.
+  // Software polls the read-only ready bit before issuing this test enqueue.
+  assign icache_replay_v_o = csr_w_v_li & (csr_addr_li == 12'h7c0)
+                             & is_m_mode;
+  assign icache_replay_paddr_o = csr_data_li[0+:paddr_width_p];
+
+  // 0x7c1 payload: physical line address in the low paddr bits and the
+  // destination table index in bits 63:56. 0x7c2 programs the number
+  // of valid entries (0--256) and bit 63 clears counters. The supervisor-
+  // custom 0x5c0 CSR contains no address data: a write requests one replay of
+  // the immutable M-configured prefix. This separation prevents S-mode from
+  // turning the advisory path into an arbitrary physical fetch primitive.
+  assign icache_prefix_entry_v_o = csr_w_v_li & (csr_addr_li == 12'h7c1)
+                                    & is_m_mode;
+  assign icache_prefix_entry_index_o = csr_data_li[63:56];
+  assign icache_prefix_entry_paddr_o = csr_data_li[0+:paddr_width_p];
+  assign icache_prefix_count_v_o = csr_w_v_li & (csr_addr_li == 12'h7c2)
+                                    & is_m_mode;
+  assign icache_prefix_count_o = csr_data_li[8:0];
+  assign icache_prefix_clear_v_o = icache_prefix_count_v_o
+                                    & csr_data_li[dword_width_gp-1];
+  assign icache_prefix_trigger_v_o = csr_w_v_li & (csr_addr_li == 12'h5c0)
+                                      & (is_s_mode | is_m_mode);
 
   always_ff @(posedge clk_i)
     if (reset_i)
