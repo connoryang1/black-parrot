@@ -207,9 +207,12 @@ module bp_fe_icache
                        ,inval_op: icache_pkt_cast_i.op inside {e_icache_inval}
                        };
 
-  // Accept requests when we're in ready state and there's no blocked request in TL
-  // Also accept request when 'forced'
-  assign yumi_o = v_i & tl_we;
+  // A slow-path cache lock must drain an already-resident TL entry without
+  // replacing it with a new frontend request.  The shared TL write enable is
+  // still asserted for that drain, so gate the upstream acceptance separately;
+  // otherwise ordinary fetches can interleave with installer tag/data SRAM
+  // operations and pair a later PC with stale bank-zero instruction data.
+  assign yumi_o = v_i & tl_we & ~cache_req_lock_i;
 
   ///////////////////////////
   // Tag Mem Storage
@@ -792,6 +795,10 @@ module bp_fe_icache
   assign snoop_bank_sel_one_hot = bank_sel_one_hot_tv_r;
 
   // synopsys translate_off
+  always_ff @(negedge clk_i) if (!reset_i && cache_req_lock_i)
+    assert (!yumi_o)
+      else $error("I-cache accepted a new frontend request while SRAM slow path was locked");
+
   if (`BSG_SAFE_CLOG2(block_width_p*sets_p/8) > page_offset_width_gp) begin
     $error("Cache way size must be at most 4kB");
   end
