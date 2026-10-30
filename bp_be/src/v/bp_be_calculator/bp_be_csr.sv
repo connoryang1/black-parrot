@@ -98,6 +98,13 @@ module bp_be_csr
    , output logic                            miss_trace_read_v_o
    , output logic                            miss_trace_read_source_o
    , output logic [7:0]                      miss_trace_read_index_o
+
+   // Machine-mode physical instruction replay enqueue. The address is
+   // advisory; architectural fetch still performs its ordinary translation
+   // and execute-permission checks before consuming an installed line.
+   , input                                   icache_replay_ready_i
+   , output logic                            icache_replay_v_o
+   , output logic [paddr_width_p-1:0]        icache_replay_paddr_o
    );
 
   // Declare parameterizable structs
@@ -572,6 +579,8 @@ module bp_be_csr
           csr_data_lo = '0;
         12'h809:  // Protected return result operand / status
           csr_data_lo = '0;
+        12'h7c0:  // M-mode physical I-cache replay enqueue/status
+          csr_data_lo = {{(dword_width_gp-1){1'b0}}, icache_replay_ready_i};
         {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
           csr_data_lo = global_cycle_i;
         default:
@@ -1051,6 +1060,13 @@ module bp_be_csr
                                & legacy_context_access_li;
   assign miss_trace_read_source_o = csr_data_li[8];
   assign miss_trace_read_index_o = csr_data_li[7:0];
+
+  // 0x7c0 is in the standard machine-custom CSR range. Keep an explicit
+  // privilege gate in addition to the generic CSR legality check so lower
+  // privilege software can never inject physical addresses speculatively.
+  assign icache_replay_v_o = csr_w_v_li & (csr_addr_li == 12'h7c0)
+                             & is_m_mode & icache_replay_ready_i;
+  assign icache_replay_paddr_o = csr_data_li[0+:paddr_width_p];
 
   always_ff @(posedge clk_i)
     if (reset_i)

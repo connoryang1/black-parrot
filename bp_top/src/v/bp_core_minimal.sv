@@ -85,6 +85,10 @@ module bp_core_minimal
    , input                                           software_irq_i
    , input                                           m_external_irq_i
    , input                                           s_external_irq_i
+
+   , input                                           icache_replay_ready_i
+   , output logic                                    icache_replay_v_o
+   , output logic [paddr_width_p-1:0]                icache_replay_paddr_o
    );
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
@@ -310,6 +314,9 @@ module bp_core_minimal
      ,.miss_trace_read_v_o(miss_trace_read_v_lo)
      ,.miss_trace_read_source_o(miss_trace_read_source_lo)
      ,.miss_trace_read_index_o(miss_trace_read_index_lo)
+     ,.icache_replay_ready_i(icache_replay_ready_i)
+     ,.icache_replay_v_o(icache_replay_v_o)
+     ,.icache_replay_paddr_o(icache_replay_paddr_o)
      );
 
 endmodule

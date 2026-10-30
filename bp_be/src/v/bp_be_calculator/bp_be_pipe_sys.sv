@@ -109,6 +109,10 @@ module bp_be_pipe_sys
    , output logic                            miss_trace_read_v_o
    , output logic                            miss_trace_read_source_o
    , output logic [7:0]                      miss_trace_read_index_o
+
+   , input                                   icache_replay_ready_i
+   , output logic                            icache_replay_v_o
+   , output logic [paddr_width_p-1:0]        icache_replay_paddr_o
    );
 
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
@@ -209,6 +213,9 @@ module bp_be_pipe_sys
      ,.miss_trace_read_v_o(miss_trace_read_v_o)
      ,.miss_trace_read_source_o(miss_trace_read_source_o)
      ,.miss_trace_read_index_o(miss_trace_read_index_o)
+     ,.icache_replay_ready_i(icache_replay_ready_i)
+     ,.icache_replay_v_o(icache_replay_v_o)
+     ,.icache_replay_paddr_o(icache_replay_paddr_o)
      );
 
   logic [vaddr_width_p-1:0] retire_npc_r;

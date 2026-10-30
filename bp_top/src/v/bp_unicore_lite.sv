@@ -53,6 +53,8 @@ module bp_unicore_lite
   logic [icache_req_id_width_p-1:0] icache_req_id_li;
   logic icache_req_critical_li, icache_req_last_li;
   logic icache_req_credits_full_li, icache_req_credits_empty_li;
+  logic icache_replay_v_lo, icache_replay_ready_li;
+  logic [paddr_width_p-1:0] icache_replay_paddr_lo;
 
   bp_fe_icache_tag_mem_pkt_s icache_tag_mem_pkt_li;
   logic icache_tag_mem_pkt_v_li, icache_tag_mem_pkt_yumi_lo;
@@ -154,6 +156,9 @@ module bp_unicore_lite
      ,.software_irq_i(software_irq_i)
      ,.m_external_irq_i(m_external_irq_i)
      ,.s_external_irq_i(s_external_irq_i)
+     ,.icache_replay_ready_i(icache_replay_ready_li)
+     ,.icache_replay_v_o(icache_replay_v_lo)
+     ,.icache_replay_paddr_o(icache_replay_paddr_lo)
      );
 
   bp_uce
@@ -166,6 +171,11 @@ module bp_unicore_lite
      ,.tag_width_p(icache_tag_width_p)
      ,.id_width_p(icache_req_id_width_p)
      ,.writeback_p(icache_features_p[e_cfg_writeback])
+     ,.prefetch_p(1'b1)
+     ,.prefetch_els_p(4)
+     ,.prefetch_full_line_p(1'b1)
+     ,.prefetch_demand_priority_p(1'b1)
+     ,.prefetch_critical_forward_p(1'b0)
      )
    icache_uce
     (.clk_i(posedge_clk)
@@ -185,6 +195,10 @@ module bp_unicore_lite
      ,.cache_req_last_o(icache_req_last_li)
      ,.cache_req_credits_full_o(icache_req_credits_full_li)
      ,.cache_req_credits_empty_o(icache_req_credits_empty_li)
+
+     ,.detached_prefetch_addr_i(icache_replay_paddr_lo)
+     ,.detached_prefetch_v_i(icache_replay_v_lo)
+     ,.detached_prefetch_ready_and_o(icache_replay_ready_li)
 
      ,.tag_mem_pkt_o(icache_tag_mem_pkt_li)
      ,.tag_mem_pkt_v_o(icache_tag_mem_pkt_v_li)
@@ -250,6 +264,10 @@ module bp_unicore_lite
      ,.cache_req_last_o(dcache_req_last_li)
      ,.cache_req_credits_full_o(dcache_req_credits_full_li)
      ,.cache_req_credits_empty_o(dcache_req_credits_empty_li)
+
+     ,.detached_prefetch_addr_i('0)
+     ,.detached_prefetch_v_i(1'b0)
+     ,.detached_prefetch_ready_and_o()
 
      ,.tag_mem_pkt_o(dcache_tag_mem_pkt_li)
      ,.tag_mem_pkt_v_o(dcache_tag_mem_pkt_v_li)

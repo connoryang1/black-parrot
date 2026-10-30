@@ -115,6 +115,10 @@ module bp_be_csr_wrapper_mt
    , output logic                            miss_trace_read_v_o
    , output logic                            miss_trace_read_source_o
    , output logic [7:0]                      miss_trace_read_index_o
+
+   , input                                   icache_replay_ready_i
+   , output logic                            icache_replay_v_o
+   , output logic [paddr_width_p-1:0]        icache_replay_paddr_o
    );
 
   // Per-thread output arrays
@@ -146,6 +150,8 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            miss_trace_read_v_co;
   logic [num_threads_p-1:0]                            miss_trace_read_source_co;
   logic [num_threads_p-1:0][7:0]                       miss_trace_read_index_co;
+  logic [num_threads_p-1:0]                            icache_replay_v_co;
+  logic [num_threads_p-1:0][paddr_width_p-1:0]         icache_replay_paddr_co;
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
@@ -244,6 +250,9 @@ module bp_be_csr_wrapper_mt
        ,.miss_trace_read_v_o(miss_trace_read_v_co[i])
        ,.miss_trace_read_source_o(miss_trace_read_source_co[i])
        ,.miss_trace_read_index_o(miss_trace_read_index_co[i])
+       ,.icache_replay_ready_i(icache_replay_ready_i)
+       ,.icache_replay_v_o(icache_replay_v_co[i])
+       ,.icache_replay_paddr_o(icache_replay_paddr_co[i])
        );
   end
 
@@ -277,6 +286,8 @@ module bp_be_csr_wrapper_mt
   assign miss_trace_read_v_o   = miss_trace_read_v_co[retire_thread_id_i];
   assign miss_trace_read_source_o = miss_trace_read_source_co[retire_thread_id_i];
   assign miss_trace_read_index_o = miss_trace_read_index_co[retire_thread_id_i];
+  assign icache_replay_v_o = icache_replay_v_co[retire_thread_id_i];
+  assign icache_replay_paddr_o = icache_replay_paddr_co[retire_thread_id_i];
   assign csr_context_save_data_o = csr_context_save_data_co[csr_context_save_physical_thread_id_i];
 
 endmodule

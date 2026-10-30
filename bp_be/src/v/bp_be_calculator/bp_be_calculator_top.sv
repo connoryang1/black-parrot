@@ -143,6 +143,10 @@ module bp_be_calculator_top
    , output logic                                    miss_trace_read_source_o
    , output logic [7:0]                              miss_trace_read_index_o
 
+   , input                                           icache_replay_ready_i
+   , output logic                                    icache_replay_v_o
+   , output logic [paddr_width_p-1:0]                icache_replay_paddr_o
+
    // Early classified ctxtsw event. Observable only until BE context state
    // consumes it as an architectural mini-commit.
    , output logic                                    fast_ctxtsw_v_o
@@ -380,6 +384,9 @@ module bp_be_calculator_top
      ,.miss_trace_read_v_o(miss_trace_read_v_o)
      ,.miss_trace_read_source_o(miss_trace_read_source_o)
      ,.miss_trace_read_index_o(miss_trace_read_index_o)
+     ,.icache_replay_ready_i(icache_replay_ready_i)
+     ,.icache_replay_v_o(icache_replay_v_o)
+     ,.icache_replay_paddr_o(icache_replay_paddr_o)
      );
 
   // Integer pipe: 1 cycle latency
