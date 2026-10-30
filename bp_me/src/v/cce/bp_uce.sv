@@ -1313,6 +1313,17 @@ module bp_uce
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
           prefetch_install_state_r <= e_pf_drain;
+        end else if (prefetch_install_begin & cache_req_v_r) begin
+          // A demand already resident in the UCE may be waiting for this same
+          // replay line. It cannot withdraw and recompute its cache hit like a
+          // request held at the LCE boundary, while installation cannot take
+          // ownership until the resident request retires. Drop the advisory
+          // line so the architectural request can issue on the next cycle.
+          prefetch_install_slot_r <= prefetch_complete_slot;
+          prefetch_install_count_r <= '0;
+          prefetch_install_clean_r <= 1'b0;
+          prefetch_install_drain_r <= '0;
+          prefetch_install_state_r <= e_pf_drop;
         end else if (prefetch_install_begin & ~prefetch_install_safe_to_wait) begin
           // Do not hold an ordinary response behind an advisory reply. Local
           // cache-pipeline conflicts are transient and retain the packet;
