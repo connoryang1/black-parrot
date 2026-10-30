@@ -7,11 +7,10 @@
       logic [vaddr_width_mp-1:0] vaddr;   \
       bp_fe_icache_op_e          op;      \
       logic                      spec;    \
-      logic                      prefetch; \
     }  bp_fe_icache_pkt_s
 
   `define bp_fe_icache_pkt_width(vaddr_width_mp) \
-    (2+vaddr_width_mp+$bits(bp_fe_icache_op_e))
+    (1+vaddr_width_mp+$bits(bp_fe_icache_op_e))
 
   `define declare_bp_fe_icache_engine_if(addr_width_mp, tag_width_mp, sets_mp, ways_mp, data_width_mp, block_width_mp, fill_width_mp, id_width_mp) \
     `declare_bp_cache_engine_generic_if(addr_width_mp, tag_width_mp, sets_mp, ways_mp, data_width_mp, block_width_mp, fill_width_mp, id_width_mp, fe_icache)

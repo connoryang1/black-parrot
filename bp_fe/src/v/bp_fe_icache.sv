@@ -265,7 +265,6 @@ module bp_fe_icache
   /////////////////////////////////////////////////////////////////////////////
   logic [vaddr_width_p-1:0] vaddr_tl_r;
   logic spec_tl_r;
-  logic prefetch_tl_r;
   bp_fe_icache_decode_s decode_tl_r;
 
   wire tl_we_raw = v_tl_r ? (tv_we | force_i) : ~cache_req_lock_i;
@@ -285,13 +284,13 @@ module bp_fe_icache
 
   // Save stage information
   bsg_dff_reset_en
-   #(.width_p(vaddr_width_p+2+$bits(bp_fe_icache_decode_s)))
+   #(.width_p(vaddr_width_p+1+$bits(bp_fe_icache_decode_s)))
    tl_stage_reg
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
      ,.en_i(tl_we)
-     ,.data_i({vaddr, spec, icache_pkt_cast_i.prefetch, decode_lo})
-     ,.data_o({vaddr_tl_r, spec_tl_r, prefetch_tl_r, decode_tl_r})
+     ,.data_i({vaddr, spec, decode_lo})
+     ,.data_o({vaddr_tl_r, spec_tl_r, decode_tl_r})
      );
 
   wire [paddr_width_p-1:0]         paddr_tl = {ptag_i, vaddr_tl_r[0+:page_offset_width_gp]};
@@ -333,7 +332,6 @@ module bp_fe_icache
   logic [paddr_width_p-1:0]              paddr_tv_r;
   logic [assoc_p-1:0]                    bank_sel_one_hot_tv_r, way_v_tv_r, hit_v_tv_r;
   logic                                  spec_tv_r, uncached_tv_r;
-  logic                                  prefetch_tv_r;
   bp_fe_icache_decode_s                  decode_tv_r;
   logic                                  snoop_tv_r;
   logic [assoc_p-1:0][bank_width_lp-1:0] ld_data_tv_r;
@@ -352,33 +350,33 @@ module bp_fe_icache
 
   logic [assoc_p-1:0] bank_sel_one_hot_tv_n, way_v_tv_n, hit_v_tv_n;
   logic [block_width_p-1:0] ld_data_tv_n;
-  logic spec_tv_n, uncached_tv_n, prefetch_tv_n;
+  logic spec_tv_n, uncached_tv_n;
   bp_fe_icache_decode_s decode_tv_n;
   bsg_mux
-   #(.width_p(3*assoc_p+block_width_p+3+$bits(bp_fe_icache_decode_s)), .els_p(2))
+   #(.width_p(3*assoc_p+block_width_p+2+$bits(bp_fe_icache_decode_s)), .els_p(2))
    hit_mux
     (.data_i({{snoop_bank_sel_one_hot, snoop_way, snoop_hit, snoop_data
-               ,snoop_spec, snoop_uncached, 1'b0, snoop_decode}
+               ,snoop_spec, snoop_uncached, snoop_decode}
                ,{bank_sel_one_hot_tl, way_v_tl, hit_v_tl, data_mem_data_lo
-               ,spec_tl, fetch_uncached_tl, prefetch_tl_r, decode_tl_r}
+               ,spec_tl, fetch_uncached_tl, decode_tl_r}
               })
      ,.sel_i(critical_recv)
      ,.data_o({bank_sel_one_hot_tv_n, way_v_tv_n, hit_v_tv_n, ld_data_tv_n
-               ,spec_tv_n, uncached_tv_n, prefetch_tv_n, decode_tv_n})
+               ,spec_tv_n, uncached_tv_n, decode_tv_n})
      );
 
   wire snoop_tv_n = critical_recv;
   bsg_dff_reset_en
-   #(.width_p(block_width_p+1+3*assoc_p+3+$bits(bp_fe_icache_decode_s)))
+   #(.width_p(block_width_p+1+3*assoc_p+2+$bits(bp_fe_icache_decode_s)))
    tv_stage_reg
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
      ,.en_i(tv_we | critical_recv)
      ,.data_i({ld_data_tv_n, snoop_tv_n, bank_sel_one_hot_tv_n, way_v_tv_n, hit_v_tv_n
-               ,spec_tv_n, uncached_tv_n, prefetch_tv_n, decode_tv_n
+               ,spec_tv_n, uncached_tv_n, decode_tv_n
                })
      ,.data_o({ld_data_tv_r, snoop_tv_r, bank_sel_one_hot_tv_r, way_v_tv_r, hit_v_tv_r
-               ,spec_tv_r, uncached_tv_r, prefetch_tv_r, decode_tv_r
+               ,spec_tv_r, uncached_tv_r, decode_tv_r
                })
      );
 
@@ -500,18 +498,15 @@ module bp_fe_icache
   localparam block_req_size = bp_cache_req_size_e'(`BSG_SAFE_CLOG2(block_width_p/8));
   localparam uncached_req_size = bp_cache_req_size_e'(`BSG_SAFE_CLOG2(data_width_p/8));
 
-  wire prefetch_req = decode_tv_r.fetch_op & prefetch_tv_r & ~snoop_tv_r & ~hit_v_tv & ~uncached_tv_r;
-  wire cached_req   = decode_tv_r.fetch_op & ~prefetch_tv_r & ~snoop_tv_r & ~hit_v_tv & ~uncached_tv_r & ~spec_tv_r;
+  wire cached_req   = decode_tv_r.fetch_op & ~snoop_tv_r & ~hit_v_tv & ~uncached_tv_r & ~spec_tv_r;
   wire uncached_req = decode_tv_r.fetch_op & ~snoop_tv_r & ~hit_v_tv &  uncached_tv_r & ~spec_tv_r;
   wire inval_req    = decode_tv_r.inval_op & ~snoop_tv_r;
 
-  assign cache_req_v_o = is_ready & v_tv_r & |{uncached_req, cached_req, prefetch_req, inval_req} & ~tv_flush_i;
+  assign cache_req_v_o = is_ready & v_tv_r & |{uncached_req, cached_req, inval_req} & ~tv_flush_i;
   assign cache_req_cast_o =
    '{addr     : paddr_tv_r
-     ,size    : bp_cache_req_size_e'((cached_req | prefetch_req) ? block_req_size : uncached_req_size)
-     ,msg_type: cached_req ? e_miss_load
-                : prefetch_req ? e_cache_prefetch
-                : uncached_req ? e_uc_load : e_cache_inval
+     ,size    : bp_cache_req_size_e'(cached_req ? block_req_size : uncached_req_size)
+     ,msg_type: cached_req ? e_miss_load : uncached_req ? e_uc_load : e_cache_inval
      ,subop   : e_req_amoswap
      ,hit     : hit_v_tv
      ,id      : '0

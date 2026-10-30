@@ -1082,8 +1082,12 @@ module bp_be_csr
   // 0x7c0 is in the standard machine-custom CSR range. Keep an explicit
   // privilege gate in addition to the generic CSR legality check so lower
   // privilege software can never inject physical addresses speculatively.
+  // Valid must not depend combinationally on downstream ready. The replay
+  // controller's ready depends on request identity for duplicate admission;
+  // gating valid with ready forms a loop that FPGA synthesis must break.
+  // Software polls the read-only ready bit before issuing this test enqueue.
   assign icache_replay_v_o = csr_w_v_li & (csr_addr_li == 12'h7c0)
-                             & is_m_mode & icache_replay_ready_i;
+                             & is_m_mode;
   assign icache_replay_paddr_o = csr_data_li[0+:paddr_width_p];
 
   // 0x7c1 payload: physical line address in the low paddr bits and the
