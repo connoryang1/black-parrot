@@ -105,6 +105,18 @@ module bp_be_csr
    , input                                   icache_replay_ready_i
    , output logic                            icache_replay_v_o
    , output logic [paddr_width_p-1:0]        icache_replay_paddr_o
+
+   // Core-wide shared instruction-prefix replay control. Machine mode owns
+   // physical table contents and length; supervisor mode may only trigger the
+   // already configured table and inspect its aggregate status.
+   , input [dword_width_gp-1:0]              icache_prefix_status_i
+   , output logic                            icache_prefix_entry_v_o
+   , output logic [7:0]                      icache_prefix_entry_index_o
+   , output logic [paddr_width_p-1:0]        icache_prefix_entry_paddr_o
+   , output logic                            icache_prefix_count_v_o
+   , output logic [8:0]                      icache_prefix_count_o
+   , output logic                            icache_prefix_trigger_v_o
+   , output logic                            icache_prefix_clear_v_o
    );
 
   // Declare parameterizable structs
@@ -581,6 +593,12 @@ module bp_be_csr
           csr_data_lo = '0;
         12'h7c0:  // M-mode physical I-cache replay enqueue/status
           csr_data_lo = {{(dword_width_gp-1){1'b0}}, icache_replay_ready_i};
+        12'h7c1:  // M-mode shared-prefix table entry (write-only)
+          csr_data_lo = '0;
+        12'h7c2:  // M-mode shared-prefix length/control
+          csr_data_lo = is_m_mode ? icache_prefix_status_i : '0;
+        12'h5c0:  // S-mode shared-prefix trigger/status
+          csr_data_lo = icache_prefix_status_i;
         {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
           csr_data_lo = global_cycle_i;
         default:
@@ -1067,6 +1085,24 @@ module bp_be_csr
   assign icache_replay_v_o = csr_w_v_li & (csr_addr_li == 12'h7c0)
                              & is_m_mode & icache_replay_ready_i;
   assign icache_replay_paddr_o = csr_data_li[0+:paddr_width_p];
+
+  // 0x7c1 payload: physical line address in the low paddr bits and the
+  // destination table index in bits 63:56. 0x7c2 programs the number
+  // of valid entries (0--256) and bit 63 clears counters. The supervisor-
+  // custom 0x5c0 CSR contains no address data: a write requests one replay of
+  // the immutable M-configured prefix. This separation prevents S-mode from
+  // turning the advisory path into an arbitrary physical fetch primitive.
+  assign icache_prefix_entry_v_o = csr_w_v_li & (csr_addr_li == 12'h7c1)
+                                    & is_m_mode;
+  assign icache_prefix_entry_index_o = csr_data_li[63:56];
+  assign icache_prefix_entry_paddr_o = csr_data_li[0+:paddr_width_p];
+  assign icache_prefix_count_v_o = csr_w_v_li & (csr_addr_li == 12'h7c2)
+                                    & is_m_mode;
+  assign icache_prefix_count_o = csr_data_li[8:0];
+  assign icache_prefix_clear_v_o = icache_prefix_count_v_o
+                                    & csr_data_li[dword_width_gp-1];
+  assign icache_prefix_trigger_v_o = csr_w_v_li & (csr_addr_li == 12'h5c0)
+                                      & (is_s_mode | is_m_mode);
 
   always_ff @(posedge clk_i)
     if (reset_i)

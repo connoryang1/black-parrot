@@ -96,6 +96,14 @@ module bp_be_top
    , input                                           icache_replay_ready_i
    , output logic                                    icache_replay_v_o
    , output logic [paddr_width_p-1:0]                icache_replay_paddr_o
+   , input [dword_width_gp-1:0]                      icache_prefix_status_i
+   , output logic                                    icache_prefix_entry_v_o
+   , output logic [7:0]                              icache_prefix_entry_index_o
+   , output logic [paddr_width_p-1:0]                icache_prefix_entry_paddr_o
+   , output logic                                    icache_prefix_count_v_o
+   , output logic [8:0]                              icache_prefix_count_o
+   , output logic                                    icache_prefix_trigger_v_o
+   , output logic                                    icache_prefix_clear_v_o
    );
 
   // Declare parameterized structures
@@ -1581,6 +1589,14 @@ module bp_be_top
      ,.icache_replay_ready_i(icache_replay_ready_i)
      ,.icache_replay_v_o(icache_replay_v_o)
      ,.icache_replay_paddr_o(icache_replay_paddr_o)
+     ,.icache_prefix_status_i(icache_prefix_status_i)
+     ,.icache_prefix_entry_v_o(icache_prefix_entry_v_o)
+     ,.icache_prefix_entry_index_o(icache_prefix_entry_index_o)
+     ,.icache_prefix_entry_paddr_o(icache_prefix_entry_paddr_o)
+     ,.icache_prefix_count_v_o(icache_prefix_count_v_o)
+     ,.icache_prefix_count_o(icache_prefix_count_o)
+     ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
+     ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
      ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
      ,.fast_ctxtsw_old_physical_thread_id_o(fast_ctxtsw_old_physical_thread_id_lo)
      ,.fast_ctxtsw_virtual_context_id_o(fast_ctxtsw_virtual_context_id_lo)

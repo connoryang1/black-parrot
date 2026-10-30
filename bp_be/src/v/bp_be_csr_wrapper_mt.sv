@@ -119,6 +119,14 @@ module bp_be_csr_wrapper_mt
    , input                                   icache_replay_ready_i
    , output logic                            icache_replay_v_o
    , output logic [paddr_width_p-1:0]        icache_replay_paddr_o
+   , input [dword_width_gp-1:0]              icache_prefix_status_i
+   , output logic                            icache_prefix_entry_v_o
+   , output logic [7:0]                      icache_prefix_entry_index_o
+   , output logic [paddr_width_p-1:0]        icache_prefix_entry_paddr_o
+   , output logic                            icache_prefix_count_v_o
+   , output logic [8:0]                      icache_prefix_count_o
+   , output logic                            icache_prefix_trigger_v_o
+   , output logic                            icache_prefix_clear_v_o
    );
 
   // Per-thread output arrays
@@ -152,6 +160,13 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][7:0]                       miss_trace_read_index_co;
   logic [num_threads_p-1:0]                            icache_replay_v_co;
   logic [num_threads_p-1:0][paddr_width_p-1:0]         icache_replay_paddr_co;
+  logic [num_threads_p-1:0]                            icache_prefix_entry_v_co;
+  logic [num_threads_p-1:0][7:0]                       icache_prefix_entry_index_co;
+  logic [num_threads_p-1:0][paddr_width_p-1:0]         icache_prefix_entry_paddr_co;
+  logic [num_threads_p-1:0]                            icache_prefix_count_v_co;
+  logic [num_threads_p-1:0][8:0]                       icache_prefix_count_co;
+  logic [num_threads_p-1:0]                            icache_prefix_trigger_v_co;
+  logic [num_threads_p-1:0]                            icache_prefix_clear_v_co;
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
@@ -253,6 +268,14 @@ module bp_be_csr_wrapper_mt
        ,.icache_replay_ready_i(icache_replay_ready_i)
        ,.icache_replay_v_o(icache_replay_v_co[i])
        ,.icache_replay_paddr_o(icache_replay_paddr_co[i])
+       ,.icache_prefix_status_i(icache_prefix_status_i)
+       ,.icache_prefix_entry_v_o(icache_prefix_entry_v_co[i])
+       ,.icache_prefix_entry_index_o(icache_prefix_entry_index_co[i])
+       ,.icache_prefix_entry_paddr_o(icache_prefix_entry_paddr_co[i])
+       ,.icache_prefix_count_v_o(icache_prefix_count_v_co[i])
+       ,.icache_prefix_count_o(icache_prefix_count_co[i])
+       ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_co[i])
+       ,.icache_prefix_clear_v_o(icache_prefix_clear_v_co[i])
        );
   end
 
@@ -288,6 +311,13 @@ module bp_be_csr_wrapper_mt
   assign miss_trace_read_index_o = miss_trace_read_index_co[retire_thread_id_i];
   assign icache_replay_v_o = icache_replay_v_co[retire_thread_id_i];
   assign icache_replay_paddr_o = icache_replay_paddr_co[retire_thread_id_i];
+  assign icache_prefix_entry_v_o = icache_prefix_entry_v_co[retire_thread_id_i];
+  assign icache_prefix_entry_index_o = icache_prefix_entry_index_co[retire_thread_id_i];
+  assign icache_prefix_entry_paddr_o = icache_prefix_entry_paddr_co[retire_thread_id_i];
+  assign icache_prefix_count_v_o = icache_prefix_count_v_co[retire_thread_id_i];
+  assign icache_prefix_count_o = icache_prefix_count_co[retire_thread_id_i];
+  assign icache_prefix_trigger_v_o = icache_prefix_trigger_v_co[retire_thread_id_i];
+  assign icache_prefix_clear_v_o = icache_prefix_clear_v_co[retire_thread_id_i];
   assign csr_context_save_data_o = csr_context_save_data_co[csr_context_save_physical_thread_id_i];
 
 endmodule

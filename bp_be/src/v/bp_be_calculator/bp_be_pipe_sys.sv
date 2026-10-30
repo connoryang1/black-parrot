@@ -113,6 +113,14 @@ module bp_be_pipe_sys
    , input                                   icache_replay_ready_i
    , output logic                            icache_replay_v_o
    , output logic [paddr_width_p-1:0]        icache_replay_paddr_o
+   , input [dword_width_gp-1:0]              icache_prefix_status_i
+   , output logic                            icache_prefix_entry_v_o
+   , output logic [7:0]                      icache_prefix_entry_index_o
+   , output logic [paddr_width_p-1:0]        icache_prefix_entry_paddr_o
+   , output logic                            icache_prefix_count_v_o
+   , output logic [8:0]                      icache_prefix_count_o
+   , output logic                            icache_prefix_trigger_v_o
+   , output logic                            icache_prefix_clear_v_o
    );
 
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
@@ -216,6 +224,14 @@ module bp_be_pipe_sys
      ,.icache_replay_ready_i(icache_replay_ready_i)
      ,.icache_replay_v_o(icache_replay_v_o)
      ,.icache_replay_paddr_o(icache_replay_paddr_o)
+     ,.icache_prefix_status_i(icache_prefix_status_i)
+     ,.icache_prefix_entry_v_o(icache_prefix_entry_v_o)
+     ,.icache_prefix_entry_index_o(icache_prefix_entry_index_o)
+     ,.icache_prefix_entry_paddr_o(icache_prefix_entry_paddr_o)
+     ,.icache_prefix_count_v_o(icache_prefix_count_v_o)
+     ,.icache_prefix_count_o(icache_prefix_count_o)
+     ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
+     ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
      );
 
   logic [vaddr_width_p-1:0] retire_npc_r;
