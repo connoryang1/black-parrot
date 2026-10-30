@@ -712,8 +712,28 @@ module bp_fe_icache
   ///////////////////////////
   // Data Mem Control
   ///////////////////////////
-  wire replay_buffer_write = replay_buffer_p & data_mem_pkt_v_i
+  wire replay_buffer_input = replay_buffer_p & data_mem_pkt_v_i
     & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_prefetch);
+  bp_fe_icache_data_mem_pkt_s replay_buffer_pkt_r;
+  logic replay_buffer_pkt_v_r;
+  wire replay_buffer_write = replay_buffer_pkt_v_r;
+  wire replay_buffer_inval = cache_req_yumi_i & inval_req;
+
+  // Register advisory packets before associative allocation. The UCE can
+  // still deliver one beat every cycle: an older registered beat retires as
+  // the next beat enters this stage. Besides isolating replay traffic from
+  // the ordinary SRAM path, this prevents the selected-slot fanout from
+  // extending the core-to-frontend control path through the UCE.
+  always_ff @(posedge clk_i) begin
+    if (reset_i | replay_buffer_inval)
+      replay_buffer_pkt_v_r <= 1'b0;
+    else begin
+      replay_buffer_pkt_v_r <= replay_buffer_input;
+      if (replay_buffer_input)
+        replay_buffer_pkt_r <= data_mem_pkt_cast_i;
+    end
+  end
+
   logic replay_buffer_write_match, replay_buffer_write_free;
   logic [replay_buffer_slot_width_lp-1:0] replay_buffer_write_slot;
   always_comb begin
@@ -723,7 +743,7 @@ module bp_fe_icache
     for (int i = replay_buffer_els_lp-1; i >= 0; i--) begin
       if (replay_buffer_alloc_r[i]
           & (replay_buffer_addr_r[i]
-             == data_mem_pkt_cast_i.addr[paddr_width_p-1:block_offset_width_lp])) begin
+             == replay_buffer_pkt_r.addr[paddr_width_p-1:block_offset_width_lp])) begin
         replay_buffer_write_match = 1'b1;
         replay_buffer_write_slot = replay_buffer_slot_width_lp'(i);
       end
@@ -734,7 +754,6 @@ module bp_fe_icache
     end
   end
 
-  wire replay_buffer_inval = cache_req_yumi_i & inval_req;
   always_ff @(posedge clk_i) begin
     if (reset_i | replay_buffer_inval) begin
       replay_buffer_alloc_r <= '0;
@@ -744,16 +763,16 @@ module bp_fe_icache
     end else if (replay_buffer_write) begin
       replay_buffer_alloc_r[replay_buffer_write_slot] <= 1'b1;
       replay_buffer_addr_r[replay_buffer_write_slot]
-        <= data_mem_pkt_cast_i.addr[paddr_width_p-1:block_offset_width_lp];
+        <= replay_buffer_pkt_r.addr[paddr_width_p-1:block_offset_width_lp];
       // Beat zero starts a new publication epoch even when the same line is
       // being refreshed. Until all beats arrive the entry cannot hit.
-      if (!replay_buffer_write_match | data_mem_pkt_cast_i.fill_index[0])
+      if (!replay_buffer_write_match | replay_buffer_pkt_r.fill_index[0])
         replay_buffer_beat_v_r[replay_buffer_write_slot]
-          <= data_mem_pkt_cast_i.fill_index;
+          <= replay_buffer_pkt_r.fill_index;
       else
         replay_buffer_beat_v_r[replay_buffer_write_slot]
           <= replay_buffer_beat_v_r[replay_buffer_write_slot]
-             | data_mem_pkt_cast_i.fill_index;
+             | replay_buffer_pkt_r.fill_index;
       if (!replay_buffer_write_match & !replay_buffer_write_free) begin
         if (replay_buffer_replace_r
             == replay_buffer_slot_width_lp'(replay_buffer_els_lp-1))
@@ -773,9 +792,9 @@ module bp_fe_icache
     (* ram_style = "distributed" *)
     logic [data_width_p-1:0] mem [replay_buffer_els_lp];
     always_ff @(posedge clk_i)
-      if (replay_buffer_write & data_mem_pkt_cast_i.fill_index[beat_lp])
+      if (replay_buffer_write & replay_buffer_pkt_r.fill_index[beat_lp])
         mem[replay_buffer_write_slot]
-          <= data_mem_pkt_cast_i.data[fill_word_lp*data_width_p+:data_width_p];
+          <= replay_buffer_pkt_r.data[fill_word_lp*data_width_p+:data_width_p];
     assign replay_buffer_word_data_lo[word] = mem[replay_buffer_hit_slot_tv];
   end
 
@@ -844,7 +863,7 @@ module bp_fe_icache
         : {data_mem_pkt_cast_i.index, {(assoc_p > 1){data_mem_pkt_offset}}};
       assign data_mem_data_li[i] = data_mem_pkt_data_li[i];
     end
-  assign data_mem_pkt_yumi_o = replay_buffer_write
+  assign data_mem_pkt_yumi_o = replay_buffer_input
     ? 1'b1
     : (data_mem_pkt_cast_i.opcode == e_cache_data_mem_uncached)
       ? data_mem_pkt_v_i
