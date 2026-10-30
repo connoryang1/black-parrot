@@ -548,17 +548,26 @@ module bp_uce
   // and ordinary fills may change the set while memory is outstanding. Validate
   // the current victim under a short cache lock when the reply arrives. An
   // unsafe reply remains advisory and can be drained without touching L1.
-  typedef enum logic [2:0] {
-    e_pf_idle, e_pf_drain, e_pf_read_stat, e_pf_check_stat,
+  typedef enum logic [3:0] {
+    e_pf_idle, e_pf_drain, e_pf_read_tag, e_pf_check_tag,
+    e_pf_read_stat, e_pf_check_stat,
     e_pf_invalidate, e_pf_fill, e_pf_publish, e_pf_drop
   } prefetch_install_state_e;
   prefetch_install_state_e prefetch_install_state_r;
   logic [prefetch_slot_width_lp-1:0] prefetch_install_slot_r;
+  logic [`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_install_probe_way_r;
   logic [fill_cnt_width_lp-1:0] prefetch_install_count_r;
   logic [1:0] prefetch_install_drain_r;
   logic prefetch_install_clean_r;
   bp_cache_stat_info_s prefetch_install_stat;
   assign prefetch_install_stat = stat_mem_i;
+  bp_cache_tag_info_s prefetch_install_tag;
+  assign prefetch_install_tag = tag_mem_i;
+  wire prefetch_install_tag_match
+    = (prefetch_install_tag.state != e_COH_I)
+      & (prefetch_install_tag.tag
+         == prefetch_addr_r[prefetch_install_slot_r]
+              [block_offset_width_lp+index_width_lp+:tag_width_p]);
 
   logic [assoc_p-1:0] prefetch_install_reserved_ways;
   logic prefetch_install_way_available;
@@ -634,17 +643,23 @@ module bp_uce
   wire prefetch_install_available = prefetch_install_safe_to_wait
     & (is_ready | is_backoff)
     & ~cache_req_v_r & ~cache_req_metadata_v_r & ~cache_req_metadata_v_i
-    & ~prefetch_metadata_pending_v_r;
+    & ~prefetch_metadata_pending_v_r
+    // Do not acquire the installer in the same cycle that demand priority
+    // allows an architectural request to enter the UCE. Otherwise both become
+    // resident at the following edge and each waits for the other to retire.
+    & ~(prefetch_demand_priority_p & cache_req_v_i);
   wire prefetch_install_acquire = prefetch_install_begin & prefetch_install_available;
   wire prefetch_install_owned = prefetch_install_acquire
-    | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_stat, e_pf_check_stat,
+    | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_tag, e_pf_check_tag,
+                                       e_pf_read_stat, e_pf_check_stat,
                                        e_pf_invalidate, e_pf_fill, e_pf_publish});
   // Once the victim is invalid, normal D-cache hits and critical-sector
   // buffer hits may run alongside fill writes. The cache SRAM handshake
   // pauses a background write on a conflicting fast-path access; misses stay
   // held by the UCE ownership override until publication completes.
   wire prefetch_install_lock = prefetch_install_acquire
-    | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_stat, e_pf_check_stat,
+    | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_tag, e_pf_check_tag,
+                                       e_pf_read_stat, e_pf_check_stat,
                                        e_pf_invalidate});
   wire prefetch_install_retire
     = (prefetch_install_state_r == e_pf_drop)
@@ -1236,6 +1251,12 @@ module bp_uce
         stat_mem_pkt_v_o = 1'b0;
 
         unique case (prefetch_install_state_r)
+          e_pf_read_tag: begin
+            tag_mem_pkt_cast_o.opcode = e_cache_tag_mem_read;
+            tag_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
+            tag_mem_pkt_cast_o.way_id = prefetch_install_probe_way_r;
+            tag_mem_pkt_v_o = 1'b1;
+          end
           e_pf_read_stat: begin
             stat_mem_pkt_cast_o.opcode = e_cache_stat_mem_read;
             stat_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
@@ -1296,6 +1317,7 @@ module bp_uce
     if (reset_i) begin
       prefetch_install_state_r <= e_pf_idle;
       prefetch_install_slot_r <= '0;
+      prefetch_install_probe_way_r <= '0;
       prefetch_install_count_r <= '0;
       prefetch_install_drain_r <= '0;
       prefetch_install_clean_r <= 1'b0;
@@ -1310,6 +1332,7 @@ module bp_uce
         e_pf_idle: if (prefetch_install_begin & prefetch_install_available) begin
           prefetch_install_slot_r <= prefetch_complete_slot;
           prefetch_install_count_r <= '0;
+          prefetch_install_probe_way_r <= '0;
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
           prefetch_install_state_r <= e_pf_drain;
@@ -1321,6 +1344,7 @@ module bp_uce
           // line so the architectural request can issue on the next cycle.
           prefetch_install_slot_r <= prefetch_complete_slot;
           prefetch_install_count_r <= '0;
+          prefetch_install_probe_way_r <= '0;
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
           prefetch_install_state_r <= e_pf_drop;
@@ -1330,6 +1354,7 @@ module bp_uce
           // an ordinary outstanding credit or malformed size must drain it.
           prefetch_install_slot_r <= prefetch_complete_slot;
           prefetch_install_count_r <= '0;
+          prefetch_install_probe_way_r <= '0;
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
           prefetch_install_state_r <= e_pf_drop;
@@ -1341,7 +1366,25 @@ module bp_uce
           // data/tag/stat operations or critical-response snoops run here.
           prefetch_install_drain_r <= prefetch_install_drain_r + 1'b1;
           if (&prefetch_install_drain_r)
+            prefetch_install_state_r <= e_pf_read_tag;
+        end
+        e_pf_read_tag: if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i)
+          prefetch_install_state_r <= e_pf_check_tag;
+        e_pf_check_tag: begin
+          // Direct physical replay bypasses the ordinary I-cache tag lookup.
+          // Installing an already-resident line into a second way would make
+          // the hit vector non-one-hot and can select corrupt instructions.
+          // Scan every way under the existing short lock and drop duplicate
+          // advisory work rather than disturbing the resident copy.
+          if (prefetch_install_tag_match)
+            prefetch_install_state_r <= e_pf_drop;
+          else if (prefetch_install_probe_way_r
+                   == `BSG_SAFE_CLOG2(assoc_p)'(assoc_p-1))
             prefetch_install_state_r <= e_pf_read_stat;
+          else begin
+            prefetch_install_probe_way_r <= prefetch_install_probe_way_r + 1'b1;
+            prefetch_install_state_r <= e_pf_read_tag;
+          end
         end
         e_pf_read_stat: if (stat_mem_pkt_v_o & stat_mem_pkt_yumi_i)
           prefetch_install_state_r <= e_pf_check_stat;
