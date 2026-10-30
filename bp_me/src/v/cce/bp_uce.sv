@@ -638,10 +638,13 @@ module bp_uce
       end
   end
 
-  // Full-line replies first land in per-request fill buffers. The installer
-  // drains completed buffers independently; narrow mode retains only the two
-  // useful words in the D-cache side buffer and leaves this installer idle.
-  wire prefetch_install_begin = prefetch_full_line_p & prefetch_complete_v
+  // Live-cache full-line replies first land in per-request fill buffers and
+  // the installer drains completed buffers independently. Detached I-cache
+  // replies stream to the cache-local advisory store instead; narrow mode
+  // retains only the two useful words in the D-cache side buffer. Both modes
+  // therefore leave this installer idle.
+  wire prefetch_install_begin = prefetch_full_line_p & ~prefetch_side_buffer_p
+    & prefetch_complete_v
     & (prefetch_install_state_r == e_pf_idle);
   wire prefetch_install_safe_to_wait
     = (credit_count_lo == prefetch_outstanding_count);
@@ -1224,6 +1227,20 @@ module bp_uce
         // directly. L1 installation proceeds later from the completed buffer.
         if (inval_v_li | prefetch_cancel_r[prefetch_response_slot]) begin
           prefetch_response_yumi = 1'b1;
+        end else if (prefetch_side_buffer_p) begin
+          // The I-cache advisory store already assembles a tagged line and
+          // keeps it invisible until every beat is present. Stream replies
+          // there directly instead of retaining a second full-line copy in
+          // the UCE installer. Besides removing redundant storage, this lets
+          // architectural misses proceed independently of replay retirement.
+          data_mem_pkt_cast_o = '0;
+          data_mem_pkt_cast_o.opcode = e_cache_data_mem_prefetch;
+          data_mem_pkt_cast_o.addr = prefetch_addr_r[prefetch_response_slot];
+          data_mem_pkt_cast_o.data = fsm_rev_data_li;
+          data_mem_pkt_cast_o.fill_index
+            = 1'b1 << prefetch_fill_count_r[prefetch_response_slot];
+          data_mem_pkt_v_o = 1'b1;
+          prefetch_response_yumi = data_mem_pkt_yumi_i;
         end else if (prefetch_critical_forward_p & prefetch_response_critical) begin
           data_mem_pkt_cast_o = '0;
           data_mem_pkt_cast_o.opcode = e_cache_data_mem_prefetch;
@@ -1520,9 +1537,13 @@ module bp_uce
       if (prefetch_issue)
         prefetch_sent_r[prefetch_issue_slot] <= 1'b1;
       if (prefetch_full_line_p && prefetch_response_yumi) begin
-        if (fsm_rev_last_li & prefetch_cancel_r[prefetch_response_slot]) begin
+        if (fsm_rev_last_li
+            & (prefetch_cancel_r[prefetch_response_slot]
+               | prefetch_side_buffer_p)) begin
           // Cancellation cannot retract a request already accepted by memory.
-          // Consume its final beat, then release the slot without publishing.
+          // Consume its final beat, then release the slot. In instruction
+          // side-buffer mode every accepted beat has already gone directly
+          // to the cache-local advisory store, so no installer work remains.
           prefetch_valid_r[prefetch_response_slot] <= 1'b0;
           prefetch_sent_r[prefetch_response_slot] <= 1'b0;
           prefetch_way_v_r[prefetch_response_slot] <= 1'b0;
