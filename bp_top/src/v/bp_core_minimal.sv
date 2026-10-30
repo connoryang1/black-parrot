@@ -64,6 +64,7 @@ module bp_core_minimal
    , input                                           dcache_req_last_i
    , input                                           dcache_req_credits_full_i
    , input                                           dcache_req_credits_empty_i
+   , input                                           preview_idle_i
    // {published, issued, admitted} physical preview events from the UCE.
    , input [2:0]                                     preview_events_i
    , input [paddr_width_p-1:0]                       preview_publish_addr_i
@@ -114,6 +115,9 @@ module bp_core_minimal
   logic miss_trace_ctrl_v_lo, miss_trace_arm_lo, miss_trace_preview_lo;
   logic physical_preview_v_lo;
   logic [paddr_width_p-1:0] physical_preview_paddr_lo;
+  // A zero-valued privileged physical-preview write cancels pending hints
+  // and invalidates advisory data before software releases a pinned page.
+  wire preview_flush = physical_preview_v_o & (physical_preview_paddr_o == '0);
 
   // Capture the retirement pulse on the core posedge so the negedge UCE
   // receives one stable advisory request in the following half-cycle.
@@ -406,6 +410,7 @@ module bp_core_minimal
      ,.cache_req_last_i(dcache_req_last_i)
      ,.cache_req_credits_full_i(dcache_req_credits_full_i)
      ,.cache_req_credits_empty_i(dcache_req_credits_empty_i)
+     ,.preview_flush_i(preview_flush)
 
      ,.data_mem_pkt_i(dcache_data_mem_pkt_i)
      ,.data_mem_pkt_v_i(dcache_data_mem_pkt_v_i)
@@ -430,6 +435,7 @@ module bp_core_minimal
      ,.m_external_irq_i(m_external_irq_i)
      ,.s_external_irq_i(s_external_irq_i)
      ,.miss_trace_status_i(miss_trace_status_li)
+     ,.preview_idle_i(preview_idle_i)
      ,.miss_trace_data_i(miss_trace_data_li)
      ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_lo)
      ,.miss_trace_arm_o(miss_trace_arm_lo)

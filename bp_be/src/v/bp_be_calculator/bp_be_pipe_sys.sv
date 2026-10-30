@@ -102,6 +102,7 @@ module bp_be_pipe_sys
    , output logic [dword_width_gp-1:0]       ctx_l1_cmd_data_o
 
    , input [dword_width_gp-1:0]              miss_trace_status_i
+   , input                                   preview_idle_i
    , input [dword_width_gp-1:0]              miss_trace_data_i
    , output logic                            miss_trace_ctrl_v_o
    , output logic                            miss_trace_arm_o
@@ -205,6 +206,7 @@ module bp_be_pipe_sys
      ,.ctx_l1_cmd_paddr_o(ctx_l1_cmd_paddr_o)
      ,.ctx_l1_cmd_data_o(ctx_l1_cmd_data_o)
      ,.miss_trace_status_i(miss_trace_status_i)
+     ,.preview_idle_i(preview_idle_i)
      ,.miss_trace_data_i(miss_trace_data_i)
      ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_o)
      ,.miss_trace_arm_o(miss_trace_arm_o)

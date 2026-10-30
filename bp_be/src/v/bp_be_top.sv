@@ -60,6 +60,7 @@ module bp_be_top
    , input                                           cache_req_last_i
    , input                                           cache_req_credits_full_i
    , input                                           cache_req_credits_empty_i
+   , input                                           preview_flush_i
 
    // tag_mem
    , input                                           tag_mem_pkt_v_i
@@ -88,6 +89,7 @@ module bp_be_top
    , input                                           s_external_irq_i
 
    , input [dword_width_gp-1:0]                     miss_trace_status_i
+   , input                                          preview_idle_i
    , input [dword_width_gp-1:0]                     miss_trace_data_i
    , output logic                                    miss_trace_ctrl_v_o
    , output logic                                    miss_trace_arm_o
@@ -1517,6 +1519,7 @@ module bp_be_top
      ,.cache_req_last_i(cache_req_last_i)
      ,.cache_req_credits_full_i(cache_req_credits_full_i)
      ,.cache_req_credits_empty_i(cache_req_credits_empty_i)
+     ,.preview_flush_i(preview_flush_i)
 
      ,.tag_mem_pkt_v_i(tag_mem_pkt_v_i)
      ,.tag_mem_pkt_i(tag_mem_pkt_i)
@@ -1575,6 +1578,7 @@ module bp_be_top
      ,.context_cache_dcache_resp_id_o(context_cache_dcache_resp_id_lo)
      ,.context_cache_dcache_resp_data_o(context_cache_dcache_resp_data_lo)
      ,.miss_trace_status_i(miss_trace_status_i)
+     ,.preview_idle_i(preview_idle_i)
      ,.miss_trace_data_i(miss_trace_data_i)
      ,.miss_trace_ctrl_v_o(miss_trace_ctrl_v_o)
      ,.miss_trace_arm_o(miss_trace_arm_o)

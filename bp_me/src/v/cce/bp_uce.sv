@@ -58,6 +58,7 @@ module bp_uce
     , output logic                                   preview_ready_o
     , output logic                                   preview_issue_o
     , output logic                                   preview_publish_o
+    , output logic                                   preview_idle_o
     , output logic [id_width_p-1:0]                  cache_req_id_o
     , output logic                                   cache_req_critical_o
     , output logic                                   cache_req_last_o
@@ -168,6 +169,11 @@ module bp_uce
   wire [paddr_width_p-1:0] preview_head_addr = preview_queue_r[preview_head_r];
   assign preview_ready_o = prefetch_p & ~reset_i & ~preview_cancel_i
     & (preview_count_r < preview_queue_els_lp);
+  // A page owner may release a pinned page only after cancellation has
+  // removed queued hints and every issued reply has drained. Ordinary cache
+  // fences intentionally ignore detached hints, so expose this separately.
+  assign preview_idle_o = (preview_count_r == '0) & ~(|prefetch_valid_r)
+    & ~prefetch_metadata_pending_v_r;
   wire preview_enqueue = preview_v_i & preview_ready_o;
   // Both translated and physical previews report detached progress. A
   // physical publication drains its L2 response; a translated publication
