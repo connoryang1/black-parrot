@@ -653,14 +653,15 @@ module bp_uce
     | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_tag, e_pf_check_tag,
                                        e_pf_read_stat, e_pf_check_stat,
                                        e_pf_invalidate, e_pf_fill, e_pf_publish});
-  // Once the victim is invalid, normal D-cache hits and critical-sector
-  // buffer hits may run alongside fill writes. The cache SRAM handshake
-  // pauses a background write on a conflicting fast-path access; misses stay
-  // held by the UCE ownership override until publication completes.
+  // Hold cache-array ownership through data installation and tag publication.
+  // Per-port handshakes prevent an individual write collision, but they do
+  // not make a multi-beat line replacement atomic with respect to a live
+  // I-cache frontend: a fetch can otherwise observe a partially replaced way
+  // or the publication boundary with stale SRAM output state.
   wire prefetch_install_lock = prefetch_install_acquire
     | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_tag, e_pf_check_tag,
                                        e_pf_read_stat, e_pf_check_stat,
-                                       e_pf_invalidate});
+                                       e_pf_invalidate, e_pf_fill, e_pf_publish});
   wire prefetch_install_retire
     = (prefetch_install_state_r == e_pf_drop)
       | ((prefetch_install_state_r == e_pf_publish)
