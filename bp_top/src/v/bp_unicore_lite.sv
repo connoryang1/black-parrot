@@ -99,6 +99,8 @@ module bp_unicore_lite
   bp_core_minimal
    #(.bp_params_p(bp_params_p)
      ,.cache_miss_trace_p(cache_miss_trace_p)
+     ,.icache_replay_buffer_p(1'b1)
+     ,.icache_replay_buffer_els_p(16)
      )
    core_minimal
     (.clk_i(posedge_clk)
@@ -213,6 +215,7 @@ module bp_unicore_lite
      ,.prefetch_full_line_p(1'b1)
      ,.prefetch_demand_priority_p(1'b1)
      ,.prefetch_critical_forward_p(1'b0)
+     ,.prefetch_side_buffer_p(1'b1)
      )
    icache_uce
     (.clk_i(posedge_clk)

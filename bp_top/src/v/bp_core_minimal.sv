@@ -13,6 +13,8 @@ module bp_core_minimal
  import bp_fe_pkg::*;
  import bp_be_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter bit icache_replay_buffer_p = 1'b0
+   , parameter icache_replay_buffer_els_p = 16
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_fe_icache_engine_if_widths(paddr_width_p, icache_tag_width_p, icache_sets_p, icache_assoc_p, icache_data_width_p, icache_block_width_p, icache_fill_width_p, icache_req_id_width_p)
    `declare_bp_be_dcache_engine_if_widths(paddr_width_p, dcache_tag_width_p, dcache_sets_p, dcache_assoc_p, dcache_data_width_p, dcache_block_width_p, dcache_fill_width_p, dcache_req_id_width_p)
@@ -205,7 +207,10 @@ module bp_core_minimal
   end
 
   bp_fe_top
-   #(.bp_params_p(bp_params_p))
+   #(.bp_params_p(bp_params_p)
+     ,.icache_replay_buffer_p(icache_replay_buffer_p)
+     ,.icache_replay_buffer_els_p(icache_replay_buffer_els_p)
+     )
    fe
     (.clk_i(clk_i)
      ,.reset_i(reset_i)

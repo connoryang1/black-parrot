@@ -48,6 +48,8 @@ module bp_fe_icache
    , parameter data_width_p  = icache_data_width_p
    , parameter tag_width_p   = icache_tag_width_p
    , parameter id_width_p    = icache_req_id_width_p
+   , parameter bit replay_buffer_p = 1'b0
+   , parameter replay_buffer_els_p = 16
 
    `declare_bp_common_if_widths(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
    `declare_bp_fe_icache_engine_if_widths(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p)
@@ -142,6 +144,10 @@ module bp_fe_icache
     : byte_offset_width_lp;
   localparam block_size_in_fill_lp  = block_width_p / fill_width_p;
   localparam fill_size_in_bank_lp   = fill_width_p / bank_width_lp;
+  localparam replay_buffer_els_lp = replay_buffer_p ? replay_buffer_els_p : 1;
+  localparam replay_buffer_slot_width_lp = `BSG_SAFE_CLOG2(replay_buffer_els_lp);
+  localparam replay_words_per_line_lp = block_width_p / data_width_p;
+  localparam replay_words_per_fill_lp = fill_width_p / data_width_p;
 
   // State machine declaration
   enum logic [1:0] {e_ready, e_miss, e_recover} state_n, state_r;
@@ -408,13 +414,13 @@ module bp_fe_icache
   wire [lg_assoc_lp-1:0] lru_way_li = invalid_exist_tv ? invalid_way_tv : lru_encode;
 
   logic [lg_assoc_lp-1:0] hit_index_tv;
-  logic hit_v_tv;
+  logic cache_hit_v_tv;
   bsg_encode_one_hot
    #(.width_p(assoc_p), .lo_to_hi_p(1))
    hit_index_encoder
     (.i(hit_v_tv_r)
      ,.addr_o(hit_index_tv)
-     ,.v_o(hit_v_tv)
+     ,.v_o(cache_hit_v_tv)
      );
 
   logic [assoc_p-1:0] hit_way_one_hot_tv;
@@ -429,7 +435,7 @@ module bp_fe_icache
   bsg_adder_one_hot
    #(.width_p(assoc_p))
    select_adder
-    (.a_i({assoc_p{hit_v_tv}} & hit_way_one_hot_tv)
+    (.a_i({assoc_p{cache_hit_v_tv}} & hit_way_one_hot_tv)
      ,.b_i(bank_sel_one_hot_tv_r)
      ,.o(ld_data_way_select_tv)
      );
@@ -443,8 +449,47 @@ module bp_fe_icache
      ,.data_o(ld_data_way_picked)
      );
 
+  // Completed detached replies live in this buffer until replacement or
+  // fence.i. They are looked up only after the ordinary MMU has supplied a
+  // valid physical executable address, and never alter the live cache SRAMs.
+  logic [replay_buffer_els_lp-1:0] replay_buffer_alloc_r;
+  logic [replay_buffer_els_lp-1:0][paddr_width_p-block_offset_width_lp-1:0]
+    replay_buffer_addr_r;
+  logic [replay_buffer_els_lp-1:0][block_size_in_fill_lp-1:0]
+    replay_buffer_beat_v_r;
+  logic [replay_buffer_slot_width_lp-1:0] replay_buffer_replace_r;
+  logic [replay_words_per_line_lp-1:0][data_width_p-1:0]
+    replay_buffer_word_data_lo;
+
+  logic replay_buffer_hit_tv;
+  logic [replay_buffer_slot_width_lp-1:0] replay_buffer_hit_slot_tv;
+  logic [data_width_p-1:0] replay_buffer_data_tv;
+  always_comb begin
+    replay_buffer_hit_tv = 1'b0;
+    replay_buffer_hit_slot_tv = '0;
+    for (int i = replay_buffer_els_lp-1; i >= 0; i--)
+      if (replay_buffer_p & replay_buffer_alloc_r[i]
+          & (&replay_buffer_beat_v_r[i])
+          & (replay_buffer_addr_r[i]
+             == paddr_tv_r[paddr_width_p-1:block_offset_width_lp])) begin
+        replay_buffer_hit_tv = 1'b1;
+        replay_buffer_hit_slot_tv = replay_buffer_slot_width_lp'(i);
+      end
+    replay_buffer_hit_tv &= v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r
+      & ~uncached_tv_r & ~cache_hit_v_tv;
+  end
+  bsg_mux
+   #(.width_p(data_width_p), .els_p(replay_words_per_line_lp))
+   replay_buffer_word_mux
+    (.data_i(replay_buffer_word_data_lo)
+     ,.sel_i(paddr_tv_r[`BSG_SAFE_CLOG2(data_width_p/8)
+                         +: `BSG_SAFE_CLOG2(replay_words_per_line_lp)])
+     ,.data_o(replay_buffer_data_tv)
+     );
+  wire hit_v_tv = cache_hit_v_tv | replay_buffer_hit_tv;
+
   // TODO: Can retime manually for critical path?
-  logic [data_width_p-1:0] final_data_tv;
+  logic [data_width_p-1:0] cache_data_tv;
   wire [`BSG_SAFE_CLOG2(num_data_per_bank_lp)-1:0] ld_data_word_sel_tv =
     paddr_tv_r[2+:`BSG_SAFE_CLOG2(num_data_per_bank_lp)];
   bsg_mux
@@ -452,10 +497,10 @@ module bp_fe_icache
    data_select_mux
     (.data_i(ld_data_way_picked)
      ,.sel_i(ld_data_word_sel_tv)
-     ,.data_o(final_data_tv)
+     ,.data_o(cache_data_tv)
      );
 
-  assign data_o = final_data_tv;
+  assign data_o = replay_buffer_hit_tv ? replay_buffer_data_tv : cache_data_tv;
   assign hit_v_o   = is_ready & v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r &  hit_v_tv;
   assign miss_v_o  = is_ready & v_tv_r & decode_tv_r.fetch_op &  spec_tv_r & ~hit_v_tv;
   assign fence_v_o = is_ready & v_tv_r & decode_tv_r.inval_op & snoop_tv_r;
@@ -511,7 +556,7 @@ module bp_fe_icache
      ,size    : bp_cache_req_size_e'(cached_req ? block_req_size : uncached_req_size)
      ,msg_type: cached_req ? e_miss_load : uncached_req ? e_uc_load : e_cache_inval
      ,subop   : e_req_amoswap
-     ,hit     : hit_v_tv
+     ,hit     : cache_hit_v_tv
      ,id      : '0
      ,data    : '0
      };
@@ -534,7 +579,7 @@ module bp_fe_icache
    #(.width_p(1+lg_assoc_lp))
    hit_reg
     (.clk_i(clk_i)
-     ,.data_i({hit_v_tv, hit_index_tv})
+     ,.data_i({cache_hit_v_tv, hit_index_tv})
      ,.data_o({metadata_hit_r, metadata_hit_index_r})
      );
 
@@ -667,6 +712,73 @@ module bp_fe_icache
   ///////////////////////////
   // Data Mem Control
   ///////////////////////////
+  wire replay_buffer_write = replay_buffer_p & data_mem_pkt_v_i
+    & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_prefetch);
+  logic replay_buffer_write_match, replay_buffer_write_free;
+  logic [replay_buffer_slot_width_lp-1:0] replay_buffer_write_slot;
+  always_comb begin
+    replay_buffer_write_match = 1'b0;
+    replay_buffer_write_free = 1'b0;
+    replay_buffer_write_slot = replay_buffer_replace_r;
+    for (int i = replay_buffer_els_lp-1; i >= 0; i--) begin
+      if (replay_buffer_alloc_r[i]
+          & (replay_buffer_addr_r[i]
+             == data_mem_pkt_cast_i.addr[paddr_width_p-1:block_offset_width_lp])) begin
+        replay_buffer_write_match = 1'b1;
+        replay_buffer_write_slot = replay_buffer_slot_width_lp'(i);
+      end
+      if (!replay_buffer_alloc_r[i] & !replay_buffer_write_match) begin
+        replay_buffer_write_free = 1'b1;
+        replay_buffer_write_slot = replay_buffer_slot_width_lp'(i);
+      end
+    end
+  end
+
+  wire replay_buffer_inval = cache_req_yumi_i & inval_req;
+  always_ff @(posedge clk_i) begin
+    if (reset_i | replay_buffer_inval) begin
+      replay_buffer_alloc_r <= '0;
+      replay_buffer_addr_r <= '0;
+      replay_buffer_beat_v_r <= '0;
+      replay_buffer_replace_r <= '0;
+    end else if (replay_buffer_write) begin
+      replay_buffer_alloc_r[replay_buffer_write_slot] <= 1'b1;
+      replay_buffer_addr_r[replay_buffer_write_slot]
+        <= data_mem_pkt_cast_i.addr[paddr_width_p-1:block_offset_width_lp];
+      // Beat zero starts a new publication epoch even when the same line is
+      // being refreshed. Until all beats arrive the entry cannot hit.
+      if (!replay_buffer_write_match | data_mem_pkt_cast_i.fill_index[0])
+        replay_buffer_beat_v_r[replay_buffer_write_slot]
+          <= data_mem_pkt_cast_i.fill_index;
+      else
+        replay_buffer_beat_v_r[replay_buffer_write_slot]
+          <= replay_buffer_beat_v_r[replay_buffer_write_slot]
+             | data_mem_pkt_cast_i.fill_index;
+      if (!replay_buffer_write_match & !replay_buffer_write_free) begin
+        if (replay_buffer_replace_r
+            == replay_buffer_slot_width_lp'(replay_buffer_els_lp-1))
+          replay_buffer_replace_r <= '0;
+        else
+          replay_buffer_replace_r <= replay_buffer_replace_r + 1'b1;
+      end
+    end
+  end
+
+  // Word-banked storage avoids reading and multiplexing all 512 bits of every
+  // entry on each fetch. Each bank has one synchronous response write and one
+  // asynchronous selected read, which maps compactly to distributed RAM.
+  for (genvar word = 0; word < replay_words_per_line_lp; word++) begin
+    localparam beat_lp = word / replay_words_per_fill_lp;
+    localparam fill_word_lp = word % replay_words_per_fill_lp;
+    (* ram_style = "distributed" *)
+    logic [data_width_p-1:0] mem [replay_buffer_els_lp];
+    always_ff @(posedge clk_i)
+      if (replay_buffer_write & data_mem_pkt_cast_i.fill_index[beat_lp])
+        mem[replay_buffer_write_slot]
+          <= data_mem_pkt_cast_i.data[fill_word_lp*data_width_p+:data_width_p];
+    assign replay_buffer_word_data_lo[word] = mem[replay_buffer_hit_slot_tv];
+  end
+
   logic [assoc_p-1:0] vaddr_bank_dec;
   bsg_decode
    #(.num_out_p(assoc_p))
@@ -732,9 +844,11 @@ module bp_fe_icache
         : {data_mem_pkt_cast_i.index, {(assoc_p > 1){data_mem_pkt_offset}}};
       assign data_mem_data_li[i] = data_mem_pkt_data_li[i];
     end
-  assign data_mem_pkt_yumi_o = (data_mem_pkt_cast_i.opcode == e_cache_data_mem_uncached)
-    ? data_mem_pkt_v_i
-    : data_mem_pkt_v_i & ~|data_mem_fast_read;
+  assign data_mem_pkt_yumi_o = replay_buffer_write
+    ? 1'b1
+    : (data_mem_pkt_cast_i.opcode == e_cache_data_mem_uncached)
+      ? data_mem_pkt_v_i
+      : data_mem_pkt_v_i & ~|data_mem_fast_read;
 
   logic [lg_assoc_lp-1:0] data_mem_pkt_way_r;
   bsg_dff
@@ -758,7 +872,8 @@ module bp_fe_icache
   // Stat Mem Control
   ///////////////////////////
   wire stat_mem_fast_read = ~uncached_tv_r & cache_req_yumi_i & ~abort_inflight;
-  wire stat_mem_fast_write = ~uncached_tv_r & yumi_i & ~abort_inflight;
+  wire stat_mem_fast_write = ~uncached_tv_r & yumi_i & ~abort_inflight
+    & ~replay_buffer_hit_tv;
   wire stat_mem_slow_write = stat_mem_pkt_yumi_o & ~abort_miss & ~abort_miss_r & (stat_mem_pkt_cast_i.opcode != e_cache_stat_mem_read);
   assign stat_mem_pkt_yumi_o = stat_mem_pkt_v_i & ~stat_mem_fast_write & ~stat_mem_fast_read;
   assign stat_mem_v_li = stat_mem_fast_read | stat_mem_fast_write | stat_mem_pkt_yumi_o;

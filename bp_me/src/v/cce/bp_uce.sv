@@ -39,6 +39,11 @@ module bp_uce
     // buffer. I-cache replay has no such buffer and captures every beat only
     // in the detached line store until installation.
     , parameter bit prefetch_critical_forward_p = 1'b1
+    // Completed full-line replies may retire into a cache-local advisory
+    // buffer instead of replacing a line in the live cache arrays. This is
+    // required for instruction replay: asynchronous slow-path writes to a
+    // running banked I-cache cannot preserve the frontend's SRAM epoch.
+    , parameter bit prefetch_side_buffer_p = 1'b0
     // Permit the context-cache integration to drain ordinary traffic without
     // waiting for detached hint responses.  Standalone CCE users retain the
     // conservative fence semantics by default.
@@ -658,12 +663,17 @@ module bp_uce
   // not make a multi-beat line replacement atomic with respect to a live
   // I-cache frontend: a fetch can otherwise observe a partially replaced way
   // or the publication boundary with stale SRAM output state.
-  wire prefetch_install_lock = prefetch_install_acquire
-    | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_tag, e_pf_check_tag,
-                                       e_pf_read_stat, e_pf_check_stat,
-                                       e_pf_invalidate, e_pf_fill, e_pf_publish});
+  wire prefetch_install_lock = ~prefetch_side_buffer_p
+    & (prefetch_install_acquire
+       | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_tag, e_pf_check_tag,
+                                          e_pf_read_stat, e_pf_check_stat,
+                                          e_pf_invalidate, e_pf_fill, e_pf_publish}));
   wire prefetch_install_retire
     = (prefetch_install_state_r == e_pf_drop)
+      | (prefetch_side_buffer_p
+         & (prefetch_install_state_r == e_pf_fill)
+         & data_mem_pkt_v_o & data_mem_pkt_yumi_i
+         & (prefetch_install_count_r == fill_cnt_width_lp'(block_size_in_fill_lp-1)))
       | ((prefetch_install_state_r == e_pf_publish)
          & tag_mem_pkt_v_o & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i);
   wire prefetch_install_packet = prefetch_response
@@ -1278,7 +1288,9 @@ module bp_uce
             tag_mem_pkt_v_o = 1'b1;
           end
           e_pf_fill: begin
-            data_mem_pkt_cast_o.opcode = e_cache_data_mem_write;
+            data_mem_pkt_cast_o.opcode = prefetch_side_buffer_p
+              ? e_cache_data_mem_prefetch : e_cache_data_mem_write;
+            data_mem_pkt_cast_o.addr = prefetch_addr_r[prefetch_install_slot_r];
             data_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
             data_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
             data_mem_pkt_cast_o.data = prefetch_install_line_r[prefetch_install_count_r];
@@ -1329,7 +1341,16 @@ module bp_uce
       prefetch_install_clean_r <= 1'b0;
     end else begin
       if (prefetch_demand_priority_p & cache_req_v_i
-          & (prefetch_install_state_r != e_pf_idle)) begin
+          & (prefetch_install_state_r != e_pf_idle)
+          // Once the first advisory-buffer beat is visible, finish the
+          // four-beat line atomically. Aborting here would strand a partial
+          // entry; at most three independent-buffer writes remain.
+          & ~(prefetch_side_buffer_p
+              & (prefetch_install_state_r == e_pf_fill)
+              & (prefetch_install_count_r != '0)
+              // An accepted fence clears the cache-local partial entry, so
+              // cancellation must win instead of finishing stale beats.
+              & ~inval_v_li)) begin
         // The line remains invalid if installation had already started.
         // Retire the advisory buffer and let the ordinary request proceed in
         // the same cycle through the main UCE FSM.
@@ -1341,7 +1362,7 @@ module bp_uce
           prefetch_install_probe_way_r <= '0;
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
-          prefetch_install_state_r <= e_pf_drain;
+          prefetch_install_state_r <= prefetch_side_buffer_p ? e_pf_fill : e_pf_drain;
         end else if (prefetch_install_begin & cache_req_v_r) begin
           // A demand already resident in the UCE may be waiting for this same
           // replay line. It cannot withdraw and recompute its cache hit like a
@@ -1406,9 +1427,12 @@ module bp_uce
         e_pf_invalidate: if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i)
           prefetch_install_state_r <= e_pf_fill;
         e_pf_fill: if (data_mem_pkt_v_o & data_mem_pkt_yumi_i
-                       & (data_mem_pkt_cast_o.opcode == e_cache_data_mem_write)) begin
+                       & (data_mem_pkt_cast_o.opcode
+                          == (prefetch_side_buffer_p
+                              ? e_cache_data_mem_prefetch
+                              : e_cache_data_mem_write))) begin
           if (prefetch_install_count_r == fill_cnt_width_lp'(block_size_in_fill_lp-1))
-            prefetch_install_state_r <= e_pf_publish;
+            prefetch_install_state_r <= prefetch_side_buffer_p ? e_pf_idle : e_pf_publish;
           else
             prefetch_install_count_r <= prefetch_install_count_r + 1'b1;
         end
@@ -1584,17 +1608,18 @@ module bp_uce
               && credit_count_lo == prefetch_outstanding_count)
         else $error("UCE prefetch installation overlaps accepted ordinary work");
     end
-    if (prefetch_install_state_r inside {e_pf_invalidate, e_pf_fill, e_pf_publish})
+    if (!prefetch_side_buffer_p
+        && prefetch_install_state_r inside {e_pf_invalidate, e_pf_fill, e_pf_publish})
       assert (prefetch_install_clean_r)
         else $error("UCE prefetch modifies a victim without a fresh clean decision");
     if (prefetch_install_state_r == e_pf_check_stat && prefetch_install_way_available)
       assert (!prefetch_install_stat.dirty[prefetch_install_way]
               && !prefetch_install_reserved_ways[prefetch_install_way])
         else $error("UCE prefetch selected a dirty or reserved install way");
-    if (prefetch_install_state_r == e_pf_publish)
+    if (!prefetch_side_buffer_p && prefetch_install_state_r == e_pf_publish)
       assert (prefetch_install_full && !data_mem_pkt_v_o && stat_mem_pkt_v_o)
         else $error("UCE prefetch publishes before complete data installation");
-    if (prefetch_install_state_r == e_pf_publish)
+    if (!prefetch_side_buffer_p && prefetch_install_state_r == e_pf_publish)
       assert (!prefetch_cancel_r[prefetch_install_slot_r] && !prefetch_cancel_all)
         else $error("UCE published a detached prefetch across fence.i");
     if (prefetch_issue)
