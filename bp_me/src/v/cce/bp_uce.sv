@@ -726,8 +726,13 @@ module bp_uce
   // Installed replies retire after tag publication; dropped replies simply drain.
   assign fsm_rev_yumi_lo = load_resp_yumi_lo | store_resp_v_li | prefetch_response_yumi;
   assign cache_req_id_o = cache_req_r.id;
+  // Demand priority controls whether a newly visible miss aborts advisory
+  // installation; it must not disable the cache-array exclusion lock.  In
+  // particular, I-cache hits never enter the UCE as cache_req_v_i, so masking
+  // this lock in demand-priority mode lets live frontend SRAM reads interleave
+  // with the installer's tag/stat/invalidate transactions.
   assign cache_req_lock_o = is_reset | is_init | inval_v_r | clean_v_r | flush_v_r
-    | (prefetch_install_lock & ~prefetch_demand_priority_p);
+    | prefetch_install_lock;
   logic blocking_req_v_lo;
   always_comb
     begin
