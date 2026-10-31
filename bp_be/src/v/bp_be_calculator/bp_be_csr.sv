@@ -120,6 +120,7 @@ module bp_be_csr
 
    // Supervisor physical data preview. The address becomes visible only
    // when the CSR instruction retires and is validated again by PMA.
+   , input                                   physical_preview_idle_i
    , output logic                            physical_preview_v_o
    , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
    );
@@ -574,8 +575,8 @@ module bp_be_csr
           csr_data_lo = is_m_mode ? icache_prefix_status_i : '0;
         12'h5c0:  // S-mode shared-prefix trigger/status
           csr_data_lo = icache_prefix_status_i;
-        12'h9c0:  // S-mode physical data preview; write-only, reads as zero
-          csr_data_lo = '0;
+        12'h9c0:  // S-mode physical data preview / drained status
+          csr_data_lo = {{(dword_width_gp-1){1'b0}}, physical_preview_idle_i};
         {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
           csr_data_lo = global_cycle_i;
         default:

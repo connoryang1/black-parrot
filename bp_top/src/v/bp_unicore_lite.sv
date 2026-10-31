@@ -83,6 +83,7 @@ module bp_unicore_lite
   logic [paddr_width_p-1:0] physical_preview_paddr_lo;
   logic physical_preview_uncached_lo, physical_preview_nonidem_lo;
   logic physical_preview_dram_lo;
+  logic physical_preview_idle_lo;
   bp_pma
    #(.bp_params_p(bp_params_p))
    physical_preview_pma
@@ -131,6 +132,7 @@ module bp_unicore_lite
      ,.cfg_bus_i(cfg_bus_cast_i)
      ,.physical_preview_v_o(physical_preview_v_lo)
      ,.physical_preview_paddr_o(physical_preview_paddr_lo)
+     ,.physical_preview_idle_i(physical_preview_idle_lo)
 
      ,.icache_req_o(icache_req_lo)
      ,.icache_req_v_o(icache_req_v_lo)
@@ -265,6 +267,7 @@ module bp_unicore_lite
      ,.preview_v_i(1'b0)
      ,.preview_cancel_i(1'b0)
      ,.preview_ready_o()
+     ,.preview_idle_o()
      ,.cache_req_id_o(icache_req_id_li)
      ,.cache_req_critical_o(icache_req_critical_li)
      ,.cache_req_last_o(icache_req_last_li)
@@ -335,9 +338,10 @@ module bp_unicore_lite
      ,.cache_req_metadata_i(dcache_req_metadata_lo)
      ,.cache_req_metadata_v_i(dcache_req_metadata_v_lo)
      ,.preview_paddr_i(physical_preview_paddr_lo)
-     ,.preview_v_i(physical_preview_allowed_lo)
-     ,.preview_cancel_i(1'b0)
+     ,.preview_v_i(physical_preview_allowed_lo & (physical_preview_paddr_lo != '0))
+     ,.preview_cancel_i(physical_preview_v_lo & (physical_preview_paddr_lo == '0))
      ,.preview_ready_o()
+     ,.preview_idle_o(physical_preview_idle_lo)
      ,.cache_req_id_o(dcache_req_id_li)
      ,.cache_req_critical_o(dcache_req_critical_li)
      ,.cache_req_last_o(dcache_req_last_li)

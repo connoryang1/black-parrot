@@ -127,6 +127,7 @@ module bp_be_csr_wrapper_mt
    , output logic [8:0]                      icache_prefix_count_o
    , output logic                            icache_prefix_trigger_v_o
    , output logic                            icache_prefix_clear_v_o
+   , input                                   physical_preview_idle_i
    , output logic                            physical_preview_v_o
    , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
    );
@@ -280,6 +281,7 @@ module bp_be_csr_wrapper_mt
        ,.icache_prefix_count_o(icache_prefix_count_co[i])
        ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_co[i])
        ,.icache_prefix_clear_v_o(icache_prefix_clear_v_co[i])
+       ,.physical_preview_idle_i(physical_preview_idle_i)
        ,.physical_preview_v_o(physical_preview_v_co[i])
        ,.physical_preview_paddr_o(physical_preview_paddr_co[i])
        );
