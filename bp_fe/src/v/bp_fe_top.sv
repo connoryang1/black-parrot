@@ -40,6 +40,10 @@ module bp_fe_top
    , output logic                                     fe_queue_v_o
    , input                                            fe_queue_ready_and_i
 
+   , input                                            replay_query_v_i
+   , input [paddr_width_p-1:0]                        replay_query_paddr_i
+   , output logic                                     replay_query_hit_o
+
    , output logic [icache_req_width_lp-1:0]           cache_req_o
    , output logic                                     cache_req_v_o
    , input                                            cache_req_yumi_i
@@ -303,6 +307,9 @@ module bp_fe_top
      ,.miss_v_o(icache_miss_v_lo)
      ,.fence_v_o(icache_fence_v_lo)
      ,.yumi_i(icache_yumi_li)
+     ,.replay_query_v_i(replay_query_v_i)
+     ,.replay_query_paddr_i(replay_query_paddr_i)
+     ,.replay_query_hit_o(replay_query_hit_o)
 
      ,.cache_req_o(cache_req_o)
      ,.cache_req_v_o(cache_req_v_o)

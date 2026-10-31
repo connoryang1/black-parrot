@@ -97,6 +97,12 @@ module bp_fe_icache
    , output logic                                     fence_v_o
    , input                                            yumi_i
 
+   // Physical lookup for suppressing refreshes of completed advisory lines.
+   // Partial entries are deliberately reported absent.
+   , input                                            replay_query_v_i
+   , input [paddr_width_p-1:0]                        replay_query_paddr_i
+   , output logic                                     replay_query_hit_o
+
    // Cache Engine Interface
    // This is considered the "slow path", handling uncached requests
    //   and fill DMAs. It also handles coherence transactions for
@@ -477,6 +483,14 @@ module bp_fe_icache
       end
     replay_buffer_hit_tv &= v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r
       & ~uncached_tv_r & ~cache_hit_v_tv;
+  end
+  always_comb begin
+    replay_query_hit_o = 1'b0;
+    for (int i = 0; i < replay_buffer_els_lp; i++)
+      replay_query_hit_o |= replay_buffer_p & replay_query_v_i
+        & replay_buffer_alloc_r[i] & (&replay_buffer_beat_v_r[i])
+        & (replay_buffer_addr_r[i]
+           == replay_query_paddr_i[paddr_width_p-1:block_offset_width_lp]);
   end
   bsg_mux
    #(.width_p(data_width_p), .els_p(replay_words_per_line_lp))

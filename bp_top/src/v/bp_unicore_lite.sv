@@ -57,6 +57,8 @@ module bp_unicore_lite
   logic [paddr_width_p-1:0] icache_replay_paddr_lo;
   logic icache_replay_lane_v_lo, icache_replay_lane_ready_li;
   logic [paddr_width_p-1:0] icache_replay_lane_paddr_lo;
+  logic icache_replay_query_v_lo, icache_replay_query_hit_li;
+  logic [paddr_width_p-1:0] icache_replay_query_paddr_lo;
   logic [dword_width_gp-1:0] icache_prefix_status_lo;
   logic icache_prefix_entry_v_lo, icache_prefix_count_v_lo;
   logic icache_prefix_trigger_v_lo, icache_prefix_clear_v_lo;
@@ -166,6 +168,9 @@ module bp_unicore_lite
      ,.software_irq_i(software_irq_i)
      ,.m_external_irq_i(m_external_irq_i)
      ,.s_external_irq_i(s_external_irq_i)
+     ,.icache_replay_query_v_i(icache_replay_query_v_lo)
+     ,.icache_replay_query_paddr_i(icache_replay_query_paddr_lo)
+     ,.icache_replay_query_hit_o(icache_replay_query_hit_li)
      ,.icache_replay_ready_i(icache_replay_direct_ready_lo)
      ,.icache_replay_v_o(icache_replay_v_lo)
      ,.icache_replay_paddr_o(icache_replay_paddr_lo)
@@ -194,6 +199,9 @@ module bp_unicore_lite
      ,.count_i(icache_prefix_count_lo)
      ,.clear_counters_i(icache_prefix_clear_v_lo)
      ,.trigger_v_i(icache_prefix_trigger_v_lo)
+     ,.resident_query_v_o(icache_replay_query_v_lo)
+     ,.resident_query_paddr_o(icache_replay_query_paddr_lo)
+     ,.resident_i(icache_replay_query_hit_li)
      ,.replay_v_o(icache_replay_lane_v_lo)
      ,.replay_paddr_o(icache_replay_lane_paddr_lo)
      ,.replay_ready_i(icache_replay_lane_ready_li)

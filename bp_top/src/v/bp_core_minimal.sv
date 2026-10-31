@@ -88,6 +88,10 @@ module bp_core_minimal
    , input                                           m_external_irq_i
    , input                                           s_external_irq_i
 
+   , input                                           icache_replay_query_v_i
+   , input [paddr_width_p-1:0]                       icache_replay_query_paddr_i
+   , output logic                                    icache_replay_query_hit_o
+
    , input                                           icache_replay_ready_i
    , output logic                                    icache_replay_v_o
    , output logic [paddr_width_p-1:0]                icache_replay_paddr_o
@@ -233,6 +237,10 @@ module bp_core_minimal
      ,.ctxtsw_priv_i(fe_ctxtsw_priv_lo)
      ,.ctxtsw_translation_en_i(fe_ctxtsw_translation_en_lo)
      ,.ctxtsw_asid_i(fe_ctxtsw_asid_lo)
+
+     ,.replay_query_v_i(icache_replay_query_v_i)
+     ,.replay_query_paddr_i(icache_replay_query_paddr_i)
+     ,.replay_query_hit_o(icache_replay_query_hit_o)
 
      ,.cache_req_o(icache_req_o)
      ,.cache_req_v_o(icache_req_v_o)

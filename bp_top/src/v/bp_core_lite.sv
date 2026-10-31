@@ -184,6 +184,9 @@ module bp_core_lite
      ,.software_irq_i(software_irq_i)
      ,.m_external_irq_i(m_external_irq_i)
      ,.s_external_irq_i(s_external_irq_i)
+     ,.icache_replay_query_v_i(1'b0)
+     ,.icache_replay_query_paddr_i('0)
+     ,.icache_replay_query_hit_o()
      );
 
   bp_lce
