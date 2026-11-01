@@ -400,12 +400,13 @@ module bp_be_scheduler
   assign fp_rpush_reg_li = context_cache_fp_scan_w_v_i[0] ? context_cache_fp_scan_w_addr_i[0] : rpush_reg_i;
   assign fp_rpush_data_li = context_cache_fp_scan_w_v_i[0] ? context_cache_fp_scan_w_data_i[0] : rpush_data_i;
   assign context_cache_fp_scan_r_data_o = {frf_rs2, frf_rs1};
-  bp_be_regfile_mt
-  // Nonresident FP copying is disabled in the GPR-only context-cache design.
-  // Keep the ordinary FP write/rpush port, but do not pay for the unreachable
-  // second restore-only write port on FPGA.
-  #(.bp_params_p(bp_params_p), .read_ports_p(3), .zero_x0_p(0), .data_width_p($bits(bp_be_fp_reg_s)), .write_ports_p(1))
-   fp_regfile
+  if (|fpu_support_p) begin : fp_regfile_gen
+    bp_be_regfile_mt
+    // Nonresident FP copying is disabled in the GPR-only context-cache design.
+    // Keep the ordinary FP write/rpush port, but do not pay for the unreachable
+    // second restore-only write port on FPGA.
+    #(.bp_params_p(bp_params_p), .read_ports_p(3), .zero_x0_p(0), .data_width_p($bits(bp_be_fp_reg_s)), .write_ports_p(1))
+     fp_regfile
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
 
@@ -444,8 +445,13 @@ module bp_be_scheduler
      ,.rs_r_v_i(fp_rs_r_v_li)
      ,.rs_thread_id_i(fp_rs_thread_id_li)
      ,.rs_addr_i(fp_rs_addr_li)
-     ,.rs_data_o({frf_rs3, frf_rs2, frf_rs1})
-     );
+       ,.rs_data_o({frf_rs3, frf_rs2, frf_rs1})
+       );
+  end else begin : no_fp_regfile_gen
+    assign frf_rs1 = '0;
+    assign frf_rs2 = '0;
+    assign frf_rs3 = '0;
+  end
 
   bp_be_decode_s fe_exc_decode_li;
   rv64_instr_fmatype_s fe_exc_instr_li;
@@ -540,8 +546,13 @@ module bp_be_scheduler
                                   & ~poison_isd_i
                                   & ~ctxtsw_cancel_drain_li
                                   & issue_ctxtsw_switch_v;
+  // The dispatch edge sets ctxtsw_issue_hold_r, which freezes issue from the
+  // following cycle until the switch commits or is canceled.  Do not feed the
+  // combinational dispatch decision back into FE ready: the issue queue has a
+  // fall-through path, so that feedback forms a real LUT loop on FPGA.  A
+  // same-edge younger enqueue is harmless; it remains frozen under the
+  // registered hold and is flushed by the existing commit/cancel clear.
   wire ctxtsw_queue_hold_li = (ctxtsw_issue_hold_r & ~ctxtsw_commit_accept_li)
-                              | issue_ctxtsw_dispatch_v
                               | (fe_queue_clr_li & ~ctxtsw_commit_accept_li);
 
   assign fe_queue_ready_and_o = (issue_queue_ready_and_lo | ctxtsw_commit_accept_li)
