@@ -169,6 +169,8 @@ module bp_uce
   logic [block_size_in_fill_lp-1:0][fill_width_p-1:0] prefetch_install_line_r;
   logic prefetch_free_v, prefetch_issue_v, prefetch_duplicate_v;
   logic detached_prefetch_duplicate_v, detached_prefetch_demand_match;
+  logic detached_prefetch_resident_demand_match;
+  logic detached_prefetch_accepted_demand_match;
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
   logic prefetch_demand_match;
   logic prefetch_issue, prefetch_response, prefetch_response_yumi;
@@ -272,9 +274,18 @@ module bp_uce
     prefetch_issue_slot = '0;
     prefetch_duplicate_v = 1'b0;
     detached_prefetch_duplicate_v = 1'b0;
-    detached_prefetch_demand_match = cache_req_v_r
+    detached_prefetch_resident_demand_match = cache_req_v_r
       & (cache_req_r.addr[paddr_width_p-1:prefetch_match_offset_width_lp]
          == detached_prefetch_addr_i[paddr_width_p-1:prefetch_match_offset_width_lp]);
+    // The detached ingress and ordinary cache-request FIFO are independent.
+    // Include a same-edge ordinary miss acceptance so both cannot acquire the
+    // same line before either side becomes visible to the other comparator.
+    detached_prefetch_accepted_demand_match = cache_req_yumi_o
+      & ~prefetch_v_li & (miss_load_v_li | miss_store_v_li)
+      & (cache_req_cast_i.addr[paddr_width_p-1:prefetch_match_offset_width_lp]
+         == detached_prefetch_addr_i[paddr_width_p-1:prefetch_match_offset_width_lp]);
+    detached_prefetch_demand_match = detached_prefetch_resident_demand_match
+      | detached_prefetch_accepted_demand_match;
     preview_duplicate_v = 1'b0;
     prefetch_demand_match = 1'b0;
     for (int i = prefetch_els_p-1; i >= 0; i--) begin
@@ -304,11 +315,12 @@ module bp_uce
     end
   end
   // A duplicate is acknowledged because an existing slot already covers it.
-  // A replay overtaken by an already-resident same-line demand is also
-  // acknowledged but not allocated. That demand cannot withdraw to observe a
-  // later advisory-buffer publication; issuing the replay first only stalls
-  // it and then causes a redundant ordinary refill. A genuinely new line
-  // waits for capacity without occupying any I-cache stage.
+  // A replay overtaken by a same-line demand that is resident or accepted on
+  // this edge is also acknowledged but not allocated. That demand cannot
+  // withdraw to observe a later advisory-buffer publication; issuing the
+  // replay first only stalls it and then causes a redundant ordinary refill.
+  // A genuinely new line waits for capacity without occupying an I-cache
+  // stage.
   assign detached_prefetch_ready_and_o = prefetch_p & prefetch_full_line_p
     & (prefetch_free_v | detached_prefetch_duplicate_v
        | detached_prefetch_demand_match)
