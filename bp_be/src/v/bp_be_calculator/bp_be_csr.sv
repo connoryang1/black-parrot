@@ -127,6 +127,9 @@ module bp_be_csr
    // data/status readback.
    , input [dword_width_gp-1:0]              rpc_m_data_i
    , input [dword_width_gp-1:0]              rpc_m_control_status_i
+   , input [dword_width_gp-1:0]              rpc_call_token_i
+   , input                                   rpc_descriptor_valid_i
+   , input [dword_width_gp-1:0]              rpc_descriptor_token_i
    );
 
   // Declare parameterizable structs
@@ -570,8 +573,12 @@ module bp_be_csr
           csr_data_lo = legacy_context_access_li ? miss_trace_data_i : '0;
         12'h808:  // Protected call capability operand / status
           // An accepted call overwrites a4 with COMPLETED on protected return.
-          // A call that does not commit retires normally with NOT_STARTED.
-          csr_data_lo = dword_width_gp'(1);
+          // A matching live descriptor that is temporarily ineligible retires
+          // with NOT_STARTED. No live descriptor or a mismatched generation
+          // is terminal for this token and therefore returns REVOKED.
+          csr_data_lo = dword_width_gp'(
+            (!rpc_descriptor_valid_i
+             || (rpc_call_token_i != rpc_descriptor_token_i)) ? 2 : 1);
         12'h809:  // Protected return result operand / status
           csr_data_lo = '0;
         12'h7c0:  // M-mode physical I-cache replay enqueue/status

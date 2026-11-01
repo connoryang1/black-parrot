@@ -73,6 +73,9 @@ module bp_be_csr_wrapper_mt
    , input [thread_id_width_p-1:0]           csr_thread_id_i
    // Retire thread owns the instruction currently committing in the backend.
    , input [thread_id_width_p-1:0]           retire_thread_id_i
+   // Source operand of the CSR instruction currently in the reservation
+   // station. Protected-call outcome readback compares it with the live token.
+   , input [dword_width_gp-1:0]              rpc_call_token_i
 
    // Save/restore the active physical CSR bank for nonresident virtual contexts.
    , input                                   csr_context_restore_v_i
@@ -487,6 +490,9 @@ module bp_be_csr_wrapper_mt
        ,.icache_prefix_clear_v_o(icache_prefix_clear_v_co[i])
        ,.rpc_m_data_i(rpc_m_data_r)
        ,.rpc_m_control_status_i(rpc_control_status_r)
+       ,.rpc_call_token_i(rpc_call_token_i)
+       ,.rpc_descriptor_valid_i(rpc_descriptor_valid_r)
+       ,.rpc_descriptor_token_i(rpc_live_field_r[0])
        );
   end
 

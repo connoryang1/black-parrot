@@ -210,6 +210,7 @@ module bp_be_pipe_sys
      ,.legacy_context_user_enable_i(legacy_context_user_enable_i)
      ,.csr_thread_id_i(reservation_physical_thread_id)
      ,.retire_thread_id_i(retire_thread_id_i)
+     ,.rpc_call_token_i(rs1)
      ,.csr_context_restore_v_i(csr_context_restore_v_i)
      ,.csr_context_apc_write_v_i(csr_context_apc_write_v_i)
      ,.csr_context_restore_reset_i(csr_context_restore_reset_i)
