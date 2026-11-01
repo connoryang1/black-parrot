@@ -65,6 +65,7 @@ module bp_be_scheduler
    // Top-level state supplies whether its protected call/return edge is legal.
    , input                                    legacy_context_user_enable_i
    , input                                    rpc_call_ready_i
+   , input [4:0]                              rpc_call_ready_debug_i
    , input                                    rpc_return_ready_i
    , input [dpath_width_gp-1:0]               rpc_token_i
    , input [context_id_width_p-1:0]           rpc_caller_context_i
@@ -488,6 +489,22 @@ module bp_be_scheduler
                           & (rpc_line_r_data_lo[15][7:0] <= rpc_request_words_i);
   wire issue_rpc_return_v = issue_rpc_return_candidate_v & rpc_return_ready_i;
   wire issue_ctxtsw_v = issue_regular_ctxtsw_v | issue_rpc_call_v | issue_rpc_return_v;
+
+`ifndef SYNTHESIS
+  // A rejected pcall otherwise returns only the architectural NOT_STARTED
+  // outcome. Emit the individual eligibility predicates in RTL simulation so
+  // an integration failure does not require a full waveform capture.
+  always_ff @(posedge clk_i)
+    if (!reset_i && dispatch_pkt_cast_o.v
+        && issue_rpc_call_candidate_v && !issue_rpc_call_v)
+      $display("BP_RPC_CALL_REJECT ready={valid=%0b idle=%0b satp=%0b caller_context=%0b server_resident=%0b} token_match=%0b request_meta=0x%0h request_limit=%0d current_context=%0d caller_context=%0d server_context=%0d",
+               rpc_call_ready_debug_i[4], rpc_call_ready_debug_i[3],
+               rpc_call_ready_debug_i[2], rpc_call_ready_debug_i[1],
+               rpc_call_ready_debug_i[0], (irf_rs1 == rpc_token_i),
+               rpc_line_r_data_lo[15], rpc_request_words_i,
+               current_virtual_context_id_i, rpc_caller_context_i,
+               rpc_server_context_i);
+`endif
 
   wire issue_ctxtsw_imm_v = issue_regular_ctxtsw_v &
     issue_pkt_cast_o.instr inside {`RV64_CSRRWI, `RV64_CSRRSI, `RV64_CSRRCI};

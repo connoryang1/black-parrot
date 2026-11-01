@@ -678,14 +678,35 @@ module bp_be_top
     rpc_current_satp_li[44 +: asid_width_p] = trans_info_lo.asid;
     rpc_current_satp_li[0 +: $bits(trans_info_lo.base_ppn)] = trans_info_lo.base_ppn;
   end
+  // satp is WARL: software may retain a wider architectural ASID than this
+  // core implements. Compare the descriptor against the same effective SATP
+  // representation that the MMU uses, while retaining the root PPN as part of
+  // the address-space identity.
+  logic [dword_width_gp-1:0] rpc_descriptor_caller_satp_effective_li;
+  always_comb begin
+    rpc_descriptor_caller_satp_effective_li = '0;
+    rpc_descriptor_caller_satp_effective_li[63:60] =
+      rpc_descriptor_caller_satp_lo[63:60];
+    rpc_descriptor_caller_satp_effective_li[44 +: asid_width_p] =
+      rpc_descriptor_caller_satp_lo[44 +: asid_width_p];
+    rpc_descriptor_caller_satp_effective_li[0 +: $bits(trans_info_lo.base_ppn)] =
+      rpc_descriptor_caller_satp_lo[0 +: $bits(trans_info_lo.base_ppn)];
+  end
 
   // The atomic call checks the complete published descriptor, caller address
   // space and logical context before a switch token can be created.
   wire rpc_call_ready_li = rpc_descriptor_valid_lo
                            & ~rpc_active_r
-                           & (rpc_current_satp_li == rpc_descriptor_caller_satp_lo)
+                           & (rpc_current_satp_li == rpc_descriptor_caller_satp_effective_li)
                            & (current_virtual_context_id_r == rpc_caller_context_li)
                            & virtual_context_resident_v_r[rpc_server_context_li];
+  wire [4:0] rpc_call_ready_debug_li = {
+    rpc_descriptor_valid_lo,
+    ~rpc_active_r,
+    (rpc_current_satp_li == rpc_descriptor_caller_satp_effective_li),
+    (current_virtual_context_id_r == rpc_caller_context_li),
+    virtual_context_resident_v_r[rpc_server_context_li]
+  };
   wire rpc_return_ready_li = rpc_active_r
                              & (current_virtual_context_id_r == rpc_server_context_li)
                              & virtual_context_resident_v_r[rpc_caller_context_li];
@@ -1553,6 +1574,7 @@ module bp_be_top
      ,.legacy_context_user_enable_i(~rpc_descriptor_valid_lo)
      ,.retire_thread_id_i(retire_thread_id_lo)
      ,.rpc_call_ready_i(rpc_call_ready_li)
+     ,.rpc_call_ready_debug_i(rpc_call_ready_debug_li)
      ,.rpc_return_ready_i(rpc_return_ready_li)
      ,.rpc_token_i(rpc_descriptor_token_lo)
      ,.rpc_caller_context_i(rpc_caller_context_li)
