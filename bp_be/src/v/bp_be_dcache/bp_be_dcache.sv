@@ -318,10 +318,27 @@ module bp_be_dcache
   logic [thread_id_width_p-1:0] thread_id_tl_r;
   logic [page_offset_width_gp-1:0] offset_tl_r;
   logic replay_tl_r;
+  logic replay_issue_r, replay_tl_retry_r;
 
   assign safe_tl_we = v_i & ~busy_o;
   assign tl_we = safe_tl_we & ~flush_tl;
-  assign replay_issue_o = replay_i & tl_we;
+  // The replay source is outside the architectural half-cycle pipeline.  Do
+  // not expose its combinational TL qualification as an issue handshake: a
+  // request can become eligible just after this negedge and disappear again
+  // before the following negedge without ever entering v_tl_r.  Register the
+  // actual TL capture so the source only waits for requests sampled here.
+  always_ff @(posedge clk_i)
+    if (reset_i) begin
+      replay_issue_r <= 1'b0;
+      replay_tl_retry_r <= 1'b0;
+    end else begin
+      replay_issue_r <= replay_i & tl_we;
+      // A captured advisory request may still lose the TL-to-TV transfer to a
+      // cache-array hazard.  Report that loss through the existing retry path
+      // rather than leaving the replay source pending without a terminal event.
+      replay_tl_retry_r <= v_tl_r & replay_tl_r & ~tv_we;
+    end
+  assign replay_issue_o = replay_issue_r;
   bsg_dff_reset
    #(.width_p(1))
    v_tl_reg
@@ -786,7 +803,8 @@ module bp_be_dcache
     & ~prefetch_buffer_segment_tv
     & ~uncached_tv_r & ~snoop_tv_r
     & features_p[e_cfg_writeback];
-  assign prefetch_replay_o = prefetch_req & ~cache_req_yumi_i;
+  assign prefetch_replay_o = (prefetch_req & ~cache_req_yumi_i)
+                             | replay_tl_retry_r;
   assign cache_req_v_o = is_ready & (blocking_req | nonblocking_req | prefetch_req);
 
   assign blocking_hazard    = cache_req_v_o & blocking_req;
