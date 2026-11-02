@@ -81,6 +81,16 @@ module bp_unicore_lite
   bp_be_dcache_req_metadata_s dcache_req_metadata_lo;
   logic physical_preview_v_lo;
   logic [paddr_width_p-1:0] physical_preview_paddr_lo;
+  logic dcache_replay_entry_v_lo, dcache_replay_config_v_lo;
+  logic dcache_replay_trigger_v_lo;
+  logic [dword_width_gp-1:0] dcache_replay_payload_lo;
+  logic [dword_width_gp-1:0] dcache_replay_status_lo;
+  logic dcache_replay_v_lo, dcache_replay_yumi_li;
+  logic dcache_replay_accepted_li;
+  logic [paddr_width_p-1:0] dcache_replay_paddr_lo;
+  logic dcache_replay_core_yumi_lo, dcache_replay_core_accepted_lo;
+  logic [paddr_width_p-1:0] dcache_preview_paddr_li;
+  logic dcache_preview_v_li;
   logic physical_preview_uncached_lo, physical_preview_nonidem_lo;
   logic physical_preview_dram_lo;
   logic physical_preview_idle_lo;
@@ -89,7 +99,7 @@ module bp_unicore_lite
    physical_preview_pma
     (.clk_i(posedge_clk)
      ,.reset_i(reset_i)
-     ,.ptag_i(physical_preview_paddr_lo[page_offset_width_gp+:ptag_width_p])
+     ,.ptag_i(dcache_preview_paddr_li[page_offset_width_gp+:ptag_width_p])
      ,.uncached_mode_i(1'b0)
      ,.nonspec_mode_i(1'b0)
      ,.uncached_o(physical_preview_uncached_lo)
@@ -98,9 +108,21 @@ module bp_unicore_lite
      );
   // Only cached, idempotent DRAM may be read speculatively. The request is
   // best effort and never backpressures architectural retirement.
-  wire physical_preview_allowed_lo = physical_preview_v_lo
+  wire physical_preview_allowed_lo = dcache_preview_v_li
     & physical_preview_dram_lo & ~physical_preview_uncached_lo
     & ~physical_preview_nonidem_lo;
+  assign dcache_preview_paddr_li = physical_preview_v_lo
+                                   ? physical_preview_paddr_lo
+                                   : dcache_replay_paddr_lo;
+  assign dcache_preview_v_li = physical_preview_v_lo | dcache_replay_v_lo;
+  wire dcache_replay_allowed_lo = dcache_replay_v_lo
+    & ~physical_preview_v_lo & (dcache_replay_paddr_lo != '0)
+    & physical_preview_allowed_lo;
+  assign dcache_replay_accepted_li = dcache_replay_core_accepted_lo;
+  assign dcache_replay_yumi_li = dcache_replay_v_lo
+    & (dcache_replay_core_yumi_lo
+       | (~physical_preview_v_lo
+          & ((dcache_replay_paddr_lo == '0) | ~physical_preview_allowed_lo)));
   logic [dcache_req_id_width_p-1:0] dcache_req_id_li;
   logic dcache_req_critical_li, dcache_req_last_li;
   logic dcache_req_credits_full_li, dcache_req_credits_empty_li;
@@ -133,6 +155,15 @@ module bp_unicore_lite
      ,.physical_preview_v_o(physical_preview_v_lo)
      ,.physical_preview_paddr_o(physical_preview_paddr_lo)
      ,.physical_preview_idle_i(physical_preview_idle_lo)
+     ,.dcache_replay_status_i(dcache_replay_status_lo)
+     ,.dcache_replay_entry_v_o(dcache_replay_entry_v_lo)
+     ,.dcache_replay_config_v_o(dcache_replay_config_v_lo)
+     ,.dcache_replay_trigger_v_o(dcache_replay_trigger_v_lo)
+     ,.dcache_replay_payload_o(dcache_replay_payload_lo)
+     ,.dcache_replay_v_i(dcache_replay_allowed_lo)
+     ,.dcache_replay_paddr_i(dcache_replay_paddr_lo)
+     ,.dcache_replay_yumi_o(dcache_replay_core_yumi_lo)
+     ,.dcache_replay_accepted_o(dcache_replay_core_accepted_lo)
 
      ,.icache_req_o(icache_req_lo)
      ,.icache_req_v_o(icache_req_v_lo)
@@ -310,6 +341,32 @@ module bp_unicore_lite
   bp_bedrock_mem_rev_header_s [1:1] _mem_rev_header_i;
   logic [1:1][bedrock_fill_width_p-1:0] _mem_rev_data_i;
   logic [1:1] _mem_rev_v_i, _mem_rev_ready_and_o;
+
+  bp_dcache_replay_ctrl
+   #(.paddr_width_p(paddr_width_p))
+   dcache_replay_ctrl
+    (.clk_i(posedge_clk)
+     ,.reset_i(reset_i)
+     ,.entry_write_v_i(dcache_replay_entry_v_lo)
+     ,.entry_write_slot_i(dcache_replay_payload_lo[46:45])
+     ,.entry_write_index_i(dcache_replay_payload_lo[44:40])
+     ,.entry_write_paddr_i(dcache_replay_payload_lo[0+:paddr_width_p])
+     ,.config_write_v_i(dcache_replay_config_v_lo)
+     ,.config_write_slot_i(dcache_replay_payload_lo[1:0])
+     ,.config_write_count_i(dcache_replay_payload_lo[7:2])
+     ,.config_write_delay_i(dcache_replay_payload_lo[23:8])
+     ,.config_write_gap_i(dcache_replay_payload_lo[31:24])
+     ,.trigger_v_i(dcache_replay_trigger_v_lo)
+     ,.trigger_slot_i(dcache_replay_payload_lo[1:0])
+     ,.replay_v_o(dcache_replay_v_lo)
+     ,.replay_paddr_o(dcache_replay_paddr_lo)
+     ,.replay_yumi_i(dcache_replay_yumi_li)
+     ,.replay_accepted_i(dcache_replay_accepted_li)
+     ,.clear_counters_i(dcache_replay_config_v_lo
+                        & dcache_replay_payload_lo[dword_width_gp-1])
+     ,.status_o(dcache_replay_status_lo)
+     );
+
   bp_uce
    #(.bp_params_p(bp_params_p)
      ,.assoc_p(dcache_assoc_p)
@@ -338,7 +395,8 @@ module bp_unicore_lite
      ,.cache_req_metadata_i(dcache_req_metadata_lo)
      ,.cache_req_metadata_v_i(dcache_req_metadata_v_lo)
      ,.preview_paddr_i(physical_preview_paddr_lo)
-     ,.preview_v_i(physical_preview_allowed_lo & (physical_preview_paddr_lo != '0))
+     ,.preview_v_i(physical_preview_v_lo & physical_preview_allowed_lo
+                   & (physical_preview_paddr_lo != '0))
      ,.preview_cancel_i(physical_preview_v_lo & (physical_preview_paddr_lo == '0))
      ,.preview_ready_o()
      ,.preview_idle_o(physical_preview_idle_lo)

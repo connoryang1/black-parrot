@@ -72,6 +72,13 @@ module bp_be_pipe_mem
    , output logic [reg_addr_width_gp-1:0]            context_cache_dcache_resp_id_o
    , output logic [dword_width_gp-1:0]               context_cache_dcache_resp_data_o
 
+   // Independent physical replay requests use the normal L1 lookup. This
+   // filters resident and dirty lines before any cache-engine request.
+   , input                                           dcache_replay_v_i
+   , input [paddr_width_p-1:0]                       dcache_replay_paddr_i
+   , output logic                                    dcache_replay_yumi_o
+   , output logic                                    dcache_replay_accepted_o
+
    // D$-LCE Interface
    // signals to LCE
    , output logic [dcache_req_width_lp-1:0]          cache_req_o
@@ -277,19 +284,28 @@ module bp_be_pipe_mem
   // acknowledgement. Keep those lifetimes distinct: a future load window
   // needs to accept a new TL request while an older load still awaits data.
   logic context_cache_dcache_ptag_v_r;
+  logic dcache_replay_ptag_v_r;
+  logic dcache_replay_pending_r;
+  logic [4:0] dcache_replay_retry_wait_r;
   logic context_cache_dcache_resp_pending_r;
   logic context_cache_dcache_store_r;
   logic [paddr_width_p-1:0] context_cache_dcache_paddr_r;
+  logic [paddr_width_p-1:0] dcache_replay_paddr_r;
   logic [dword_width_gp-1:0] context_cache_dcache_data_r;
   wire context_cache_dcache_accept_li = context_cache_dcache_v_i
                                         & context_cache_dcache_ready_o;
+  wire dcache_replay_accept_li = dcache_replay_v_i
+                                  & ~context_cache_dcache_v_i
+                                  & ~dcache_replay_pending_r
+                                  & (dcache_replay_retry_wait_r == '0)
+                                  & ~is_req & ~dcache_busy_lo & ~flush_i;
   assign context_cache_dcache_yumi_o = context_cache_dcache_accept_li;
   assign context_cache_dcache_ready_o = ~context_cache_dcache_resp_pending_r
                                         & ~is_req
                                         & ~dcache_busy_lo;
 
   bp_be_dcache_pkt_s dcache_pkt;
-  wire dcache_pkt_v = context_cache_dcache_accept_li
+  wire dcache_pkt_v = context_cache_dcache_accept_li | dcache_replay_accept_li
                        | (is_req & (~is_prefetch | (~dcache_busy_lo & ~flush_i)));
   assign dcache_pkt = context_cache_dcache_accept_li
                           ? '{thread_id : '0
@@ -302,6 +318,12 @@ module bp_be_pipe_mem
                           // beyond the input width.
                           ,vaddr  : vaddr_width_p'(context_cache_dcache_paddr_i)
                           }
+                      : dcache_replay_accept_li
+                        ? '{thread_id : '0
+                            ,rd_addr : '0
+                            ,opcode : e_dcache_op_prefetch
+                            ,vaddr : vaddr_width_p'(dcache_replay_paddr_i)
+                            }
                       : '{thread_id : reservation_thread_id
                           ,rd_addr : instr.t.rtype.rd_addr
                           ,opcode : decode.fu_op.t.dcache_fu_op
@@ -321,17 +343,19 @@ module bp_be_pipe_mem
   // In particular, do not turn MMIO or uncached addresses into real reads.
   wire prefetch_ptag_allowed = dtlb_ptag_dram_lo
                                 & ~dtlb_ptag_uncached_lo & ~dtlb_ptag_nonidem_lo;
-  wire dcache_ptag_v = context_cache_dcache_ptag_v_r
+  wire dcache_ptag_v = context_cache_dcache_ptag_v_r | dcache_replay_ptag_v_r
                        | (dtlb_v_lo & ~dtlb_load_misaligned_lo & ~store_misaligned_v_o
                           & (~prefetch_mmu_r | (prefetch_ptag_allowed & ~flush_i)));
   wire [ptag_width_p-1:0] dcache_ptag_li =
-    context_cache_dcache_ptag_v_r
-    ? context_cache_dcache_paddr_r[page_offset_width_gp+:ptag_width_p]
+    (context_cache_dcache_ptag_v_r | dcache_replay_ptag_v_r)
+    ? (context_cache_dcache_ptag_v_r
+       ? context_cache_dcache_paddr_r[page_offset_width_gp+:ptag_width_p]
+       : dcache_replay_paddr_r[page_offset_width_gp+:ptag_width_p])
     : dtlb_ptag_lo;
-  wire dcache_ptag_uncached_li = context_cache_dcache_ptag_v_r
+  wire dcache_ptag_uncached_li = (context_cache_dcache_ptag_v_r | dcache_replay_ptag_v_r)
                                  ? 1'b0
                                  : dtlb_ptag_uncached_lo;
-  wire dcache_ptag_dram_li = context_cache_dcache_ptag_v_r
+  wire dcache_ptag_dram_li = (context_cache_dcache_ptag_v_r | dcache_replay_ptag_v_r)
                              ? 1'b1
                              : dtlb_ptag_dram_lo;
 
@@ -342,7 +366,9 @@ module bp_be_pipe_mem
   logic [thread_id_width_p-1:0] dcache_thread_id;
   logic dcache_unsigned, dcache_int, dcache_float, dcache_ptw, dcache_ret, dcache_late;
   logic dcache_prefetch_replay;
+  logic dcache_replay_issue_lo, dcache_replay_done_lo;
   logic dcache_busy_lo, dcache_ordered_lo;
+  assign dcache_replay_yumi_o = dcache_replay_done_lo;
   wire [dword_width_gp-1:0] dcache_st_data = context_cache_dcache_ptag_v_r
                                              ? context_cache_dcache_data_r
                                              : rs2_val_i;
@@ -357,6 +383,7 @@ module bp_be_pipe_mem
 
      ,.v_i(dcache_pkt_v)
      ,.dcache_pkt_i(dcache_pkt)
+     ,.replay_i(dcache_replay_accept_li)
 
      ,.ptag_v_i(dcache_ptag_v)
      ,.ptag_i(dcache_ptag_li)
@@ -378,6 +405,9 @@ module bp_be_pipe_mem
      ,.ret_o(dcache_ret)
      ,.late_o(dcache_late)
      ,.prefetch_replay_o(dcache_prefetch_replay)
+     ,.replay_issue_o(dcache_replay_issue_lo)
+     ,.replay_done_o(dcache_replay_done_lo)
+     ,.replay_accepted_o(dcache_replay_accepted_o)
 
      // D$-LCE Interface
      ,.cache_req_o(cache_req_cast_o)
@@ -508,14 +538,32 @@ module bp_be_pipe_mem
   always_ff @(posedge posedge_clk)
     if (reset_i) begin
       context_cache_dcache_ptag_v_r <= 1'b0;
+      dcache_replay_ptag_v_r <= 1'b0;
+      dcache_replay_pending_r <= 1'b0;
+      dcache_replay_retry_wait_r <= '0;
       context_cache_dcache_resp_pending_r <= 1'b0;
       context_cache_dcache_store_r <= 1'b0;
       context_cache_dcache_paddr_r <= '0;
+      dcache_replay_paddr_r <= '0;
       context_cache_dcache_data_r <= '0;
     end else begin
       // The request accepted in this cycle is consumed by the D$ TL stage;
       // its physical tag and store data are required in the following TV stage.
       context_cache_dcache_ptag_v_r <= context_cache_dcache_accept_li;
+      dcache_replay_ptag_v_r <= dcache_replay_accept_li;
+      if (dcache_replay_issue_lo)
+        dcache_replay_pending_r <= 1'b1;
+      else if (dcache_replay_done_lo)
+        dcache_replay_pending_r <= 1'b0;
+      else if (dcache_replay_pending_r & dcache_prefetch_replay) begin
+        dcache_replay_pending_r <= 1'b0;
+        // A full detached-prefetch path must get time to drain. Immediate
+        // tag-pipeline retries can otherwise monopolize the request boundary.
+        dcache_replay_retry_wait_r <= 5'd16;
+      end else if (dcache_replay_retry_wait_r != '0)
+        dcache_replay_retry_wait_r <= dcache_replay_retry_wait_r - 1'b1;
+      if (dcache_replay_accept_li)
+        dcache_replay_paddr_r <= dcache_replay_paddr_i;
       if (context_cache_dcache_accept_li) begin
         context_cache_dcache_resp_pending_r <= 1'b1;
         context_cache_dcache_store_r <= context_cache_dcache_w_i;

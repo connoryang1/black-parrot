@@ -123,6 +123,13 @@ module bp_be_csr
    , input                                   physical_preview_idle_i
    , output logic                            physical_preview_v_o
    , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
+
+   // Tagged physical-data footprint configuration and wakeup command.
+   , input [dword_width_gp-1:0]              dcache_replay_status_i
+   , output logic                            dcache_replay_entry_v_o
+   , output logic                            dcache_replay_config_v_o
+   , output logic                            dcache_replay_trigger_v_o
+   , output logic [dword_width_gp-1:0]       dcache_replay_payload_o
    );
 
   // Declare parameterizable structs
@@ -577,6 +584,12 @@ module bp_be_csr
           csr_data_lo = icache_prefix_status_i;
         12'h9c0:  // S-mode physical data preview / drained status
           csr_data_lo = {{(dword_width_gp-1){1'b0}}, physical_preview_idle_i};
+        12'h9c1:  // S-mode physical-data footprint entry (write-only)
+          csr_data_lo = '0;
+        12'h9c2:  // S-mode physical-data footprint configuration (write-only)
+          csr_data_lo = '0;
+        12'h9c3:  // S-mode tagged physical-data replay trigger/status
+          csr_data_lo = dcache_replay_status_i;
         {`CSR_ADDR_GLOBAL_CYCLE}:  // Read-only, core-wide physical cycle counter
           csr_data_lo = global_cycle_i;
         default:
@@ -920,7 +933,10 @@ module bp_be_csr
                            | (csr_addr_li == 12'h807)
                            | (csr_addr_li == 12'h808)
                            | (csr_addr_li == 12'h809)
-                           | (csr_addr_li == 12'h9c0);
+                           | (csr_addr_li == 12'h9c0)
+                           | (csr_addr_li == 12'h9c1)
+                           | (csr_addr_li == 12'h9c2)
+                           | (csr_addr_li == 12'h9c3);
 
   assign commit_pkt_cast_o.npc_w_v           = |{retire_pkt_cast_i.special.dcache_miss
                                                  ,retire_pkt_cast_i.special.fencei
@@ -1084,6 +1100,22 @@ module bp_be_csr
                                 & (is_s_mode | is_m_mode)
                                 & ~(|csr_data_li[dword_width_gp-1:paddr_width_p]);
   assign physical_preview_paddr_o = csr_data_li[0+:paddr_width_p];
+
+  // The direct 0x9c0 primitive remains available as a matched control. The
+  // new interface moves all per-line writes outside the wakeup path: 0x9c1
+  // programs a table entry, 0x9c2 programs its count/timing, and 0x9c3 queues
+  // one software-assigned slot tag. All remain supervisor-only physical-data
+  // operations, matching the privilege boundary of the original primitive.
+  assign dcache_replay_entry_v_o = csr_w_v_li & retire_pkt_cast_i.instret
+                                    & (csr_addr_li == 12'h9c1)
+                                    & (is_s_mode | is_m_mode);
+  assign dcache_replay_config_v_o = csr_w_v_li & retire_pkt_cast_i.instret
+                                     & (csr_addr_li == 12'h9c2)
+                                     & (is_s_mode | is_m_mode);
+  assign dcache_replay_trigger_v_o = csr_w_v_li & retire_pkt_cast_i.instret
+                                      & (csr_addr_li == 12'h9c3)
+                                      & (is_s_mode | is_m_mode);
+  assign dcache_replay_payload_o = csr_data_li;
 
   always_ff @(posedge clk_i)
     if (reset_i)

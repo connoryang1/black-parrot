@@ -107,6 +107,15 @@ module bp_be_top
    , input                                           physical_preview_idle_i
    , output logic                                    physical_preview_v_o
    , output logic [paddr_width_p-1:0]                physical_preview_paddr_o
+   , input [dword_width_gp-1:0]                      dcache_replay_status_i
+   , output logic                                    dcache_replay_entry_v_o
+   , output logic                                    dcache_replay_config_v_o
+   , output logic                                    dcache_replay_trigger_v_o
+   , output logic [dword_width_gp-1:0]               dcache_replay_payload_o
+   , input                                           dcache_replay_v_i
+   , input [paddr_width_p-1:0]                       dcache_replay_paddr_i
+   , output logic                                    dcache_replay_yumi_o
+   , output logic                                    dcache_replay_accepted_o
    );
 
   // Declare parameterized structures
@@ -1603,6 +1612,15 @@ module bp_be_top
      ,.physical_preview_idle_i(physical_preview_idle_i)
      ,.physical_preview_v_o(physical_preview_v_o)
      ,.physical_preview_paddr_o(physical_preview_paddr_o)
+     ,.dcache_replay_status_i(dcache_replay_status_i)
+     ,.dcache_replay_entry_v_o(dcache_replay_entry_v_o)
+     ,.dcache_replay_config_v_o(dcache_replay_config_v_o)
+     ,.dcache_replay_trigger_v_o(dcache_replay_trigger_v_o)
+     ,.dcache_replay_payload_o(dcache_replay_payload_o)
+     ,.dcache_replay_v_i(dcache_replay_v_i)
+     ,.dcache_replay_paddr_i(dcache_replay_paddr_i)
+     ,.dcache_replay_yumi_o(dcache_replay_yumi_o)
+     ,.dcache_replay_accepted_o(dcache_replay_accepted_o)
      ,.fast_ctxtsw_v_o(fast_ctxtsw_v_lo)
      ,.fast_ctxtsw_old_physical_thread_id_o(fast_ctxtsw_old_physical_thread_id_lo)
      ,.fast_ctxtsw_virtual_context_id_o(fast_ctxtsw_virtual_context_id_lo)

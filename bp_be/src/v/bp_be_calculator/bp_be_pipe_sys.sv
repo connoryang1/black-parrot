@@ -124,6 +124,11 @@ module bp_be_pipe_sys
    , input                                   physical_preview_idle_i
    , output logic                            physical_preview_v_o
    , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
+   , input [dword_width_gp-1:0]              dcache_replay_status_i
+   , output logic                            dcache_replay_entry_v_o
+   , output logic                            dcache_replay_config_v_o
+   , output logic                            dcache_replay_trigger_v_o
+   , output logic [dword_width_gp-1:0]       dcache_replay_payload_o
    );
 
   `declare_bp_be_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p);
@@ -238,6 +243,11 @@ module bp_be_pipe_sys
      ,.physical_preview_idle_i(physical_preview_idle_i)
      ,.physical_preview_v_o(physical_preview_v_o)
      ,.physical_preview_paddr_o(physical_preview_paddr_o)
+     ,.dcache_replay_status_i(dcache_replay_status_i)
+     ,.dcache_replay_entry_v_o(dcache_replay_entry_v_o)
+     ,.dcache_replay_config_v_o(dcache_replay_config_v_o)
+     ,.dcache_replay_trigger_v_o(dcache_replay_trigger_v_o)
+     ,.dcache_replay_payload_o(dcache_replay_payload_o)
      );
 
   logic [vaddr_width_p-1:0] retire_npc_r;

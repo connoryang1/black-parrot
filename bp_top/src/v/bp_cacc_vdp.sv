@@ -139,6 +139,7 @@ module bp_cacc_vdp
 
      ,.dcache_pkt_i(acache_pkt_li)
      ,.v_i(acache_v_li)
+     ,.replay_i(1'b0)
      ,.busy_o(acache_busy_lo)
      ,.flush_i(1'b0)
      ,.ordered_o()
@@ -159,6 +160,9 @@ module bp_cacc_vdp
      ,.ret_o()
      ,.late_o()
      ,.prefetch_replay_o()
+     ,.replay_issue_o()
+     ,.replay_done_o()
+     ,.replay_accepted_o()
      ,.tag_o()
      ,.unsigned_o()
 

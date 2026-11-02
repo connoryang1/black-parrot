@@ -158,6 +158,15 @@ module bp_be_calculator_top
    , input                                           physical_preview_idle_i
    , output logic                                    physical_preview_v_o
    , output logic [paddr_width_p-1:0]                physical_preview_paddr_o
+   , input [dword_width_gp-1:0]                      dcache_replay_status_i
+   , output logic                                    dcache_replay_entry_v_o
+   , output logic                                    dcache_replay_config_v_o
+   , output logic                                    dcache_replay_trigger_v_o
+   , output logic [dword_width_gp-1:0]               dcache_replay_payload_o
+   , input                                           dcache_replay_v_i
+   , input [paddr_width_p-1:0]                       dcache_replay_paddr_i
+   , output logic                                    dcache_replay_yumi_o
+   , output logic                                    dcache_replay_accepted_o
 
    // Early classified ctxtsw event. Observable only until BE context state
    // consumes it as an architectural mini-commit.
@@ -410,6 +419,11 @@ module bp_be_calculator_top
      ,.physical_preview_idle_i(physical_preview_idle_i)
      ,.physical_preview_v_o(physical_preview_v_o)
      ,.physical_preview_paddr_o(physical_preview_paddr_o)
+     ,.dcache_replay_status_i(dcache_replay_status_i)
+     ,.dcache_replay_entry_v_o(dcache_replay_entry_v_o)
+     ,.dcache_replay_config_v_o(dcache_replay_config_v_o)
+     ,.dcache_replay_trigger_v_o(dcache_replay_trigger_v_o)
+     ,.dcache_replay_payload_o(dcache_replay_payload_o)
      );
 
   // Integer pipe: 1 cycle latency
@@ -623,6 +637,10 @@ module bp_be_calculator_top
      ,.context_cache_dcache_resp_v_o(pipe_mem_context_cache_dcache_resp_v_lo)
      ,.context_cache_dcache_resp_id_o(pipe_mem_context_cache_dcache_resp_id_lo)
      ,.context_cache_dcache_resp_data_o(pipe_mem_context_cache_dcache_resp_data_lo)
+     ,.dcache_replay_v_i(dcache_replay_v_i)
+     ,.dcache_replay_paddr_i(dcache_replay_paddr_i)
+     ,.dcache_replay_yumi_o(dcache_replay_yumi_o)
+     ,.dcache_replay_accepted_o(dcache_replay_accepted_o)
      );
 
   // Floating point pipe: 3/4 cycle latency

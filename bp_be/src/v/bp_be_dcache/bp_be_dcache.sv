@@ -118,6 +118,7 @@ module bp_be_dcache
    // New D$ packet comes in
    , input [dcache_pkt_width_lp-1:0]                 dcache_pkt_i
    , input                                           v_i
+   , input                                           replay_i
 
    // Cycle 1: "Tag Lookup"
    // TLB and PMA information comes in this cycle
@@ -142,6 +143,9 @@ module bp_be_dcache
    , output logic                                    ret_o
    , output logic                                    late_o
    , output logic                                    prefetch_replay_o
+   , output logic                                    replay_issue_o
+   , output logic                                    replay_done_o
+   , output logic                                    replay_accepted_o
 
    // Cache Engine Interface
    // This is considered the "slow path", handling uncached requests
@@ -313,9 +317,11 @@ module bp_be_dcache
   bp_be_dcache_decode_s decode_tl_r;
   logic [thread_id_width_p-1:0] thread_id_tl_r;
   logic [page_offset_width_gp-1:0] offset_tl_r;
+  logic replay_tl_r;
 
   assign safe_tl_we = v_i & ~busy_o;
   assign tl_we = safe_tl_we & ~flush_tl;
+  assign replay_issue_o = replay_i & tl_we;
   bsg_dff_reset
    #(.width_p(1))
    v_tl_reg
@@ -328,11 +334,11 @@ module bp_be_dcache
 
   // Save stage information
   bsg_dff
-   #(.width_p(page_offset_width_gp+thread_id_width_p+$bits(bp_be_dcache_decode_s)))
+   #(.width_p(page_offset_width_gp+thread_id_width_p+$bits(bp_be_dcache_decode_s)+1))
    tl_stage_reg
     (.clk_i(clk_i)
-     ,.data_i({offset, dcache_pkt_cast_i.thread_id, decode_lo})
-     ,.data_o({offset_tl_r, thread_id_tl_r, decode_tl_r})
+     ,.data_i({offset, dcache_pkt_cast_i.thread_id, decode_lo, replay_i})
+     ,.data_o({offset_tl_r, thread_id_tl_r, decode_tl_r, replay_tl_r})
      );
 
   wire [paddr_width_p-1:0]   paddr_tl = {ptag_i, offset_tl_r};
@@ -379,6 +385,7 @@ module bp_be_dcache
   logic [thread_id_width_p-1:0] thread_id_tv_r;
   logic sc_success_tv, sc_fail_tv;
   logic fill_restart_tv;
+  logic replay_tv_r;
 
   wire [bindex_width_lp-1:0] paddr_bank_tv  = paddr_tv_r[byte_offset_width_lp+:bindex_width_lp];
   wire [sindex_width_lp-1:0] paddr_index_tv = paddr_tv_r[block_offset_width_lp+:sindex_width_lp];
@@ -402,17 +409,18 @@ module bp_be_dcache
   logic [data_width_p-1:0] st_data_tv_n;
   logic [assoc_p-1:0] bank_sel_one_hot_tv_n;
   logic uncached_tv_n;
+  logic replay_tv_n;
   bp_be_dcache_decode_s decode_tv_n;
   logic [thread_id_width_p-1:0] thread_id_tv_n;
   // workaround for verilator 5.036
   assign {way_v_tv_n, store_hit_tv_n, load_hit_tv_n, ld_data_tv_n, st_data_tv_n, paddr_tv_n, bank_sel_one_hot_tv_n
-          ,uncached_tv_n, thread_id_tv_n, decode_tv_n
+          ,uncached_tv_n, thread_id_tv_n, decode_tv_n, replay_tv_n
           } = snoop_v
               ? {snoop_hit, snoop_ld_data, snoop_st_data, snoop_paddr, snoop_bank_sel_one_hot
-                 ,snoop_uncached, snoop_thread_id, snoop_decode
+                 ,snoop_uncached, snoop_thread_id, snoop_decode, 1'b0
                  }
               : {way_v_tl, store_hit_tl, load_hit_tl, data_mem_data_lo, st_data_tl, paddr_tl, bank_sel_one_hot_tl
-                 ,uncached_tl, thread_id_tl_r, decode_tl_r
+                 ,uncached_tl, thread_id_tl_r, decode_tl_r, replay_tl_r
                  };
   //bsg_mux
   // #(.width_p(3*assoc_p+block_width_p+data_width_p+paddr_width_p+assoc_p+1+$bits(bp_be_dcache_decode_s)), .els_p(2))
@@ -430,13 +438,13 @@ module bp_be_dcache
 
   wire snoop_tv_n = snoop_v;
   bsg_dff
-   #(.width_p(1+3*assoc_p+paddr_width_p+block_width_p+data_width_p+assoc_p+1+thread_id_width_p+$bits(bp_be_dcache_decode_s)))
+   #(.width_p(1+3*assoc_p+paddr_width_p+block_width_p+data_width_p+assoc_p+1+thread_id_width_p+$bits(bp_be_dcache_decode_s)+1))
    tv_stage_reg
     (.clk_i(clk_i)
      ,.data_i({snoop_tv_n, way_v_tv_n, store_hit_tv_n, load_hit_tv_n, paddr_tv_n, ld_data_tv_n
-               ,st_data_tv_n, bank_sel_one_hot_tv_n, uncached_tv_n, thread_id_tv_n, decode_tv_n})
+               ,st_data_tv_n, bank_sel_one_hot_tv_n, uncached_tv_n, thread_id_tv_n, decode_tv_n, replay_tv_n})
      ,.data_o({snoop_tv_r, way_v_tv_r, store_hit_v_tv_r, load_hit_v_tv_r, paddr_tv_r, ld_data_tv_r
-               ,st_data_tv_r, bank_sel_one_hot_tv_r, uncached_tv_r, thread_id_tv_r, decode_tv_r})
+               ,st_data_tv_r, bank_sel_one_hot_tv_r, uncached_tv_r, thread_id_tv_r, decode_tv_r, replay_tv_r})
      );
 
   logic [lg_assoc_lp-1:0] store_hit_way_tv;
@@ -766,6 +774,10 @@ module bp_be_dcache
   assign nonblocking_sent  = nonblocking_req & cache_req_yumi_i;
   assign blocking_sent     = blocking_req & cache_req_yumi_i;
   wire prefetch_sent       = prefetch_req & cache_req_yumi_i;
+  wire replay_retry = v_tv_r & replay_tv_r & prefetch_req
+                      & ~cache_req_yumi_i;
+  assign replay_done_o = v_tv_r & replay_tv_r & ~replay_retry;
+  assign replay_accepted_o = prefetch_sent & replay_tv_r;
 
   // Prefetch hints are non-architectural demand misses, not ordinary loads.
   // They avoid issuing if the line is already hot in L1, and a miss here

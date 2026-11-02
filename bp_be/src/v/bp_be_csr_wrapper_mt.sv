@@ -130,6 +130,11 @@ module bp_be_csr_wrapper_mt
    , input                                   physical_preview_idle_i
    , output logic                            physical_preview_v_o
    , output logic [paddr_width_p-1:0]        physical_preview_paddr_o
+   , input [dword_width_gp-1:0]              dcache_replay_status_i
+   , output logic                            dcache_replay_entry_v_o
+   , output logic                            dcache_replay_config_v_o
+   , output logic                            dcache_replay_trigger_v_o
+   , output logic [dword_width_gp-1:0]       dcache_replay_payload_o
    );
 
   // Per-thread output arrays
@@ -172,6 +177,10 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            icache_prefix_clear_v_co;
   logic [num_threads_p-1:0]                            physical_preview_v_co;
   logic [num_threads_p-1:0][paddr_width_p-1:0]         physical_preview_paddr_co;
+  logic [num_threads_p-1:0]                            dcache_replay_entry_v_co;
+  logic [num_threads_p-1:0]                            dcache_replay_config_v_co;
+  logic [num_threads_p-1:0]                            dcache_replay_trigger_v_co;
+  logic [num_threads_p-1:0][dword_width_gp-1:0]        dcache_replay_payload_co;
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
 
@@ -284,6 +293,11 @@ module bp_be_csr_wrapper_mt
        ,.physical_preview_idle_i(physical_preview_idle_i)
        ,.physical_preview_v_o(physical_preview_v_co[i])
        ,.physical_preview_paddr_o(physical_preview_paddr_co[i])
+       ,.dcache_replay_status_i(dcache_replay_status_i)
+       ,.dcache_replay_entry_v_o(dcache_replay_entry_v_co[i])
+       ,.dcache_replay_config_v_o(dcache_replay_config_v_co[i])
+       ,.dcache_replay_trigger_v_o(dcache_replay_trigger_v_co[i])
+       ,.dcache_replay_payload_o(dcache_replay_payload_co[i])
        );
   end
 
@@ -328,6 +342,10 @@ module bp_be_csr_wrapper_mt
   assign icache_prefix_clear_v_o = icache_prefix_clear_v_co[retire_thread_id_i];
   assign physical_preview_v_o = physical_preview_v_co[retire_thread_id_i];
   assign physical_preview_paddr_o = physical_preview_paddr_co[retire_thread_id_i];
+  assign dcache_replay_entry_v_o = dcache_replay_entry_v_co[retire_thread_id_i];
+  assign dcache_replay_config_v_o = dcache_replay_config_v_co[retire_thread_id_i];
+  assign dcache_replay_trigger_v_o = dcache_replay_trigger_v_co[retire_thread_id_i];
+  assign dcache_replay_payload_o = dcache_replay_payload_co[retire_thread_id_i];
   assign csr_context_save_data_o = csr_context_save_data_co[csr_context_save_physical_thread_id_i];
 
 endmodule
