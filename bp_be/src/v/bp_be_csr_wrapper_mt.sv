@@ -259,7 +259,9 @@ module bp_be_csr_wrapper_mt
     & (rpc_staged_field_r[5][63:38] == '0)
     & (rpc_staged_field_r[6][63:38] == '0);
   wire rpc_staged_config_valid =
-    (rpc_staged_config[63:48] == '0)
+    // Bit 48 opts a version-2 descriptor into synchronous-fault completion.
+    // Version 1 writes zero, and every higher bit remains reserved.
+    (rpc_staged_config[63:49] == '0)
     & (rpc_staged_config[7:0] <= 8'd4)
     & (rpc_staged_config[15:8] <= 8'd4)
     & (rpc_staged_config[31:16] == 16'd0)
