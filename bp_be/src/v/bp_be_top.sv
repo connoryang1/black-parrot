@@ -664,12 +664,18 @@ module bp_be_top
   end
   // Preparation is a privileged mutation of an inactive resident bank. A
   // context-cache transfer or pending switch owns the same metadata/write
-  // paths, so the controller reports BUSY instead of racing either operation.
+  // paths, and an older scalar writeback can still own the single physical
+  // register-file write port when the control CSR reaches the system pipe.
+  // Report BUSY rather than losing either architectural write; firmware may
+  // retry once the pipeline drains.
   wire rpc_prepare_ready_li = rpc_prepare_target_resident_v_li
     & (rpc_prepare_target_physical_thread_id_li < num_threads_p)
     & (rpc_prepare_target_physical_thread_id_li != current_physical_thread_id_lo)
     & ~context_cache_active_li
-    & ~pending_ctxtsw_v_r;
+    & ~pending_ctxtsw_v_r
+    & ~iwb_pkt.ird_w_v
+    & ~scheduler_rpush_v_li
+    & ~context_cache_line_w_v_li;
   wire rpc_prepare_gpr_v_li = rpc_prepare_v_lo
     & (rpc_prepare_component_lo < 2);
   wire rpc_prepare_csr_v_li = rpc_prepare_v_lo
