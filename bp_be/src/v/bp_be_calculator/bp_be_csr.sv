@@ -66,6 +66,9 @@ module bp_be_csr
    , input [vaddr_width_p-1:0]               rpc_context_prepare_entry_i
    , input                                   rpc_fault_recovery_i
    , output logic                            rpc_fault_unwind_o
+   , output logic [3:0]                      rpc_fault_cause_o
+   , output logic [vaddr_width_p-1:0]        rpc_fault_pc_o
+   , output logic [dword_width_gp-1:0]       rpc_fault_tval_o
    , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
 
    // Bootstrap: write a target NPC for a virtual context (CSR 0x801)
@@ -368,6 +371,12 @@ module bp_be_csr
                              & exception_ecode_v_li
                              & ~is_debug_mode;
   assign rpc_fault_unwind_o = rpc_fault_unwind_li;
+  assign rpc_fault_cause_o = exception_ecode_li;
+  assign rpc_fault_pc_o = apc_r;
+  assign rpc_fault_tval_o = (exception_ecode_li == 4'd2)
+                            ? dword_width_gp'(retire_pkt_cast_i.instr)
+                            : dword_width_gp'(`BSG_SIGN_EXTEND(
+                                retire_pkt_cast_i.vaddr, dword_width_gp));
 
   wire d_interrupt_icode_v_li = debug_irq_i;
 

@@ -201,6 +201,9 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
   logic [num_threads_p-1:0]                            rpc_fault_unwind_co;
+  logic [num_threads_p-1:0][3:0]                       rpc_fault_cause_co;
+  logic [num_threads_p-1:0][vaddr_width_p-1:0]         rpc_fault_pc_co;
+  logic [num_threads_p-1:0][dword_width_gp-1:0]        rpc_fault_tval_co;
 
   // A core-wide physical timebase for short-latency measurements.  Unlike
   // mcycle, this counter is intentionally absent from the virtual-context
@@ -221,6 +224,7 @@ module bp_be_csr_wrapper_mt
   localparam logic [7:0] rpc_control_revoke_lp = 8'd2;
   localparam logic [7:0] rpc_control_read_status_lp = 8'd3;
   localparam logic [7:0] rpc_control_prepare_lp = 8'd4;
+  localparam logic [7:0] rpc_control_read_fault_lp = 8'd5;
   localparam logic [dword_width_gp-1:0] rpc_status_ok_lp = 64'd0;
   localparam logic [dword_width_gp-1:0] rpc_status_stale_lp = 64'd1;
   localparam logic [dword_width_gp-1:0] rpc_status_busy_lp = 64'd2;
@@ -234,6 +238,9 @@ module bp_be_csr_wrapper_mt
   logic [8:0][dword_width_gp-1:0] rpc_live_field_r;
   logic rpc_descriptor_valid_r;
   logic rpc_descriptor_faulted_r;
+  logic [3:0] rpc_fault_cause_r;
+  logic [vaddr_width_p-1:0] rpc_fault_pc_r;
+  logic [dword_width_gp-1:0] rpc_fault_tval_r;
   logic [2:0] rpc_prepared_component_r;
   bp_be_decode_info_s rpc_retire_decode_info;
   assign rpc_retire_decode_info = decode_info_co[retire_thread_id_i];
@@ -297,6 +304,9 @@ module bp_be_csr_wrapper_mt
       rpc_live_field_r <= '0;
       rpc_descriptor_valid_r <= 1'b0;
       rpc_descriptor_faulted_r <= 1'b0;
+      rpc_fault_cause_r <= '0;
+      rpc_fault_pc_r <= '0;
+      rpc_fault_tval_r <= '0;
       rpc_prepared_component_r <= '0;
     end else begin
       if (rpc_data_write_v)
@@ -336,6 +346,9 @@ module bp_be_csr_wrapper_mt
                 rpc_live_field_r <= rpc_staged_field_r;
                 rpc_descriptor_valid_r <= 1'b1;
                 rpc_descriptor_faulted_r <= 1'b0;
+                rpc_fault_cause_r <= '0;
+                rpc_fault_pc_r <= '0;
+                rpc_fault_tval_r <= '0;
                 rpc_control_status_r <= rpc_status_ok_lp;
               end
             end
@@ -348,6 +361,9 @@ module bp_be_csr_wrapper_mt
               end else begin
                 rpc_descriptor_valid_r <= 1'b0;
                 rpc_descriptor_faulted_r <= 1'b0;
+                rpc_fault_cause_r <= '0;
+                rpc_fault_pc_r <= '0;
+                rpc_fault_tval_r <= '0;
                 rpc_control_status_r <= rpc_status_ok_lp;
               end
             end
@@ -374,13 +390,36 @@ module bp_be_csr_wrapper_mt
                 rpc_control_status_r <= rpc_status_ok_lp;
               end
             end
+            rpc_control_read_fault_lp: begin
+              if (!rpc_descriptor_valid_r
+                  || (rpc_m_data_r != rpc_live_field_r[0])) begin
+                rpc_control_status_r <= rpc_status_stale_lp;
+              end else if (!rpc_descriptor_faulted_r
+                           || (rpc_control_field >= 8'd3)) begin
+                rpc_control_status_r <= rpc_status_invalid_lp;
+              end else begin
+                unique case (rpc_control_field)
+                  8'd0: rpc_m_data_r <= dword_width_gp'(rpc_fault_cause_r);
+                  8'd1: rpc_m_data_r <= dword_width_gp'(rpc_fault_pc_r);
+                  8'd2: rpc_m_data_r <= rpc_fault_tval_r;
+                  default: rpc_m_data_r <= '0;
+                endcase
+                rpc_control_status_r <= rpc_status_ok_lp;
+              end
+            end
             default: rpc_control_status_r <= rpc_status_unsupported_lp;
           endcase
         end
       end
 
-      if (|rpc_fault_unwind_co)
-        rpc_descriptor_faulted_r <= 1'b1;
+      for (int i = 0; i < num_threads_p; i++) begin
+        if (rpc_fault_unwind_co[i]) begin
+          rpc_descriptor_faulted_r <= 1'b1;
+          rpc_fault_cause_r <= rpc_fault_cause_co[i];
+          rpc_fault_pc_r <= rpc_fault_pc_co[i];
+          rpc_fault_tval_r <= rpc_fault_tval_co[i];
+        end
+      end
     end
   end
 
@@ -467,6 +506,9 @@ module bp_be_csr_wrapper_mt
        ,.rpc_context_prepare_entry_i(rpc_context_prepare_entry_i)
        ,.rpc_fault_recovery_i(rpc_fault_recovery_i)
        ,.rpc_fault_unwind_o(rpc_fault_unwind_co[i])
+       ,.rpc_fault_cause_o(rpc_fault_cause_co[i])
+       ,.rpc_fault_pc_o(rpc_fault_pc_co[i])
+       ,.rpc_fault_tval_o(rpc_fault_tval_co[i])
        ,.csr_context_save_data_o(csr_context_save_data_co[i])
        ,.ctx_npc_write_v_o(ctx_npc_write_v_co[i])
        ,.ctx_npc_write_rebind_o(ctx_npc_write_rebind_co[i])
