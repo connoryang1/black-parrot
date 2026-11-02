@@ -64,6 +64,8 @@ module bp_be_csr
    , input                                   rpc_context_prepare_i
    , input [dword_width_gp-1:0]              rpc_context_prepare_satp_i
    , input [vaddr_width_p-1:0]               rpc_context_prepare_entry_i
+   , input                                   rpc_fault_recovery_i
+   , output logic                            rpc_fault_unwind_o
    , output logic [csr_context_width_lp-1:0] csr_context_save_data_o
 
    // Bootstrap: write a target NPC for a virtual context (CSR 0x801)
@@ -359,6 +361,13 @@ module bp_be_csr
      ,.addr_o(exception_ecode_li)
      ,.v_o(exception_ecode_v_li)
      );
+
+  // Version-2 protected RPC converts a precise server exception into an
+  // atomic caller unwind instead of entering the server's trap state.
+  wire rpc_fault_unwind_li = rpc_fault_recovery_i
+                             & exception_ecode_v_li
+                             & ~is_debug_mode;
+  assign rpc_fault_unwind_o = rpc_fault_unwind_li;
 
   wire d_interrupt_icode_v_li = debug_irq_i;
 
@@ -724,7 +733,7 @@ module bp_be_csr
               interrupt_v_lo        = 1'b1;
             end
         end
-      else if (exception_ecode_v_li)
+      else if (exception_ecode_v_li & ~rpc_fault_unwind_li)
         begin
           if (is_debug_mode)
             begin
@@ -1004,7 +1013,8 @@ module bp_be_csr
   assign commit_pkt_cast_o.wfi               = retire_pkt_cast_i.special.wfi;
   assign commit_pkt_cast_o.eret              = ret_v;
   assign commit_pkt_cast_o.csrw              = csr_w_v_li & ~ctxt_csr_addr_li;
-  assign commit_pkt_cast_o.ctxtsw            = retire_pkt_cast_i.instret & retire_ctxtsw_v_i;
+  assign commit_pkt_cast_o.ctxtsw            = (retire_pkt_cast_i.instret & retire_ctxtsw_v_i)
+                                               | rpc_fault_unwind_li;
   assign commit_pkt_cast_o.resume            = retire_pkt_cast_i.exception.resume;
   assign commit_pkt_cast_o.itlb_miss         = retire_pkt_cast_i.exception.itlb_miss;
   assign commit_pkt_cast_o.icache_miss       = retire_pkt_cast_i.exception.icache_miss;

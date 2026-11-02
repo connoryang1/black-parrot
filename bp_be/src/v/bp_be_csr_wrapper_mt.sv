@@ -138,6 +138,7 @@ module bp_be_csr_wrapper_mt
    // Core-wide protected-RPC descriptor. Only M-mode CSR 0x7c3/0x7c4
    // accesses mutate this state; publication is atomic at COMMIT.
    , input                                   rpc_active_i
+   , input                                   rpc_fault_recovery_i
    , input                                   rpc_prepare_ready_i
    , output logic                            rpc_prepare_v_o
    , output logic [1:0]                      rpc_prepare_component_o
@@ -199,6 +200,7 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            icache_prefix_clear_v_co;
   logic [num_threads_p-1:0][csr_context_width_lp-1:0] csr_context_save_data_co;
   logic [num_threads_p-1:0]                            retire_ctxtsw_v_gated;
+  logic [num_threads_p-1:0]                            rpc_fault_unwind_co;
 
   // A core-wide physical timebase for short-latency measurements.  Unlike
   // mcycle, this counter is intentionally absent from the virtual-context
@@ -224,12 +226,14 @@ module bp_be_csr_wrapper_mt
   localparam logic [dword_width_gp-1:0] rpc_status_busy_lp = 64'd2;
   localparam logic [dword_width_gp-1:0] rpc_status_unsupported_lp = 64'd3;
   localparam logic [dword_width_gp-1:0] rpc_status_invalid_lp = 64'd4;
+  localparam logic [dword_width_gp-1:0] rpc_status_faulted_lp = 64'd5;
 
   logic [dword_width_gp-1:0] rpc_m_data_r, rpc_control_status_r;
   logic [8:0][dword_width_gp-1:0] rpc_staged_field_r;
   logic [8:0] rpc_staged_valid_r;
   logic [8:0][dword_width_gp-1:0] rpc_live_field_r;
   logic rpc_descriptor_valid_r;
+  logic rpc_descriptor_faulted_r;
   logic [2:0] rpc_prepared_component_r;
   bp_be_decode_info_s rpc_retire_decode_info;
   assign rpc_retire_decode_info = decode_info_co[retire_thread_id_i];
@@ -292,6 +296,7 @@ module bp_be_csr_wrapper_mt
       rpc_staged_valid_r <= '0;
       rpc_live_field_r <= '0;
       rpc_descriptor_valid_r <= 1'b0;
+      rpc_descriptor_faulted_r <= 1'b0;
       rpc_prepared_component_r <= '0;
     end else begin
       if (rpc_data_write_v)
@@ -330,6 +335,7 @@ module bp_be_csr_wrapper_mt
               end else begin
                 rpc_live_field_r <= rpc_staged_field_r;
                 rpc_descriptor_valid_r <= 1'b1;
+                rpc_descriptor_faulted_r <= 1'b0;
                 rpc_control_status_r <= rpc_status_ok_lp;
               end
             end
@@ -341,6 +347,7 @@ module bp_be_csr_wrapper_mt
                 rpc_control_status_r <= rpc_status_busy_lp;
               end else begin
                 rpc_descriptor_valid_r <= 1'b0;
+                rpc_descriptor_faulted_r <= 1'b0;
                 rpc_control_status_r <= rpc_status_ok_lp;
               end
             end
@@ -348,6 +355,8 @@ module bp_be_csr_wrapper_mt
               if (!rpc_descriptor_valid_r
                   || (rpc_m_data_r != rpc_live_field_r[0]))
                 rpc_control_status_r <= rpc_status_stale_lp;
+              else if (rpc_descriptor_faulted_r)
+                rpc_control_status_r <= rpc_status_faulted_lp;
               else if (rpc_active_i)
                 rpc_control_status_r <= rpc_status_busy_lp;
               else
@@ -369,6 +378,9 @@ module bp_be_csr_wrapper_mt
           endcase
         end
       end
+
+      if (|rpc_fault_unwind_co)
+        rpc_descriptor_faulted_r <= 1'b1;
     end
   end
 
@@ -378,7 +390,8 @@ module bp_be_csr_wrapper_mt
     context_id_width_p'(rpc_staged_config[47:32]);
   assign rpc_prepare_server_satp_o = rpc_staged_field_r[2];
   assign rpc_prepare_server_entry_o = rpc_staged_field_r[3];
-  assign rpc_descriptor_valid_o = rpc_descriptor_valid_r;
+  assign rpc_descriptor_valid_o = rpc_descriptor_valid_r
+                                  & ~rpc_descriptor_faulted_r;
   assign rpc_descriptor_token_o = rpc_live_field_r[0];
   assign rpc_descriptor_caller_satp_o = rpc_live_field_r[1];
   assign rpc_descriptor_server_satp_o = rpc_live_field_r[2];
@@ -452,6 +465,8 @@ module bp_be_csr_wrapper_mt
                                   == thread_id_width_p'(i)))
        ,.rpc_context_prepare_satp_i(rpc_context_prepare_satp_i)
        ,.rpc_context_prepare_entry_i(rpc_context_prepare_entry_i)
+       ,.rpc_fault_recovery_i(rpc_fault_recovery_i)
+       ,.rpc_fault_unwind_o(rpc_fault_unwind_co[i])
        ,.csr_context_save_data_o(csr_context_save_data_co[i])
        ,.ctx_npc_write_v_o(ctx_npc_write_v_co[i])
        ,.ctx_npc_write_rebind_o(ctx_npc_write_rebind_co[i])
@@ -493,7 +508,8 @@ module bp_be_csr_wrapper_mt
        ,.rpc_m_data_i(rpc_m_data_r)
        ,.rpc_m_control_status_i(rpc_control_status_r)
        ,.rpc_call_token_i(rpc_call_token_i)
-       ,.rpc_descriptor_valid_i(rpc_descriptor_valid_r)
+       ,.rpc_descriptor_valid_i(rpc_descriptor_valid_r
+                                 & ~rpc_descriptor_faulted_r)
        ,.rpc_descriptor_token_i(rpc_live_field_r[0])
        );
   end

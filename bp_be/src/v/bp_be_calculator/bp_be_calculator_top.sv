@@ -161,6 +161,7 @@ module bp_be_calculator_top
    , output logic                                    icache_prefix_clear_v_o
 
    , input                                           rpc_active_i
+   , input                                           rpc_fault_recovery_i
    , input                                           rpc_prepare_ready_i
    , output logic                                    rpc_prepare_v_o
    , output logic [1:0]                              rpc_prepare_component_o
@@ -431,6 +432,7 @@ module bp_be_calculator_top
      ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
      ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
      ,.rpc_active_i(rpc_active_i)
+     ,.rpc_fault_recovery_i(rpc_fault_recovery_i)
      ,.rpc_prepare_ready_i(rpc_prepare_ready_i)
      ,.rpc_prepare_v_o(rpc_prepare_v_o)
      ,.rpc_prepare_component_o(rpc_prepare_component_o)

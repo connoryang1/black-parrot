@@ -187,6 +187,8 @@ module bp_be_top
   logic context_cache_miss_pending_r;
   logic rpc_active_r;
   logic [vaddr_width_p-1:0] rpc_return_npc_r;
+  logic rpc_fault_recovery_enable_li;
+  logic rpc_fault_unwind_li;
   logic rpc_prepare_v_lo;
   logic [1:0] rpc_prepare_component_lo;
   logic [context_id_width_p-1:0] rpc_prepare_server_context_lo;
@@ -645,6 +647,7 @@ module bp_be_top
     context_id_width_p'(rpc_descriptor_config_lo[47:32]);
   wire [7:0] rpc_request_words_li = rpc_descriptor_config_lo[7:0];
   wire [7:0] rpc_reply_words_li = rpc_descriptor_config_lo[15:8];
+  wire rpc_fault_completion_li = rpc_descriptor_config_lo[48];
   wire [vaddr_width_p-1:0] rpc_entry_li =
     rpc_descriptor_server_entry_lo[0 +: vaddr_width_p];
   logic rpc_prepare_target_resident_v_li;
@@ -710,9 +713,44 @@ module bp_be_top
   wire rpc_return_ready_li = rpc_active_r
                              & (current_virtual_context_id_r == rpc_server_context_li)
                              & virtual_context_resident_v_r[rpc_caller_context_li];
+  wire [thread_id_width_p-1:0] rpc_caller_physical_thread_id_li =
+    virtual_context_slot_r[rpc_caller_context_li];
+  assign rpc_fault_recovery_enable_li = rpc_fault_completion_li
+    & rpc_active_r
+    & (current_virtual_context_id_r == rpc_server_context_li)
+    & virtual_context_resident_v_r[rpc_caller_context_li];
+  assign rpc_fault_unwind_li = commit_pkt.ctxtsw
+    & rpc_fault_recovery_enable_li
+    & ~pending_rpc_call_v_r
+    & ~pending_rpc_return_v_r;
+  wire [thread_id_width_p-1:0] committed_ctxtsw_target_physical_thread_id_li =
+    rpc_fault_unwind_li ? rpc_caller_physical_thread_id_li
+                        : pending_ctxtsw_physical_thread_id_r;
+  wire [context_id_width_p-1:0] committed_ctxtsw_target_virtual_context_id_li =
+    rpc_fault_unwind_li ? rpc_caller_context_li
+                        : pending_ctxtsw_virtual_context_id_r;
+  wire [thread_id_width_p-1:0] committed_ctxtsw_prev_physical_thread_id_li =
+    rpc_fault_unwind_li ? current_physical_thread_id_lo
+                        : pending_ctxtsw_prev_physical_thread_id_r;
+  wire [vaddr_width_p-1:0] committed_ctxtsw_resume_npc_li =
+    rpc_fault_unwind_li ? commit_pkt.pc : pending_ctxtsw_resume_npc_r;
+  wire [vaddr_width_p-1:0] committed_ctxtsw_target_npc_li =
+    rpc_fault_unwind_li ? rpc_return_npc_r : pending_ctxtsw_npc_r;
+  wire [1:0] committed_ctxtsw_target_priv_li =
+    rpc_fault_unwind_li ? context_priv_mode_r[rpc_caller_physical_thread_id_li]
+                        : pending_ctxtsw_priv_mode_r;
+  wire committed_ctxtsw_target_translation_en_li =
+    rpc_fault_unwind_li
+    ? context_translation_en_r[rpc_caller_physical_thread_id_li]
+    : pending_ctxtsw_translation_en_r;
+  wire [asid_width_p-1:0] committed_ctxtsw_target_asid_li =
+    rpc_fault_unwind_li ? context_asid_r[rpc_caller_physical_thread_id_li]
+                        : pending_ctxtsw_asid_r;
   wire rpc_install_v_li = commit_pkt.ctxtsw
-                          & (pending_rpc_call_v_r | pending_rpc_return_v_r);
-  wire [thread_id_width_p-1:0] rpc_install_thread_id_li = pending_ctxtsw_physical_thread_id_r;
+                          & (pending_rpc_call_v_r | pending_rpc_return_v_r
+                             | rpc_fault_unwind_li);
+  wire [thread_id_width_p-1:0] rpc_install_thread_id_li =
+    committed_ctxtsw_target_physical_thread_id_li;
   wire rpc_pending_reply_meta_valid_li =
     (pending_rpc_args_r[5][dpath_width_gp-1:16] == '0)
     & (pending_rpc_args_r[5][7:0] <= rpc_reply_words_li);
@@ -721,7 +759,11 @@ module bp_be_top
   always_comb begin
     rpc_install_w_mask_li = '0;
     rpc_install_w_data_li = '0;
-    if (pending_rpc_call_v_r) begin
+    if (rpc_fault_unwind_li) begin
+      rpc_install_w_mask_li[10 +: 6] = '1;
+      rpc_install_w_data_li[14] = dpath_width_gp'(3);
+      rpc_install_w_data_li[15] = dpath_width_gp'(1);
+    end else if (pending_rpc_call_v_r) begin
       for (int i = 0; i < 4; i++) begin
         rpc_install_w_mask_li[10+i] = 1'b1;
         rpc_install_w_data_li[10+i] = (i < pending_rpc_args_r[5][7:0])
@@ -823,9 +865,9 @@ module bp_be_top
     end
     else if (commit_pkt.npc_w_v & ~commit_pkt.ctxtsw & pending_ctxtsw_v_r)
       current_physical_thread_id_lo <= pending_ctxtsw_prev_physical_thread_id_r;
-    else if (commit_pkt.ctxtsw & pending_ctxtsw_v_r) begin
-      current_physical_thread_id_lo <= pending_ctxtsw_physical_thread_id_r;
-      current_virtual_context_id_r <= pending_ctxtsw_virtual_context_id_r;
+    else if (commit_pkt.ctxtsw & (pending_ctxtsw_v_r | rpc_fault_unwind_li)) begin
+      current_physical_thread_id_lo <= committed_ctxtsw_target_physical_thread_id_li;
+      current_virtual_context_id_r <= committed_ctxtsw_target_virtual_context_id_li;
     end
   end
 
@@ -898,7 +940,8 @@ module bp_be_top
     end else if (commit_pkt.ctxtsw & pending_rpc_call_v_r) begin
       rpc_active_r <= 1'b1;
       rpc_return_npc_r <= pending_ctxtsw_resume_npc_r;
-    end else if (commit_pkt.ctxtsw & pending_rpc_return_v_r) begin
+    end else if (rpc_fault_unwind_li
+                 || (commit_pkt.ctxtsw & pending_rpc_return_v_r)) begin
       rpc_active_r <= 1'b0;
     end
   end
@@ -948,13 +991,13 @@ module bp_be_top
         logic [vaddr_width_p-1:0] save_resume_npc_li;
         save_physical_thread_id_li = context_cache_commit_v_li
                             ? context_cache_victim_physical_thread_id_r
-                            : pending_ctxtsw_prev_physical_thread_id_r;
+                            : committed_ctxtsw_prev_physical_thread_id_li;
         save_virtual_context_id_li = context_cache_commit_v_li
                              ? context_cache_victim_virtual_context_id_r
                              : current_virtual_context_id_r;
         save_resume_npc_li = context_cache_commit_v_li
                              ? context_cache_resume_npc_r
-                             : pending_ctxtsw_resume_npc_r;
+                             : committed_ctxtsw_resume_npc_li;
 
         if (save_physical_thread_id_li < num_threads_p) begin
           context_npc_r[save_physical_thread_id_li] <= save_resume_npc_li;
@@ -1030,11 +1073,12 @@ module bp_be_top
 
   wire [thread_id_width_p-1:0] context_read_physical_thread_id_li =
     commit_pkt.ctxtsw
-    ? (context_cache_commit_v_li ? current_physical_thread_id_lo : pending_ctxtsw_physical_thread_id_r)
+    ? (context_cache_commit_v_li ? current_physical_thread_id_lo
+                                 : committed_ctxtsw_target_physical_thread_id_li)
     : current_physical_thread_id_lo;
   wire [thread_id_width_p-1:0] context_write_physical_thread_id_li =
     ctx_npc_write_resident_v_li ? ctx_npc_write_physical_thread_id_li
-    : commit_pkt.ctxtsw ? pending_ctxtsw_prev_physical_thread_id_r
+    : commit_pkt.ctxtsw ? committed_ctxtsw_prev_physical_thread_id_li
     : current_physical_thread_id_lo;
   wire context_fwd_v = (commit_pkt.ctxtsw | ctx_npc_write_resident_v_li)
                        && (context_write_physical_thread_id_li == context_read_physical_thread_id_li)
@@ -1207,7 +1251,7 @@ module bp_be_top
         for (int i = 1; i < 16; i++) begin
           if (rpc_install_w_mask_li[i]) begin
             physical_thread_int_dirty_r[rpc_install_thread_id_li][i] <= 1'b1;
-            virtual_context_int_dirty_r[pending_ctxtsw_virtual_context_id_r][i] <= 1'b1;
+            virtual_context_int_dirty_r[committed_ctxtsw_target_virtual_context_id_li][i] <= 1'b1;
           end
         end
       end
@@ -1384,6 +1428,11 @@ module bp_be_top
       context_priv_mode_lo = virtual_context_priv_mode_r[context_cache_target_virtual_context_id_r];
       context_translation_en_lo = virtual_context_translation_en_r[context_cache_target_virtual_context_id_r];
       context_asid_lo = virtual_context_asid_r[context_cache_target_virtual_context_id_r];
+    end else if (rpc_fault_unwind_li) begin
+      context_npc_lo = rpc_return_npc_r;
+      context_priv_mode_lo = context_priv_mode_r[rpc_caller_physical_thread_id_li];
+      context_translation_en_lo = context_translation_en_r[rpc_caller_physical_thread_id_li];
+      context_asid_lo = context_asid_r[rpc_caller_physical_thread_id_li];
     end else if (commit_pkt.ctxtsw & pending_rpc_call_v_r) begin
       context_npc_lo = rpc_entry_li;
       context_priv_mode_lo = context_priv_mode_r[pending_ctxtsw_physical_thread_id_r];
@@ -1480,11 +1529,11 @@ module bp_be_top
      ,.pending_ctxtsw_v_i(pending_ctxtsw_v_r)
      ,.pending_ctxtsw_sent_i(pending_ctxtsw_sent_r | context_cache_miss_pending_r)
      ,.ctxtsw_launch_pending_i(ctxtsw_launch_pending_r)
-     ,.ctxtsw_target_npc_i(pending_ctxtsw_npc_r)
-     ,.ctxtsw_target_physical_thread_id_i(pending_ctxtsw_physical_thread_id_r)
-     ,.ctxtsw_target_asid_i(pending_ctxtsw_asid_r)
-     ,.ctxtsw_target_priv_i(pending_ctxtsw_priv_mode_r)
-     ,.ctxtsw_target_translation_en_i(pending_ctxtsw_translation_en_r)
+     ,.ctxtsw_target_npc_i(committed_ctxtsw_target_npc_li)
+     ,.ctxtsw_target_physical_thread_id_i(committed_ctxtsw_target_physical_thread_id_li)
+     ,.ctxtsw_target_asid_i(committed_ctxtsw_target_asid_li)
+     ,.ctxtsw_target_priv_i(committed_ctxtsw_target_priv_li)
+     ,.ctxtsw_target_translation_en_i(committed_ctxtsw_target_translation_en_li)
      ,.fe_ctxtsw_ready_i(fe_ctxtsw_ready_i)
      ,.ctxtsw_launch_o(ctxtsw_launch_lo)
 
@@ -1735,6 +1784,7 @@ module bp_be_top
      ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
      ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
      ,.rpc_active_i(rpc_active_r)
+     ,.rpc_fault_recovery_i(rpc_fault_recovery_enable_li)
      ,.rpc_prepare_ready_i(rpc_prepare_ready_li)
      ,.rpc_prepare_v_o(rpc_prepare_v_lo)
      ,.rpc_prepare_component_o(rpc_prepare_component_lo)
