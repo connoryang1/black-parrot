@@ -65,6 +65,8 @@ module bp_dcache_replay_ctrl
 
   logic [15:0] accepted_entry_count_r, filtered_entry_count_r;
   logic [7:0] accepted_trigger_count_r, dropped_trigger_count_r;
+  logic drain_age_valid_r;
+  logic [11:0] drain_age_r;
 
   wire trigger_accept = trigger_v_i
     & (command_count_r < command_queue_els_p);
@@ -74,6 +76,20 @@ module bp_dcache_replay_ctrl
     & ~entry_valid_r & ~read_pending_r
     & (fetch_index_r < count_r[active_slot_r]);
   wire replay_yumi = entry_valid_r & replay_yumi_i;
+  wire replay_live = busy_r | entry_valid_r | (command_count_r != '0)
+    | (downstream_outstanding_i != '0);
+
+  // This deliberately coarse age is observable without changing the Linux
+  // kernel or benchmark ABI.  It distinguishes replay still in flight from a
+  // recent or comfortably early drain while consuming only the two status
+  // bits that software did not use.
+  wire [1:0] drain_age_bucket = ~drain_age_valid_r | (drain_age_r == '0)
+    ? 2'b00
+    : (drain_age_r < 12'd512)
+      ? 2'b01
+      : (drain_age_r < 12'd2048)
+        ? 2'b10
+        : 2'b11;
 
   assign replay_v_o = entry_valid_r;
   assign replay_paddr_o = entry_paddr_r;
@@ -86,11 +102,15 @@ module bp_dcache_replay_ctrl
   //      41:26   entries filtered before the lower detached-prefetch path
   //      49:42   accepted triggers
   //      57:50   dropped triggers
-  //      59:58   active slot
+  //      59:58   cycles since the most recent replay fully drained:
+  //                0 = no completed drain or replay still live
+  //                1 = 1..511 cycles
+  //                2 = 512..2047 cycles
+  //                3 = 2048 or more cycles
   //      62:60   allocated D-UCE prefetch slots, saturated at seven
   //      63      at least one completed reply awaiting retirement
   assign status_o = {downstream_complete_i, downstream_outstanding_i
-                     ,active_slot_r, dropped_trigger_count_r
+                     ,drain_age_bucket, dropped_trigger_count_r
                      ,accepted_trigger_count_r, filtered_entry_count_r
                      ,accepted_entry_count_r, fetch_index_r[5:0]
                      ,entry_valid_r, command_count_r[1:0], busy_r};
@@ -120,6 +140,8 @@ module bp_dcache_replay_ctrl
       filtered_entry_count_r <= '0;
       accepted_trigger_count_r <= '0;
       dropped_trigger_count_r <= '0;
+      drain_age_valid_r <= 1'b0;
+      drain_age_r <= '0;
     end else begin
       if (config_write_v_i & ~busy_r) begin
         count_r[config_write_slot_i] <= config_write_count_i;
@@ -132,6 +154,16 @@ module bp_dcache_replay_ctrl
         filtered_entry_count_r <= '0;
         accepted_trigger_count_r <= '0;
         dropped_trigger_count_r <= '0;
+        drain_age_valid_r <= 1'b0;
+        drain_age_r <= '0;
+      end else if (trigger_accept) begin
+        drain_age_valid_r <= 1'b1;
+        drain_age_r <= '0;
+      end else if (drain_age_valid_r) begin
+        if (replay_live)
+          drain_age_r <= '0;
+        else if (~&drain_age_r)
+          drain_age_r <= drain_age_r + 1'b1;
       end
 
       if (trigger_accept) begin
