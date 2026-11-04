@@ -81,6 +81,12 @@ module bp_uce
     , input [paddr_width_p-1:0]                      detached_prefetch_addr_i
     , input                                          detached_prefetch_v_i
     , output logic                                   detached_prefetch_ready_and_o
+    // Instantaneous slot telemetry lets software distinguish controller
+    // admission from memory completion and cache retirement.  Counts include
+    // both architectural and detached prefetch ingress because they share the
+    // same slot table and downstream transport.
+    , output logic [`BSG_WIDTH(prefetch_els_p)-1:0]   prefetch_outstanding_o
+    , output logic [`BSG_WIDTH(prefetch_els_p)-1:0]   prefetch_complete_o
 
     , output logic [cache_tag_mem_pkt_width_lp-1:0]  tag_mem_pkt_o
     , output logic                                   tag_mem_pkt_v_o
@@ -184,6 +190,11 @@ module bp_uce
   logic [`BSG_SAFE_CLOG2(assoc_p)-1:0] prefetch_reserved_way;
   wire prefetch_metadata_can_accept = ~prefetch_metadata_pending_v_r
     | cache_req_metadata_v_i;
+  assign prefetch_outstanding_o
+    = `BSG_WIDTH(prefetch_els_p)'($countones(prefetch_valid_r));
+  assign prefetch_complete_o
+    = `BSG_WIDTH(prefetch_els_p)'($countones(prefetch_valid_r
+                                             & prefetch_complete_r));
   wire prefetch_accept = cache_req_yumi_o & prefetch_v_li;
   wire prefetch_allocate = prefetch_accept & prefetch_free_v & ~prefetch_duplicate_v;
   wire prefetch_drop = prefetch_accept & (~prefetch_free_v | prefetch_duplicate_v);

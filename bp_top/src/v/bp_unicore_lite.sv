@@ -89,6 +89,7 @@ module bp_unicore_lite
   logic dcache_replay_accepted_li;
   logic [paddr_width_p-1:0] dcache_replay_paddr_lo;
   logic dcache_replay_core_yumi_lo, dcache_replay_core_accepted_lo;
+  logic [1:0] dcache_prefetch_outstanding_lo, dcache_prefetch_complete_lo;
   logic [paddr_width_p-1:0] dcache_preview_paddr_li;
   logic dcache_preview_v_li;
   logic physical_preview_uncached_lo, physical_preview_nonidem_lo;
@@ -308,6 +309,8 @@ module bp_unicore_lite
      ,.detached_prefetch_addr_i(icache_replay_lane_paddr_lo)
      ,.detached_prefetch_v_i(icache_replay_lane_v_lo)
      ,.detached_prefetch_ready_and_o(icache_replay_lane_ready_li)
+     ,.prefetch_outstanding_o()
+     ,.prefetch_complete_o()
 
      ,.tag_mem_pkt_o(icache_tag_mem_pkt_li)
      ,.tag_mem_pkt_v_o(icache_tag_mem_pkt_v_li)
@@ -362,6 +365,8 @@ module bp_unicore_lite
      ,.replay_paddr_o(dcache_replay_paddr_lo)
      ,.replay_yumi_i(dcache_replay_yumi_li)
      ,.replay_accepted_i(dcache_replay_accepted_li)
+     ,.downstream_outstanding_i(dcache_prefetch_outstanding_lo)
+     ,.downstream_complete_i(dcache_prefetch_complete_lo)
      ,.clear_counters_i(dcache_replay_config_v_lo
                         & dcache_replay_payload_lo[dword_width_gp-1])
      ,.status_o(dcache_replay_status_lo)
@@ -409,6 +414,8 @@ module bp_unicore_lite
      ,.detached_prefetch_addr_i('0)
      ,.detached_prefetch_v_i(1'b0)
      ,.detached_prefetch_ready_and_o()
+     ,.prefetch_outstanding_o(dcache_prefetch_outstanding_lo)
+     ,.prefetch_complete_o(dcache_prefetch_complete_lo)
 
      ,.tag_mem_pkt_o(dcache_tag_mem_pkt_li)
      ,.tag_mem_pkt_v_o(dcache_tag_mem_pkt_v_li)
