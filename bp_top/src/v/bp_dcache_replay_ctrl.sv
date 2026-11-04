@@ -36,8 +36,8 @@ module bp_dcache_replay_ctrl
 
    // D-UCE state is sampled into the otherwise reserved status bits.  This
    // separates command admission from downstream response/retirement state.
-   , input [1:0]                              downstream_outstanding_i
-   , input [1:0]                              downstream_complete_i
+   , input [2:0]                              downstream_outstanding_i
+   , input                                    downstream_complete_i
 
    , input                                    clear_counters_i
    , output logic [63:0]                      status_o
@@ -87,8 +87,8 @@ module bp_dcache_replay_ctrl
   //      49:42   accepted triggers
   //      57:50   dropped triggers
   //      59:58   active slot
-  //      61:60   allocated D-UCE prefetch slots
-  //      63:62   completed D-UCE replies awaiting retirement
+  //      62:60   allocated D-UCE prefetch slots, saturated at seven
+  //      63      at least one completed reply awaiting retirement
   assign status_o = {downstream_complete_i, downstream_outstanding_i
                      ,active_slot_r, dropped_trigger_count_r
                      ,accepted_trigger_count_r, filtered_entry_count_r
