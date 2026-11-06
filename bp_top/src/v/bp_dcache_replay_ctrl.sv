@@ -25,8 +25,9 @@ module bp_dcache_replay_ctrl
 
    // A wakeup emits one stable software-assigned footprint slot.  The optional
    // follow bit requests one instruction-prefix trigger before data replay.
-   // Data cannot begin until the prefix controller and I-UCE have fully
-   // drained, keeping the two detached lanes non-overlapping.
+   // Once a configured prefix is observed active, data starts on the next
+   // controller cycle so the independent I/D lanes overlap without reversing
+   // their architectural launch order.
    , input                                    trigger_v_i
    , input [slot_width_lp-1:0]                trigger_slot_i
    , input                                    trigger_follow_i
@@ -49,8 +50,6 @@ module bp_dcache_replay_ctrl
    , input                                    follow_ready_i
    , input                                    follow_active_i
    , input                                    follow_configured_i
-   , input [2:0]                              follow_downstream_outstanding_i
-   , input                                    follow_downstream_complete_i
    , output logic                             follow_trigger_o
 
    , input                                    clear_counters_i
@@ -72,7 +71,7 @@ module bp_dcache_replay_ctrl
 
   logic busy_r, read_pending_r, entry_valid_r;
   logic follow_pending_r, follow_armed_r, follow_wait_r;
-  logic follow_seen_r, follow_drain_armed_r;
+  logic follow_seen_r;
   logic [slot_width_lp-1:0] active_slot_r;
   logic [count_width_lp-1:0] fetch_index_r;
   logic [table_addr_width_lp-1:0] read_addr_r;
@@ -100,9 +99,7 @@ module bp_dcache_replay_ctrl
   wire follow_ready = follow_pending_r & follow_armed_r
     & (downstream_outstanding_i == '0) & ~downstream_complete_i
     & follow_ready_i;
-  wire follow_drained = follow_wait_r & follow_drain_armed_r
-    & ~follow_active_i & (follow_downstream_outstanding_i == '0)
-    & ~follow_downstream_complete_i;
+  wire follow_launched = follow_wait_r & follow_seen_r;
   wire replay_live = sequence_busy | entry_valid_r | (command_count_r != '0)
     | follow_pending_r | (downstream_outstanding_i != '0)
     | downstream_complete_i;
@@ -162,7 +159,6 @@ module bp_dcache_replay_ctrl
       follow_armed_r <= 1'b0;
       follow_wait_r <= 1'b0;
       follow_seen_r <= 1'b0;
-      follow_drain_armed_r <= 1'b0;
       read_pending_r <= 1'b0;
       entry_valid_r <= 1'b0;
       active_slot_r <= '0;
@@ -234,24 +230,17 @@ module bp_dcache_replay_ctrl
         follow_armed_r <= 1'b0;
         follow_wait_r <= 1'b1;
         follow_seen_r <= ~follow_configured_i;
-        follow_drain_armed_r <= 1'b0;
       end
 
-      // A configured prefix must be observed active before its later idle
-      // state can release data.  Once idle, wait one full controller cycle so
-      // the final I-UCE allocation becomes visible before judging drain.
-      if (follow_wait_r) begin
-        if (follow_active_i) begin
-          follow_seen_r <= 1'b1;
-          follow_drain_armed_r <= 1'b0;
-        end else if (follow_seen_r & ~follow_drain_armed_r)
-          follow_drain_armed_r <= 1'b1;
-      end
+      // A configured prefix must be observed active before data can begin.
+      // follow_launched uses the registered observation, leaving one full
+      // cycle between recognizing prefix activity and releasing data.
+      if (follow_wait_r & follow_active_i)
+        follow_seen_r <= 1'b1;
 
-      if (follow_drained) begin
+      if (follow_launched) begin
         follow_wait_r <= 1'b0;
         follow_seen_r <= 1'b0;
-        follow_drain_armed_r <= 1'b0;
         fetch_index_r <= '0;
         read_pending_r <= 1'b0;
         entry_valid_r <= 1'b0;
