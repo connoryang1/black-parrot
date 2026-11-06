@@ -96,10 +96,14 @@ module bp_dcache_replay_ctrl
   // D-UCE allocation becomes observable after the replay admission edge.
   // Require one full controller cycle before judging the downstream state so
   // a just-admitted final entry cannot create a premature combinational pulse.
-  wire follow_ready = follow_pending_r & follow_armed_r
-    & (downstream_outstanding_i == '0) & ~downstream_complete_i
-    & follow_ready_i;
-  wire follow_launched = follow_wait_r & follow_seen_r;
+  // Instruction replay has an independent UCE lane, so ordinary D-UCE
+  // traffic must not postpone its launch.  Keep the downstream drain at the
+  // data-release boundary instead: this preserves command ordering and avoids
+  // mixing a new footprint with an older D-UCE response while giving the
+  // instruction prefix the full wake-to-resume interval.
+  wire follow_ready = follow_pending_r & follow_armed_r & follow_ready_i;
+  wire follow_launched = follow_wait_r & follow_seen_r
+    & (downstream_outstanding_i == '0) & ~downstream_complete_i;
   wire replay_live = sequence_busy | entry_valid_r | (command_count_r != '0)
     | follow_pending_r | (downstream_outstanding_i != '0)
     | downstream_complete_i;
