@@ -87,6 +87,7 @@ module bp_unicore_lite
   logic [dword_width_gp-1:0] dcache_replay_status_lo;
   logic dcache_replay_v_lo, dcache_replay_yumi_li;
   logic dcache_replay_accepted_li;
+  logic dcache_replay_follow_trigger_lo;
   logic [paddr_width_p-1:0] dcache_replay_paddr_lo;
   logic dcache_replay_core_yumi_lo, dcache_replay_core_accepted_lo;
   logic [`BSG_WIDTH(dcache_prefetch_els_p+1)-1:0]
@@ -265,7 +266,8 @@ module bp_unicore_lite
      ,.count_write_v_i(icache_prefix_count_v_lo)
      ,.count_i(icache_prefix_count_lo)
      ,.clear_counters_i(icache_prefix_clear_v_lo)
-     ,.trigger_v_i(icache_prefix_trigger_v_lo)
+     ,.trigger_v_i(icache_prefix_trigger_v_lo
+                   | dcache_replay_follow_trigger_lo)
      ,.resident_query_v_o(icache_replay_query_v_lo)
      ,.resident_query_paddr_o(icache_replay_query_paddr_lo)
      ,.resident_i(icache_replay_query_hit_li)
@@ -371,12 +373,15 @@ module bp_unicore_lite
      ,.config_write_gap_i(dcache_replay_payload_lo[31:24])
      ,.trigger_v_i(dcache_replay_trigger_v_lo)
      ,.trigger_slot_i(dcache_replay_payload_lo[1:0])
+     ,.trigger_follow_i(dcache_replay_payload_lo[2])
      ,.replay_v_o(dcache_replay_v_lo)
      ,.replay_paddr_o(dcache_replay_paddr_lo)
      ,.replay_yumi_i(dcache_replay_yumi_li)
      ,.replay_accepted_i(dcache_replay_accepted_li)
      ,.downstream_outstanding_i(dcache_prefetch_outstanding_status_lo)
      ,.downstream_complete_i(dcache_prefetch_complete_status_lo)
+     ,.follow_ready_i(~icache_prefix_status_lo[1])
+     ,.follow_trigger_o(dcache_replay_follow_trigger_lo)
      ,.clear_counters_i(dcache_replay_config_v_lo
                         & dcache_replay_payload_lo[dword_width_gp-1])
      ,.status_o(dcache_replay_status_lo)

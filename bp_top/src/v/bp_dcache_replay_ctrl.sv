@@ -23,9 +23,12 @@ module bp_dcache_replay_ctrl
    , input [15:0]                             config_write_delay_i
    , input [7:0]                              config_write_gap_i
 
-   // A wakeup emits one stable software-assigned footprint slot.
+   // A wakeup emits one stable software-assigned footprint slot.  The optional
+   // follow bit requests one instruction-prefix trigger after every admitted
+   // data response has drained from D-UCE.
    , input                                    trigger_v_i
    , input [slot_width_lp-1:0]                trigger_slot_i
+   , input                                    trigger_follow_i
 
    // The top level consumes an entry either by admitting it to D-UCE or by
    // filtering an invalid/PMA-rejected address. Backpressure holds the entry.
@@ -38,6 +41,12 @@ module bp_dcache_replay_ctrl
    // separates command admission from downstream response/retirement state.
    , input [2:0]                              downstream_outstanding_i
    , input                                    downstream_complete_i
+
+   // Hold the sequenced trigger until the shared instruction-prefix
+   // controller can accept it rather than treating a busy controller as a
+   // best-effort drop.
+   , input                                    follow_ready_i
+   , output logic                             follow_trigger_o
 
    , input                                    clear_counters_i
    , output logic [63:0]                      status_o
@@ -52,10 +61,12 @@ module bp_dcache_replay_ctrl
   logic [slots_p-1:0][7:0] gap_config_r;
 
   logic [command_queue_els_p-1:0][slot_width_lp-1:0] command_queue_r;
+  logic [command_queue_els_p-1:0] command_follow_queue_r;
   logic [command_ptr_width_lp-1:0] command_head_r, command_tail_r;
   logic [command_count_width_lp-1:0] command_count_r;
 
   logic busy_r, read_pending_r, entry_valid_r;
+  logic active_follow_r, follow_pending_r, follow_armed_r;
   logic [slot_width_lp-1:0] active_slot_r;
   logic [count_width_lp-1:0] fetch_index_r;
   logic [table_addr_width_lp-1:0] read_addr_r;
@@ -71,13 +82,21 @@ module bp_dcache_replay_ctrl
   wire trigger_accept = trigger_v_i
     & (command_count_r < command_queue_els_p);
   wire trigger_drop = trigger_v_i & ~trigger_accept;
-  wire command_start = ~busy_r & (command_count_r != '0);
+  wire command_start = ~busy_r & ~follow_pending_r
+    & (command_count_r != '0);
   wire start_read = busy_r & (delay_r == '0) & (gap_r == '0)
     & ~entry_valid_r & ~read_pending_r
     & (fetch_index_r < count_r[active_slot_r]);
   wire replay_yumi = entry_valid_r & replay_yumi_i;
+  // D-UCE allocation becomes observable after the replay admission edge.
+  // Require one full controller cycle before judging the downstream state so
+  // a just-admitted final entry cannot create a premature combinational pulse.
+  wire follow_ready = follow_pending_r & follow_armed_r
+    & (downstream_outstanding_i == '0) & ~downstream_complete_i
+    & follow_ready_i;
   wire replay_live = busy_r | entry_valid_r | (command_count_r != '0)
-    | (downstream_outstanding_i != '0);
+    | follow_pending_r | (downstream_outstanding_i != '0)
+    | downstream_complete_i;
 
   // This deliberately coarse age is observable without changing the Linux
   // kernel or benchmark ABI.  It distinguishes replay still in flight from a
@@ -93,6 +112,7 @@ module bp_dcache_replay_ctrl
 
   assign replay_v_o = entry_valid_r;
   assign replay_paddr_o = entry_paddr_r;
+  assign follow_trigger_o = follow_ready;
 
   // bits  0      replay active
   //       2:1    queued commands
@@ -127,7 +147,11 @@ module bp_dcache_replay_ctrl
       command_head_r <= '0;
       command_tail_r <= '0;
       command_count_r <= '0;
+      command_follow_queue_r <= '0;
       busy_r <= 1'b0;
+      active_follow_r <= 1'b0;
+      follow_pending_r <= 1'b0;
+      follow_armed_r <= 1'b0;
       read_pending_r <= 1'b0;
       entry_valid_r <= 1'b0;
       active_slot_r <= '0;
@@ -168,6 +192,7 @@ module bp_dcache_replay_ctrl
 
       if (trigger_accept) begin
         command_queue_r[command_tail_r] <= trigger_slot_i;
+        command_follow_queue_r[command_tail_r] <= trigger_follow_i;
         command_tail_r <= command_tail_r + 1'b1;
         if (~clear_counters_i & ~&accepted_trigger_count_r)
           accepted_trigger_count_r <= accepted_trigger_count_r + 1'b1;
@@ -176,6 +201,7 @@ module bp_dcache_replay_ctrl
 
       if (command_start) begin
         active_slot_r <= command_queue_r[command_head_r];
+        active_follow_r <= command_follow_queue_r[command_head_r];
         command_head_r <= command_head_r + 1'b1;
         fetch_index_r <= '0;
         read_pending_r <= 1'b0;
@@ -183,6 +209,19 @@ module bp_dcache_replay_ctrl
         delay_r <= delay_config_r[command_queue_r[command_head_r]];
         gap_r <= '0;
         busy_r <= (count_r[command_queue_r[command_head_r]] != '0);
+        if ((count_r[command_queue_r[command_head_r]] == '0)
+            & command_follow_queue_r[command_head_r]) begin
+          follow_pending_r <= 1'b1;
+          follow_armed_r <= 1'b0;
+        end
+      end
+
+      if (follow_pending_r & ~follow_armed_r)
+        follow_armed_r <= 1'b1;
+
+      if (follow_ready) begin
+        follow_pending_r <= 1'b0;
+        follow_armed_r <= 1'b0;
       end
 
       case ({trigger_accept, command_start})
@@ -216,8 +255,13 @@ module bp_dcache_replay_ctrl
             accepted_entry_count_r <= accepted_entry_count_r + 1'b1;
         end else if (~clear_counters_i & ~&filtered_entry_count_r)
           filtered_entry_count_r <= filtered_entry_count_r + 1'b1;
-        if ((fetch_index_r >= count_r[active_slot_r]) & ~read_pending_r)
+        if ((fetch_index_r >= count_r[active_slot_r]) & ~read_pending_r) begin
           busy_r <= 1'b0;
+          if (active_follow_r) begin
+            follow_pending_r <= 1'b1;
+            follow_armed_r <= 1'b0;
+          end
+        end
       end
     end
   end
