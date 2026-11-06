@@ -24,8 +24,9 @@ module bp_dcache_replay_ctrl
    , input [7:0]                              config_write_gap_i
 
    // A wakeup emits one stable software-assigned footprint slot.  The optional
-   // follow bit requests one instruction-prefix trigger after every admitted
-   // data response has drained from D-UCE.
+   // follow bit requests one instruction-prefix trigger before data replay.
+   // Data cannot begin until the prefix controller and I-UCE have fully
+   // drained, keeping the two detached lanes non-overlapping.
    , input                                    trigger_v_i
    , input [slot_width_lp-1:0]                trigger_slot_i
    , input                                    trigger_follow_i
@@ -46,6 +47,10 @@ module bp_dcache_replay_ctrl
    // controller can accept it rather than treating a busy controller as a
    // best-effort drop.
    , input                                    follow_ready_i
+   , input                                    follow_active_i
+   , input                                    follow_configured_i
+   , input [2:0]                              follow_downstream_outstanding_i
+   , input                                    follow_downstream_complete_i
    , output logic                             follow_trigger_o
 
    , input                                    clear_counters_i
@@ -66,7 +71,8 @@ module bp_dcache_replay_ctrl
   logic [command_count_width_lp-1:0] command_count_r;
 
   logic busy_r, read_pending_r, entry_valid_r;
-  logic active_follow_r, follow_pending_r, follow_armed_r;
+  logic follow_pending_r, follow_armed_r, follow_wait_r;
+  logic follow_seen_r, follow_drain_armed_r;
   logic [slot_width_lp-1:0] active_slot_r;
   logic [count_width_lp-1:0] fetch_index_r;
   logic [table_addr_width_lp-1:0] read_addr_r;
@@ -82,8 +88,8 @@ module bp_dcache_replay_ctrl
   wire trigger_accept = trigger_v_i
     & (command_count_r < command_queue_els_p);
   wire trigger_drop = trigger_v_i & ~trigger_accept;
-  wire command_start = ~busy_r & ~follow_pending_r
-    & (command_count_r != '0);
+  wire sequence_busy = busy_r | follow_pending_r | follow_wait_r;
+  wire command_start = ~sequence_busy & (command_count_r != '0);
   wire start_read = busy_r & (delay_r == '0) & (gap_r == '0)
     & ~entry_valid_r & ~read_pending_r
     & (fetch_index_r < count_r[active_slot_r]);
@@ -94,7 +100,10 @@ module bp_dcache_replay_ctrl
   wire follow_ready = follow_pending_r & follow_armed_r
     & (downstream_outstanding_i == '0) & ~downstream_complete_i
     & follow_ready_i;
-  wire replay_live = busy_r | entry_valid_r | (command_count_r != '0)
+  wire follow_drained = follow_wait_r & follow_drain_armed_r
+    & ~follow_active_i & (follow_downstream_outstanding_i == '0)
+    & ~follow_downstream_complete_i;
+  wire replay_live = sequence_busy | entry_valid_r | (command_count_r != '0)
     | follow_pending_r | (downstream_outstanding_i != '0)
     | downstream_complete_i;
 
@@ -133,10 +142,10 @@ module bp_dcache_replay_ctrl
                      ,drain_age_bucket, dropped_trigger_count_r
                      ,accepted_trigger_count_r, filtered_entry_count_r
                      ,accepted_entry_count_r, fetch_index_r[5:0]
-                     ,entry_valid_r, command_count_r[1:0], busy_r};
+                     ,entry_valid_r, command_count_r[1:0], sequence_busy};
 
   always_ff @(posedge clk_i) begin
-    if (entry_write_v_i & ~busy_r)
+    if (entry_write_v_i & ~sequence_busy)
       footprint_mem[{entry_write_slot_i, entry_write_index_i}]
         <= entry_write_paddr_i;
 
@@ -149,9 +158,11 @@ module bp_dcache_replay_ctrl
       command_count_r <= '0;
       command_follow_queue_r <= '0;
       busy_r <= 1'b0;
-      active_follow_r <= 1'b0;
       follow_pending_r <= 1'b0;
       follow_armed_r <= 1'b0;
+      follow_wait_r <= 1'b0;
+      follow_seen_r <= 1'b0;
+      follow_drain_armed_r <= 1'b0;
       read_pending_r <= 1'b0;
       entry_valid_r <= 1'b0;
       active_slot_r <= '0;
@@ -167,7 +178,7 @@ module bp_dcache_replay_ctrl
       drain_age_valid_r <= 1'b0;
       drain_age_r <= '0;
     end else begin
-      if (config_write_v_i & ~busy_r) begin
+      if (config_write_v_i & ~sequence_busy) begin
         count_r[config_write_slot_i] <= config_write_count_i;
         delay_config_r[config_write_slot_i] <= config_write_delay_i;
         gap_config_r[config_write_slot_i] <= config_write_gap_i;
@@ -201,19 +212,18 @@ module bp_dcache_replay_ctrl
 
       if (command_start) begin
         active_slot_r <= command_queue_r[command_head_r];
-        active_follow_r <= command_follow_queue_r[command_head_r];
         command_head_r <= command_head_r + 1'b1;
         fetch_index_r <= '0;
         read_pending_r <= 1'b0;
         entry_valid_r <= 1'b0;
         delay_r <= delay_config_r[command_queue_r[command_head_r]];
         gap_r <= '0;
-        busy_r <= (count_r[command_queue_r[command_head_r]] != '0);
-        if ((count_r[command_queue_r[command_head_r]] == '0)
-            & command_follow_queue_r[command_head_r]) begin
+        if (command_follow_queue_r[command_head_r]) begin
+          busy_r <= 1'b0;
           follow_pending_r <= 1'b1;
           follow_armed_r <= 1'b0;
-        end
+        end else
+          busy_r <= (count_r[command_queue_r[command_head_r]] != '0);
       end
 
       if (follow_pending_r & ~follow_armed_r)
@@ -222,6 +232,32 @@ module bp_dcache_replay_ctrl
       if (follow_ready) begin
         follow_pending_r <= 1'b0;
         follow_armed_r <= 1'b0;
+        follow_wait_r <= 1'b1;
+        follow_seen_r <= ~follow_configured_i;
+        follow_drain_armed_r <= 1'b0;
+      end
+
+      // A configured prefix must be observed active before its later idle
+      // state can release data.  Once idle, wait one full controller cycle so
+      // the final I-UCE allocation becomes visible before judging drain.
+      if (follow_wait_r) begin
+        if (follow_active_i) begin
+          follow_seen_r <= 1'b1;
+          follow_drain_armed_r <= 1'b0;
+        end else if (follow_seen_r & ~follow_drain_armed_r)
+          follow_drain_armed_r <= 1'b1;
+      end
+
+      if (follow_drained) begin
+        follow_wait_r <= 1'b0;
+        follow_seen_r <= 1'b0;
+        follow_drain_armed_r <= 1'b0;
+        fetch_index_r <= '0;
+        read_pending_r <= 1'b0;
+        entry_valid_r <= 1'b0;
+        delay_r <= delay_config_r[active_slot_r];
+        gap_r <= '0;
+        busy_r <= (count_r[active_slot_r] != '0);
       end
 
       case ({trigger_accept, command_start})
@@ -257,10 +293,6 @@ module bp_dcache_replay_ctrl
           filtered_entry_count_r <= filtered_entry_count_r + 1'b1;
         if ((fetch_index_r >= count_r[active_slot_r]) & ~read_pending_r) begin
           busy_r <= 1'b0;
-          if (active_follow_r) begin
-            follow_pending_r <= 1'b1;
-            follow_armed_r <= 1'b0;
-          end
         end
       end
     end
