@@ -116,6 +116,9 @@ module bp_be_csr
    , output logic                            icache_prefix_count_v_o
    , output logic [8:0]                      icache_prefix_count_o
    , output logic                            icache_prefix_trigger_v_o
+   , output logic                            icache_prefix_trigger_range_v_o
+   , output logic [7:0]                      icache_prefix_trigger_start_o
+   , output logic [8:0]                      icache_prefix_trigger_count_o
    , output logic                            icache_prefix_clear_v_o
 
    // Supervisor physical data preview. The address becomes visible only
@@ -1077,9 +1080,11 @@ module bp_be_csr
   // 0x7c1 payload: physical line address in the low paddr bits and the
   // destination table index in bits 63:56. 0x7c2 programs the number
   // of valid entries (0--256) and bit 63 clears counters. The supervisor-
-  // custom 0x5c0 CSR contains no address data: a write requests one replay of
-  // the immutable M-configured prefix. This separation prevents S-mode from
-  // turning the advisory path into an arbitrary physical fetch primitive.
+  // custom 0x5c0 CSR never contains address data. A legacy write requests the
+  // complete immutable M-configured prefix. Bit 63 optionally selects a
+  // bounded subrange: bits 7:0 are its start and bits 16:8 its count. The
+  // controller rejects ranges outside the configured table, so S-mode can
+  // choose among preauthorized entries but cannot inject physical addresses.
   assign icache_prefix_entry_v_o = csr_w_v_li & (csr_addr_li == 12'h7c1)
                                     & is_m_mode;
   assign icache_prefix_entry_index_o = csr_data_li[63:56];
@@ -1091,6 +1096,9 @@ module bp_be_csr
                                     & csr_data_li[dword_width_gp-1];
   assign icache_prefix_trigger_v_o = csr_w_v_li & (csr_addr_li == 12'h5c0)
                                       & (is_s_mode | is_m_mode);
+  assign icache_prefix_trigger_range_v_o = csr_data_li[63];
+  assign icache_prefix_trigger_start_o = csr_data_li[7:0];
+  assign icache_prefix_trigger_count_o = csr_data_li[16:8];
 
   // The generic decoder rejects U-mode access to this supervisor-custom CSR.
   // Repeat privilege and physical-width checks before the advisory address

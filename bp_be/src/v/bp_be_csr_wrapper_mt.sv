@@ -126,6 +126,9 @@ module bp_be_csr_wrapper_mt
    , output logic                            icache_prefix_count_v_o
    , output logic [8:0]                      icache_prefix_count_o
    , output logic                            icache_prefix_trigger_v_o
+   , output logic                            icache_prefix_trigger_range_v_o
+   , output logic [7:0]                      icache_prefix_trigger_start_o
+   , output logic [8:0]                      icache_prefix_trigger_count_o
    , output logic                            icache_prefix_clear_v_o
    , input                                   physical_preview_idle_i
    , output logic                            physical_preview_v_o
@@ -174,6 +177,9 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            icache_prefix_count_v_co;
   logic [num_threads_p-1:0][8:0]                       icache_prefix_count_co;
   logic [num_threads_p-1:0]                            icache_prefix_trigger_v_co;
+  logic [num_threads_p-1:0]                            icache_prefix_trigger_range_v_co;
+  logic [num_threads_p-1:0][7:0]                       icache_prefix_trigger_start_co;
+  logic [num_threads_p-1:0][8:0]                       icache_prefix_trigger_count_co;
   logic [num_threads_p-1:0]                            icache_prefix_clear_v_co;
   logic [num_threads_p-1:0]                            physical_preview_v_co;
   logic [num_threads_p-1:0][paddr_width_p-1:0]         physical_preview_paddr_co;
@@ -289,6 +295,9 @@ module bp_be_csr_wrapper_mt
        ,.icache_prefix_count_v_o(icache_prefix_count_v_co[i])
        ,.icache_prefix_count_o(icache_prefix_count_co[i])
        ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_co[i])
+       ,.icache_prefix_trigger_range_v_o(icache_prefix_trigger_range_v_co[i])
+       ,.icache_prefix_trigger_start_o(icache_prefix_trigger_start_co[i])
+       ,.icache_prefix_trigger_count_o(icache_prefix_trigger_count_co[i])
        ,.icache_prefix_clear_v_o(icache_prefix_clear_v_co[i])
        ,.physical_preview_idle_i(physical_preview_idle_i)
        ,.physical_preview_v_o(physical_preview_v_co[i])
@@ -339,6 +348,12 @@ module bp_be_csr_wrapper_mt
   assign icache_prefix_count_v_o = icache_prefix_count_v_co[retire_thread_id_i];
   assign icache_prefix_count_o = icache_prefix_count_co[retire_thread_id_i];
   assign icache_prefix_trigger_v_o = icache_prefix_trigger_v_co[retire_thread_id_i];
+  assign icache_prefix_trigger_range_v_o =
+    icache_prefix_trigger_range_v_co[retire_thread_id_i];
+  assign icache_prefix_trigger_start_o =
+    icache_prefix_trigger_start_co[retire_thread_id_i];
+  assign icache_prefix_trigger_count_o =
+    icache_prefix_trigger_count_co[retire_thread_id_i];
   assign icache_prefix_clear_v_o = icache_prefix_clear_v_co[retire_thread_id_i];
   assign physical_preview_v_o = physical_preview_v_co[retire_thread_id_i];
   assign physical_preview_paddr_o = physical_preview_paddr_co[retire_thread_id_i];

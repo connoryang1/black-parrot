@@ -62,8 +62,11 @@ module bp_unicore_lite
   logic [dword_width_gp-1:0] icache_prefix_status_lo;
   logic icache_prefix_entry_v_lo, icache_prefix_count_v_lo;
   logic icache_prefix_trigger_v_lo, icache_prefix_clear_v_lo;
+  logic icache_prefix_trigger_range_v_lo;
   logic [7:0] icache_prefix_entry_index_lo;
+  logic [7:0] icache_prefix_trigger_start_lo;
   logic [8:0] icache_prefix_count_lo;
+  logic [8:0] icache_prefix_trigger_count_lo;
   logic [paddr_width_p-1:0] icache_prefix_entry_paddr_lo;
 
   bp_fe_icache_tag_mem_pkt_s icache_tag_mem_pkt_li;
@@ -249,6 +252,9 @@ module bp_unicore_lite
      ,.icache_prefix_count_v_o(icache_prefix_count_v_lo)
      ,.icache_prefix_count_o(icache_prefix_count_lo)
      ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_lo)
+     ,.icache_prefix_trigger_range_v_o(icache_prefix_trigger_range_v_lo)
+     ,.icache_prefix_trigger_start_o(icache_prefix_trigger_start_lo)
+     ,.icache_prefix_trigger_count_o(icache_prefix_trigger_count_lo)
      ,.icache_prefix_clear_v_o(icache_prefix_clear_v_lo)
      );
 
@@ -268,6 +274,11 @@ module bp_unicore_lite
      ,.clear_counters_i(icache_prefix_clear_v_lo)
      ,.trigger_v_i(icache_prefix_trigger_v_lo
                    | dcache_replay_follow_trigger_lo)
+     ,.trigger_range_v_i(icache_prefix_trigger_v_lo
+                         & ~dcache_replay_follow_trigger_lo
+                         & icache_prefix_trigger_range_v_lo)
+     ,.trigger_start_i(icache_prefix_trigger_start_lo)
+     ,.trigger_count_i(icache_prefix_trigger_count_lo)
      ,.resident_query_v_o(icache_replay_query_v_lo)
      ,.resident_query_paddr_o(icache_replay_query_paddr_lo)
      ,.resident_i(icache_replay_query_hit_li)

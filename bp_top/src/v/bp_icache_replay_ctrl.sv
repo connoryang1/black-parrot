@@ -23,6 +23,9 @@ module bp_icache_replay_ctrl
 
    // S/M-mode launch plane.
    , input                              trigger_v_i
+   , input                              trigger_range_v_i
+   , input [index_width_lp-1:0]         trigger_start_i
+   , input [count_width_lp-1:0]         trigger_count_i
 
    // Completed advisory-buffer residency query. A prefix entry spends one
    // cycle here before it may enter the UCE, so already-complete lines do not
@@ -40,7 +43,7 @@ module bp_icache_replay_ctrl
    );
 
   logic [paddr_width_p-1:0] prefix_mem [0:els_p-1];
-  logic [count_width_lp-1:0] count_r, fetch_index_r;
+  logic [count_width_lp-1:0] count_r, fetch_index_r, fetch_end_r;
   logic [index_width_lp-1:0] read_index_r;
   logic [paddr_width_p-1:0] entry_paddr_r;
   logic busy_r, read_pending_r, entry_valid_r, resident_query_pending_r;
@@ -48,10 +51,16 @@ module bp_icache_replay_ctrl
   logic [7:0] trigger_count_r, dropped_trigger_count_r;
   logic [8:0] resident_drop_count_r;
 
+  wire [count_width_lp:0] trigger_end =
+    {{(count_width_lp+1-index_width_lp){1'b0}}, trigger_start_i}
+    + {1'b0, trigger_count_i};
+  wire trigger_range_valid = (trigger_count_i != '0)
+    & (trigger_end <= {1'b0, count_r});
+
   wire prefix_accept = entry_valid_r & ~resident_query_pending_r
     & replay_ready_i & ~direct_v_i;
   wire start_read = busy_r & ~entry_valid_r & ~read_pending_r
-                    & (fetch_index_r < count_r);
+                    & (fetch_index_r < fetch_end_r);
 
   assign direct_ready_o = replay_ready_i;
   assign resident_query_v_o = entry_valid_r & resident_query_pending_r;
@@ -83,6 +92,7 @@ module bp_icache_replay_ctrl
     if (reset_i) begin
       count_r <= '0;
       fetch_index_r <= '0;
+      fetch_end_r <= '0;
       read_index_r <= '0;
       entry_paddr_r <= '0;
       busy_r <= 1'b0;
@@ -105,9 +115,13 @@ module bp_icache_replay_ctrl
       end
 
       if (trigger_v_i) begin
-        if (~busy_r & (count_r != '0)) begin
+        if (~busy_r & (count_r != '0)
+            & (~trigger_range_v_i | trigger_range_valid)) begin
           busy_r <= 1'b1;
-          fetch_index_r <= '0;
+          fetch_index_r <= trigger_range_v_i
+            ? {1'b0, trigger_start_i} : '0;
+          fetch_end_r <= trigger_range_v_i
+            ? trigger_end[count_width_lp-1:0] : count_r;
           read_pending_r <= 1'b0;
           entry_valid_r <= 1'b0;
           resident_query_pending_r <= 1'b0;
@@ -136,7 +150,7 @@ module bp_icache_replay_ctrl
           entry_valid_r <= 1'b0;
           if (~clear_counters_i & ~&resident_drop_count_r)
             resident_drop_count_r <= resident_drop_count_r + 1'b1;
-          if ((fetch_index_r >= count_r) & ~read_pending_r)
+          if ((fetch_index_r >= fetch_end_r) & ~read_pending_r)
             busy_r <= 1'b0;
         end
       end
@@ -145,7 +159,7 @@ module bp_icache_replay_ctrl
         entry_valid_r <= 1'b0;
         if (~clear_counters_i & ~&accepted_count_r)
           accepted_count_r <= accepted_count_r + 1'b1;
-        if ((fetch_index_r >= count_r) & ~read_pending_r)
+        if ((fetch_index_r >= fetch_end_r) & ~read_pending_r)
           busy_r <= 1'b0;
       end
     end

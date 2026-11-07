@@ -103,6 +103,9 @@ module bp_be_top
    , output logic                                    icache_prefix_count_v_o
    , output logic [8:0]                              icache_prefix_count_o
    , output logic                                    icache_prefix_trigger_v_o
+   , output logic                                    icache_prefix_trigger_range_v_o
+   , output logic [7:0]                              icache_prefix_trigger_start_o
+   , output logic [8:0]                              icache_prefix_trigger_count_o
    , output logic                                    icache_prefix_clear_v_o
    , input                                           physical_preview_idle_i
    , output logic                                    physical_preview_v_o
@@ -1608,6 +1611,9 @@ module bp_be_top
      ,.icache_prefix_count_v_o(icache_prefix_count_v_o)
      ,.icache_prefix_count_o(icache_prefix_count_o)
      ,.icache_prefix_trigger_v_o(icache_prefix_trigger_v_o)
+     ,.icache_prefix_trigger_range_v_o(icache_prefix_trigger_range_v_o)
+     ,.icache_prefix_trigger_start_o(icache_prefix_trigger_start_o)
+     ,.icache_prefix_trigger_count_o(icache_prefix_trigger_count_o)
      ,.icache_prefix_clear_v_o(icache_prefix_clear_v_o)
      ,.physical_preview_idle_i(physical_preview_idle_i)
      ,.physical_preview_v_o(physical_preview_v_o)
