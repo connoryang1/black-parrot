@@ -161,7 +161,7 @@ module bp_unicore_lite
    #(.bp_params_p(bp_params_p)
      ,.cache_miss_trace_p(cache_miss_trace_p)
      ,.icache_replay_buffer_p(1'b1)
-     ,.icache_replay_buffer_els_p(16)
+     ,.icache_replay_buffer_els_p(32)
      )
    core_minimal
     (.clk_i(posedge_clk)
