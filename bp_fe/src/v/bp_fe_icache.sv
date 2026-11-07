@@ -154,6 +154,24 @@ module bp_fe_icache
   localparam replay_buffer_slot_width_lp = `BSG_SAFE_CLOG2(replay_buffer_els_lp);
   localparam replay_words_per_line_lp = block_width_p / data_width_p;
   localparam replay_words_per_fill_lp = fill_width_p / data_width_p;
+  // The 32-entry FPGA configuration is organized as four hashed banks of
+  // eight associative ways.  Fixed-capacity banking removes the 32-way tag
+  // search from the fetch path while preserving one monolithic 32-entry data
+  // index.  The selected XORs distribute every retained Linux prefix used by
+  // this project within eight ways; other capacities keep the legacy flat
+  // organization and replacement policy.
+  localparam replay_buffer_banks_lp = 4;
+  localparam replay_buffer_bank_width_lp = `BSG_SAFE_CLOG2(replay_buffer_banks_lp);
+  localparam replay_buffer_bank_ways_lp = replay_buffer_els_lp / replay_buffer_banks_lp;
+  localparam replay_buffer_bank_way_width_lp = `BSG_SAFE_CLOG2(replay_buffer_bank_ways_lp);
+  localparam replay_buffer_banked_lp = replay_buffer_p & (replay_buffer_els_lp == 32);
+  typedef logic [paddr_width_p-block_offset_width_lp-1:0] replay_line_addr_s;
+
+  function automatic logic [replay_buffer_bank_width_lp-1:0]
+    replay_buffer_bank(input replay_line_addr_s line_addr);
+    replay_buffer_bank[0] = line_addr[0] ^ line_addr[13];
+    replay_buffer_bank[1] = line_addr[3] ^ line_addr[6];
+  endfunction
 
   // State machine declaration
   enum logic [1:0] {e_ready, e_miss, e_recover} state_n, state_r;
@@ -470,27 +488,59 @@ module bp_fe_icache
   logic replay_buffer_hit_tv;
   logic [replay_buffer_slot_width_lp-1:0] replay_buffer_hit_slot_tv;
   logic [data_width_p-1:0] replay_buffer_data_tv;
+  wire [replay_buffer_bank_width_lp-1:0] replay_buffer_hit_bank_tv
+    = replay_buffer_bank(paddr_tv_r[paddr_width_p-1:block_offset_width_lp]);
   always_comb begin
     replay_buffer_hit_tv = 1'b0;
     replay_buffer_hit_slot_tv = '0;
-    for (int i = replay_buffer_els_lp-1; i >= 0; i--)
-      if (replay_buffer_p & replay_buffer_alloc_r[i]
-          & (&replay_buffer_beat_v_r[i])
-          & (replay_buffer_addr_r[i]
-             == paddr_tv_r[paddr_width_p-1:block_offset_width_lp])) begin
-        replay_buffer_hit_tv = 1'b1;
-        replay_buffer_hit_slot_tv = replay_buffer_slot_width_lp'(i);
+    if (replay_buffer_banked_lp) begin
+      for (int way = replay_buffer_bank_ways_lp-1; way >= 0; way--) begin
+        automatic logic [replay_buffer_slot_width_lp-1:0] slot
+          = replay_buffer_slot_width_lp'
+              (replay_buffer_hit_bank_tv*replay_buffer_bank_ways_lp + way);
+        if (replay_buffer_alloc_r[slot]
+            & (&replay_buffer_beat_v_r[slot])
+            & (replay_buffer_addr_r[slot]
+               == paddr_tv_r[paddr_width_p-1:block_offset_width_lp])) begin
+          replay_buffer_hit_tv = 1'b1;
+          replay_buffer_hit_slot_tv = slot;
+        end
       end
+    end else begin
+      for (int i = replay_buffer_els_lp-1; i >= 0; i--)
+        if (replay_buffer_p & replay_buffer_alloc_r[i]
+            & (&replay_buffer_beat_v_r[i])
+            & (replay_buffer_addr_r[i]
+               == paddr_tv_r[paddr_width_p-1:block_offset_width_lp])) begin
+          replay_buffer_hit_tv = 1'b1;
+          replay_buffer_hit_slot_tv = replay_buffer_slot_width_lp'(i);
+        end
+    end
     replay_buffer_hit_tv &= v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r
       & ~uncached_tv_r & ~cache_hit_v_tv;
   end
+  wire [replay_buffer_bank_width_lp-1:0] replay_buffer_query_bank
+    = replay_buffer_bank
+        (replay_query_paddr_i[paddr_width_p-1:block_offset_width_lp]);
   always_comb begin
     replay_query_hit_o = 1'b0;
-    for (int i = 0; i < replay_buffer_els_lp; i++)
-      replay_query_hit_o |= replay_buffer_p & replay_query_v_i
-        & replay_buffer_alloc_r[i] & (&replay_buffer_beat_v_r[i])
-        & (replay_buffer_addr_r[i]
-           == replay_query_paddr_i[paddr_width_p-1:block_offset_width_lp]);
+    if (replay_buffer_banked_lp) begin
+      for (int way = 0; way < replay_buffer_bank_ways_lp; way++) begin
+        automatic logic [replay_buffer_slot_width_lp-1:0] slot
+          = replay_buffer_slot_width_lp'
+              (replay_buffer_query_bank*replay_buffer_bank_ways_lp + way);
+        replay_query_hit_o |= replay_query_v_i
+          & replay_buffer_alloc_r[slot] & (&replay_buffer_beat_v_r[slot])
+          & (replay_buffer_addr_r[slot]
+             == replay_query_paddr_i[paddr_width_p-1:block_offset_width_lp]);
+      end
+    end else begin
+      for (int i = 0; i < replay_buffer_els_lp; i++)
+        replay_query_hit_o |= replay_buffer_p & replay_query_v_i
+          & replay_buffer_alloc_r[i] & (&replay_buffer_beat_v_r[i])
+          & (replay_buffer_addr_r[i]
+             == replay_query_paddr_i[paddr_width_p-1:block_offset_width_lp]);
+    end
   end
   bsg_mux
    #(.width_p(data_width_p), .els_p(replay_words_per_line_lp))
@@ -750,20 +800,46 @@ module bp_fe_icache
 
   logic replay_buffer_write_match, replay_buffer_write_free;
   logic [replay_buffer_slot_width_lp-1:0] replay_buffer_write_slot;
+  logic [replay_buffer_banks_lp-1:0][replay_buffer_bank_way_width_lp-1:0]
+    replay_buffer_bank_replace_r;
+  wire [replay_buffer_bank_width_lp-1:0] replay_buffer_write_bank
+    = replay_buffer_bank
+        (replay_buffer_pkt_r.addr[paddr_width_p-1:block_offset_width_lp]);
   always_comb begin
     replay_buffer_write_match = 1'b0;
     replay_buffer_write_free = 1'b0;
-    replay_buffer_write_slot = replay_buffer_replace_r;
-    for (int i = replay_buffer_els_lp-1; i >= 0; i--) begin
-      if (replay_buffer_alloc_r[i]
-          & (replay_buffer_addr_r[i]
-             == replay_buffer_pkt_r.addr[paddr_width_p-1:block_offset_width_lp])) begin
-        replay_buffer_write_match = 1'b1;
-        replay_buffer_write_slot = replay_buffer_slot_width_lp'(i);
+    if (replay_buffer_banked_lp) begin
+      replay_buffer_write_slot = replay_buffer_slot_width_lp'
+        (replay_buffer_write_bank*replay_buffer_bank_ways_lp
+         + replay_buffer_bank_replace_r[replay_buffer_write_bank]);
+      for (int way = replay_buffer_bank_ways_lp-1; way >= 0; way--) begin
+        automatic logic [replay_buffer_slot_width_lp-1:0] slot
+          = replay_buffer_slot_width_lp'
+              (replay_buffer_write_bank*replay_buffer_bank_ways_lp + way);
+        if (replay_buffer_alloc_r[slot]
+            & (replay_buffer_addr_r[slot]
+               == replay_buffer_pkt_r.addr[paddr_width_p-1:block_offset_width_lp])) begin
+          replay_buffer_write_match = 1'b1;
+          replay_buffer_write_slot = slot;
+        end
+        if (!replay_buffer_alloc_r[slot] & !replay_buffer_write_match) begin
+          replay_buffer_write_free = 1'b1;
+          replay_buffer_write_slot = slot;
+        end
       end
-      if (!replay_buffer_alloc_r[i] & !replay_buffer_write_match) begin
-        replay_buffer_write_free = 1'b1;
-        replay_buffer_write_slot = replay_buffer_slot_width_lp'(i);
+    end else begin
+      replay_buffer_write_slot = replay_buffer_replace_r;
+      for (int i = replay_buffer_els_lp-1; i >= 0; i--) begin
+        if (replay_buffer_alloc_r[i]
+            & (replay_buffer_addr_r[i]
+               == replay_buffer_pkt_r.addr[paddr_width_p-1:block_offset_width_lp])) begin
+          replay_buffer_write_match = 1'b1;
+          replay_buffer_write_slot = replay_buffer_slot_width_lp'(i);
+        end
+        if (!replay_buffer_alloc_r[i] & !replay_buffer_write_match) begin
+          replay_buffer_write_free = 1'b1;
+          replay_buffer_write_slot = replay_buffer_slot_width_lp'(i);
+        end
       end
     end
   end
@@ -774,6 +850,7 @@ module bp_fe_icache
       replay_buffer_addr_r <= '0;
       replay_buffer_beat_v_r <= '0;
       replay_buffer_replace_r <= '0;
+      replay_buffer_bank_replace_r <= '0;
     end else if (replay_buffer_write) begin
       replay_buffer_alloc_r[replay_buffer_write_slot] <= 1'b1;
       replay_buffer_addr_r[replay_buffer_write_slot]
@@ -788,11 +865,20 @@ module bp_fe_icache
           <= replay_buffer_beat_v_r[replay_buffer_write_slot]
              | replay_buffer_pkt_r.fill_index;
       if (!replay_buffer_write_match & !replay_buffer_write_free) begin
-        if (replay_buffer_replace_r
-            == replay_buffer_slot_width_lp'(replay_buffer_els_lp-1))
-          replay_buffer_replace_r <= '0;
-        else
-          replay_buffer_replace_r <= replay_buffer_replace_r + 1'b1;
+        if (replay_buffer_banked_lp) begin
+          if (replay_buffer_bank_replace_r[replay_buffer_write_bank]
+              == replay_buffer_bank_way_width_lp'(replay_buffer_bank_ways_lp-1))
+            replay_buffer_bank_replace_r[replay_buffer_write_bank] <= '0;
+          else
+            replay_buffer_bank_replace_r[replay_buffer_write_bank]
+              <= replay_buffer_bank_replace_r[replay_buffer_write_bank] + 1'b1;
+        end else begin
+          if (replay_buffer_replace_r
+              == replay_buffer_slot_width_lp'(replay_buffer_els_lp-1))
+            replay_buffer_replace_r <= '0;
+          else
+            replay_buffer_replace_r <= replay_buffer_replace_r + 1'b1;
+        end
       end
     end
   end
