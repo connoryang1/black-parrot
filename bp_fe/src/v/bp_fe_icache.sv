@@ -154,13 +154,14 @@ module bp_fe_icache
   localparam replay_buffer_slot_width_lp = `BSG_SAFE_CLOG2(replay_buffer_els_lp);
   localparam replay_words_per_line_lp = block_width_p / data_width_p;
   localparam replay_words_per_fill_lp = fill_width_p / data_width_p;
-  // The 32-entry FPGA configuration is organized as eight hashed banks of
-  // four associative ways.  Fixed-capacity banking removes the 32-way tag
+  // The 32-entry FPGA configuration is organized as sixteen hashed banks of
+  // two associative ways.  Fixed-capacity banking removes the 32-way tag
   // search from the fetch path while preserving one monolithic 32-entry data
   // index.  The selected XORs distribute every retained Linux prefix used by
-  // this project within four ways; other capacities keep the legacy flat
-  // organization and replacement policy.
-  localparam replay_buffer_banks_lp = 8;
+  // this project within two ways and give every aligned 16-line window a
+  // distinct bank; other capacities keep the legacy flat organization and
+  // replacement policy.
+  localparam replay_buffer_banks_lp = 16;
   localparam replay_buffer_bank_width_lp = `BSG_SAFE_CLOG2(replay_buffer_banks_lp);
   localparam replay_buffer_bank_ways_lp = replay_buffer_els_lp / replay_buffer_banks_lp;
   localparam replay_buffer_bank_way_width_lp = `BSG_SAFE_CLOG2(replay_buffer_bank_ways_lp);
@@ -170,11 +171,13 @@ module bp_fe_icache
   function automatic logic [replay_buffer_bank_width_lp-1:0]
     replay_buffer_bank(input replay_line_addr_s line_addr);
     replay_buffer_bank[0]
-      = line_addr[0] ^ line_addr[4] ^ line_addr[8] ^ line_addr[22];
+      = line_addr[0] ^ line_addr[3] ^ line_addr[13] ^ line_addr[18] ^ line_addr[24];
     replay_buffer_bank[1]
-      = line_addr[1] ^ line_addr[4] ^ line_addr[9] ^ line_addr[10] ^ line_addr[15];
+      = line_addr[2] ^ line_addr[4] ^ line_addr[9] ^ line_addr[11] ^ line_addr[24];
     replay_buffer_bank[2]
-      = line_addr[2] ^ line_addr[9] ^ line_addr[13] ^ line_addr[15] ^ line_addr[17];
+      = line_addr[1] ^ line_addr[9] ^ line_addr[24];
+    replay_buffer_bank[3]
+      = line_addr[3] ^ line_addr[5] ^ line_addr[8] ^ line_addr[9] ^ line_addr[18];
   endfunction
 
   // State machine declaration
