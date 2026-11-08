@@ -170,11 +170,11 @@ module bp_fe_icache
   function automatic logic [replay_buffer_bank_width_lp-1:0]
     replay_buffer_bank(input replay_line_addr_s line_addr);
     replay_buffer_bank[0]
-      = line_addr[1] ^ line_addr[3] ^ line_addr[4] ^ line_addr[8] ^ line_addr[11];
+      = line_addr[0] ^ line_addr[4] ^ line_addr[8] ^ line_addr[22];
     replay_buffer_bank[1]
-      = line_addr[0] ^ line_addr[2] ^ line_addr[3] ^ line_addr[5] ^ line_addr[11];
+      = line_addr[1] ^ line_addr[4] ^ line_addr[9] ^ line_addr[10] ^ line_addr[15];
     replay_buffer_bank[2]
-      = line_addr[2] ^ line_addr[4] ^ line_addr[6] ^ line_addr[12];
+      = line_addr[2] ^ line_addr[9] ^ line_addr[13] ^ line_addr[15] ^ line_addr[17];
   endfunction
 
   // State machine declaration
