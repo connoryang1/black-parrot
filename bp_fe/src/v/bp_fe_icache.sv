@@ -50,9 +50,6 @@ module bp_fe_icache
    , parameter id_width_p    = icache_req_id_width_p
    , parameter bit replay_buffer_p = 1'b0
    , parameter replay_buffer_els_p = 16
-   // Experimental equal-capacity control: ordinary cached demand refills
-   // populate the existing advisory store without any replay trigger/table.
-   , parameter bit replay_buffer_demand_capture_p = 1'b0
 
    `declare_bp_common_if_widths(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
    `declare_bp_fe_icache_engine_if_widths(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p)
@@ -105,6 +102,11 @@ module bp_fe_icache
    , input                                            replay_query_v_i
    , input [paddr_width_p-1:0]                        replay_query_paddr_i
    , output logic                                     replay_query_hit_o
+
+   // Experimental global retention policy, updated only at CSR retirement.
+   , input                                            retention_cmd_v_i
+   , input [1:0]                                      retention_mode_i
+   , output logic [63:0]                              retention_status_o
 
    // Cache Engine Interface
    // This is considered the "slow path", handling uncached requests
@@ -782,28 +784,38 @@ module bp_fe_icache
   wire replay_buffer_prefetch_input = replay_buffer_p & data_mem_pkt_v_i
     & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_prefetch);
   wire replay_buffer_inval = cache_req_yumi_i & inval_req;
+  logic [1:0] retention_mode_r;
+  logic retention_published_r;
+  logic [15:0] retention_side_hits_r;
+  wire demand_capture_enabled = replay_buffer_p & (retention_mode_r != 0);
   logic demand_capture_active_r, demand_capture_first_r;
   // Observe the ordinary SRAM handshake, never bypass or drive it. A write
   // can be held across frontend arbitration, so valid alone is insufficient.
-  wire demand_capture_input = replay_buffer_p & replay_buffer_demand_capture_p
+  wire demand_capture_input = demand_capture_enabled
     & demand_capture_active_r & data_mem_pkt_yumi_o
     & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_write)
-    & ~miss_abort_i & ~abort_inflight;
+    & ~retention_cmd_v_i & ~miss_abort_i & ~abort_inflight;
   wire replay_buffer_input = replay_buffer_prefetch_input | demand_capture_input;
   bp_fe_icache_data_mem_pkt_s replay_buffer_pkt_r;
   logic replay_buffer_pkt_v_r, replay_buffer_pkt_demand_r, replay_buffer_pkt_first_r;
   // Abort may arrive while the final accepted beat is in this register.
   // Suppress that pending demand publication as well as new capture beats.
-  wire replay_buffer_write = replay_buffer_pkt_v_r
-    & (~replay_buffer_pkt_demand_r | (~miss_abort_i & ~abort_inflight));
+  wire replay_buffer_pending_write = replay_buffer_pkt_v_r
+    & (~replay_buffer_pkt_demand_r
+       | (demand_capture_enabled & ~retention_cmd_v_i & ~miss_abort_i & ~abort_inflight));
+  // First-completed admission pins complete entries in the selected bank.
+  // Advisory replay keeps its historical replacement behavior in every mode.
+  wire retention_pin = replay_buffer_pkt_demand_r & (retention_mode_r == 2);
+  wire replay_buffer_write = replay_buffer_pending_write
+    & (~retention_pin | replay_buffer_write_match | replay_buffer_write_free);
 
   always_ff @(posedge clk_i) begin
-    if (reset_i | replay_buffer_inval | miss_abort_i | abort_inflight) begin
+    if (reset_i | replay_buffer_inval | retention_cmd_v_i | miss_abort_i | abort_inflight) begin
       demand_capture_active_r <= 1'b0;
       demand_capture_first_r <= 1'b0;
     end else if (cache_req_yumi_i) begin
-      demand_capture_active_r <= replay_buffer_demand_capture_p & cached_req;
-      demand_capture_first_r <= replay_buffer_demand_capture_p & cached_req;
+      demand_capture_active_r <= demand_capture_enabled & cached_req;
+      demand_capture_first_r <= demand_capture_enabled & cached_req;
     end else if (demand_capture_input) begin
       demand_capture_first_r <= 1'b0;
       if (cache_req_last_i)
@@ -857,7 +869,9 @@ module bp_fe_icache
           replay_buffer_write_match = 1'b1;
           replay_buffer_write_slot = slot;
         end
-        if (!replay_buffer_alloc_r[slot] & !replay_buffer_write_match) begin
+        if ((!replay_buffer_alloc_r[slot]
+             | (retention_pin & !(&replay_buffer_beat_v_r[slot])))
+            & !replay_buffer_write_match) begin
           replay_buffer_write_free = 1'b1;
           replay_buffer_write_slot = slot;
         end
@@ -871,7 +885,9 @@ module bp_fe_icache
           replay_buffer_write_match = 1'b1;
           replay_buffer_write_slot = replay_buffer_slot_width_lp'(i);
         end
-        if (!replay_buffer_alloc_r[i] & !replay_buffer_write_match) begin
+        if ((!replay_buffer_alloc_r[i]
+             | (retention_pin & !(&replay_buffer_beat_v_r[i])))
+            & !replay_buffer_write_match) begin
           replay_buffer_write_free = 1'b1;
           replay_buffer_write_slot = replay_buffer_slot_width_lp'(i);
         end
@@ -917,6 +933,39 @@ module bp_fe_icache
         end
       end
     end
+  end
+
+  wire [block_size_in_fill_lp-1:0] retention_next_beats
+    = (!replay_buffer_write_match | replay_buffer_pkt_first_r)
+      ? replay_buffer_pkt_r.fill_index
+      : (replay_buffer_beat_v_r[replay_buffer_write_slot]
+         | replay_buffer_pkt_r.fill_index);
+  // Count consumed side-only instructions, not cycles stalled at a hit.
+  // Policy writes reset statistics but never invalidate retained contents;
+  // software uses the ordinary fence.i path to begin a fresh admission epoch.
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      retention_mode_r <= '0;
+      retention_published_r <= 1'b0;
+      retention_side_hits_r <= '0;
+    end else if (retention_cmd_v_i) begin
+      retention_mode_r <= (replay_buffer_p & (retention_mode_i != 3))
+        ? retention_mode_i : 2'b00;
+      retention_published_r <= 1'b0;
+      retention_side_hits_r <= '0;
+    end else begin
+      if (replay_buffer_write & replay_buffer_pkt_demand_r & (&retention_next_beats))
+        retention_published_r <= 1'b1;
+      if (replay_buffer_hit_tv & hit_v_o & yumi_i & !(&retention_side_hits_r))
+        retention_side_hits_r <= retention_side_hits_r + 1'b1;
+    end
+  end
+  always_comb begin
+    retention_status_o = '0;
+    retention_status_o[63] = replay_buffer_p;
+    retention_status_o[1:0] = retention_mode_r;
+    retention_status_o[2] = retention_published_r;
+    retention_status_o[31:16] = retention_side_hits_r;
   end
 
   // Word-banked storage avoids reading and multiplexing all 512 bits of every
@@ -1065,9 +1114,9 @@ module bp_fe_icache
   assign snoop_bank_sel_one_hot = bank_sel_one_hot_tv_r;
 
   // synopsys translate_off
-  initial if (replay_buffer_demand_capture_p)
-    assert (replay_buffer_p && !coherent_p)
-      else $error("Demand retention requires the noncoherent instruction replay store");
+  always_ff @(negedge clk_i) if (!reset_i && demand_capture_enabled)
+    assert (!coherent_p)
+      else $error("Demand retention requires a noncoherent instruction cache");
 
   always_ff @(negedge clk_i) if (!reset_i && cache_req_lock_i)
     assert (!yumi_o)

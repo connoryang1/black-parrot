@@ -40,6 +40,10 @@ module bp_fe_top
    , output logic                                     fe_queue_v_o
    , input                                            fe_queue_ready_and_i
 
+   , input                                            retention_cmd_v_i
+   , input [1:0]                                      retention_mode_i
+   , output logic [63:0]                              retention_status_o
+
    , input                                            replay_query_v_i
    , input [paddr_width_p-1:0]                        replay_query_paddr_i
    , output logic                                     replay_query_hit_o
@@ -282,11 +286,6 @@ module bp_fe_top
    #(.bp_params_p(bp_params_p)
      ,.replay_buffer_p(icache_replay_buffer_p)
      ,.replay_buffer_els_p(icache_replay_buffer_els_p)
-`ifdef BP_ICACHE_REPLAY_DEMAND_CAPTURE
-     // Experimental demand-populated equal-capacity control. No trigger or
-     // address table is required; the accepted default leaves this disabled.
-     ,.replay_buffer_demand_capture_p(1'b1)
-`endif
      )
    icache
     (.clk_i(clk_i)
@@ -312,6 +311,9 @@ module bp_fe_top
      ,.miss_v_o(icache_miss_v_lo)
      ,.fence_v_o(icache_fence_v_lo)
      ,.yumi_i(icache_yumi_li)
+     ,.retention_cmd_v_i(retention_cmd_v_i)
+     ,.retention_mode_i(retention_mode_i)
+     ,.retention_status_o(retention_status_o)
      ,.replay_query_v_i(replay_query_v_i)
      ,.replay_query_paddr_i(replay_query_paddr_i)
      ,.replay_query_hit_o(replay_query_hit_o)

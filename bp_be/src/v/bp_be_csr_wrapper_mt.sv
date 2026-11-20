@@ -119,6 +119,9 @@ module bp_be_csr_wrapper_mt
    , input                                   icache_replay_ready_i
    , output logic                            icache_replay_v_o
    , output logic [paddr_width_p-1:0]        icache_replay_paddr_o
+   , input [63:0]                            icache_retention_status_i
+   , output logic                            icache_retention_cmd_v_o
+   , output logic [1:0]                      icache_retention_mode_o
    , input [dword_width_gp-1:0]              icache_prefix_status_i
    , output logic                            icache_prefix_entry_v_o
    , output logic [7:0]                      icache_prefix_entry_index_o
@@ -180,6 +183,8 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0]                            icache_prefix_trigger_range_v_co;
   logic [num_threads_p-1:0][7:0]                       icache_prefix_trigger_start_co;
   logic [num_threads_p-1:0][8:0]                       icache_prefix_trigger_count_co;
+  logic [num_threads_p-1:0] icache_retention_cmd_v_co;
+  logic [num_threads_p-1:0][1:0] icache_retention_mode_co;
   logic [num_threads_p-1:0]                            icache_prefix_clear_v_co;
   logic [num_threads_p-1:0]                            physical_preview_v_co;
   logic [num_threads_p-1:0][paddr_width_p-1:0]         physical_preview_paddr_co;
@@ -288,6 +293,9 @@ module bp_be_csr_wrapper_mt
        ,.icache_replay_ready_i(icache_replay_ready_i)
        ,.icache_replay_v_o(icache_replay_v_co[i])
        ,.icache_replay_paddr_o(icache_replay_paddr_co[i])
+       ,.icache_retention_status_i(icache_retention_status_i)
+       ,.icache_retention_cmd_v_o(icache_retention_cmd_v_co[i])
+       ,.icache_retention_mode_o(icache_retention_mode_co[i])
        ,.icache_prefix_status_i(icache_prefix_status_i)
        ,.icache_prefix_entry_v_o(icache_prefix_entry_v_co[i])
        ,.icache_prefix_entry_index_o(icache_prefix_entry_index_co[i])
@@ -354,6 +362,8 @@ module bp_be_csr_wrapper_mt
     icache_prefix_trigger_start_co[retire_thread_id_i];
   assign icache_prefix_trigger_count_o =
     icache_prefix_trigger_count_co[retire_thread_id_i];
+  assign icache_retention_cmd_v_o = icache_retention_cmd_v_co[retire_thread_id_i];
+  assign icache_retention_mode_o = icache_retention_mode_co[retire_thread_id_i];
   assign icache_prefix_clear_v_o = icache_prefix_clear_v_co[retire_thread_id_i];
   assign physical_preview_v_o = physical_preview_v_co[retire_thread_id_i];
   assign physical_preview_paddr_o = physical_preview_paddr_co[retire_thread_id_i];

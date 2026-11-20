@@ -109,6 +109,9 @@ module bp_be_csr
    // Core-wide shared instruction-prefix replay control. Machine mode owns
    // physical table contents and length; supervisor mode may only trigger the
    // already configured table and inspect its aggregate status.
+   , input [63:0]                            icache_retention_status_i
+   , output logic                            icache_retention_cmd_v_o
+   , output logic [1:0]                      icache_retention_mode_o
    , input [dword_width_gp-1:0]              icache_prefix_status_i
    , output logic                            icache_prefix_entry_v_o
    , output logic [7:0]                      icache_prefix_entry_index_o
@@ -583,6 +586,8 @@ module bp_be_csr
           csr_data_lo = '0;
         12'h7c2:  // M-mode shared-prefix length/control
           csr_data_lo = is_m_mode ? icache_prefix_status_i : '0;
+        12'h5c1:  // S-mode global instruction retention policy/status
+          csr_data_lo = icache_retention_status_i;
         12'h5c0:  // S-mode shared-prefix trigger/status
           csr_data_lo = icache_prefix_status_i;
         12'h9c0:  // S-mode physical data preview / drained status
@@ -1094,6 +1099,12 @@ module bp_be_csr
   assign icache_prefix_count_o = csr_data_li[8:0];
   assign icache_prefix_clear_v_o = icache_prefix_count_v_o
                                     & csr_data_li[dword_width_gp-1];
+  // 0x5c1 is global cache state, deliberately absent from context snapshots.
+  // Only retired S/M writes may change policy; generic CSR privilege checks
+  // also reject both U-mode reads and writes.
+  assign icache_retention_cmd_v_o = csr_w_v_li & retire_pkt_cast_i.instret
+    & (csr_addr_li == 12'h5c1) & (is_s_mode | is_m_mode);
+  assign icache_retention_mode_o = csr_data_li[1:0];
   assign icache_prefix_trigger_v_o = csr_w_v_li & (csr_addr_li == 12'h5c0)
                                       & (is_s_mode | is_m_mode);
   assign icache_prefix_trigger_range_v_o = csr_data_li[63];

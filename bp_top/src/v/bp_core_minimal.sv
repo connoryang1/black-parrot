@@ -239,6 +239,10 @@ module bp_core_minimal
     assign miss_trace_data_li = '0;
   end
 
+  logic icache_retention_cmd_v;
+  logic [1:0] icache_retention_mode;
+  logic [63:0] icache_retention_status;
+
   bp_fe_top
    #(.bp_params_p(bp_params_p)
      ,.icache_replay_buffer_p(icache_replay_buffer_p)
@@ -267,6 +271,9 @@ module bp_core_minimal
      ,.ctxtsw_translation_en_i(fe_ctxtsw_translation_en_lo)
      ,.ctxtsw_asid_i(fe_ctxtsw_asid_lo)
 
+     ,.retention_cmd_v_i(icache_retention_cmd_v)
+     ,.retention_mode_i(icache_retention_mode)
+     ,.retention_status_o(icache_retention_status)
      ,.replay_query_v_i(icache_replay_query_v_i)
      ,.replay_query_paddr_i(icache_replay_query_paddr_i)
      ,.replay_query_hit_o(icache_replay_query_hit_o)
@@ -367,6 +374,9 @@ module bp_core_minimal
      ,.icache_replay_ready_i(icache_replay_ready_i)
      ,.icache_replay_v_o(icache_replay_v_o)
      ,.icache_replay_paddr_o(icache_replay_paddr_o)
+     ,.icache_retention_status_i(icache_retention_status)
+     ,.icache_retention_cmd_v_o(icache_retention_cmd_v)
+     ,.icache_retention_mode_o(icache_retention_mode)
      ,.icache_prefix_status_i(icache_prefix_status_i)
      ,.icache_prefix_entry_v_o(icache_prefix_entry_v_o)
      ,.icache_prefix_entry_index_o(icache_prefix_entry_index_o)
