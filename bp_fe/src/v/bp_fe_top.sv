@@ -282,6 +282,11 @@ module bp_fe_top
    #(.bp_params_p(bp_params_p)
      ,.replay_buffer_p(icache_replay_buffer_p)
      ,.replay_buffer_els_p(icache_replay_buffer_els_p)
+`ifdef BP_ICACHE_REPLAY_DEMAND_CAPTURE
+     // Experimental demand-populated equal-capacity control. No trigger or
+     // address table is required; the accepted default leaves this disabled.
+     ,.replay_buffer_demand_capture_p(1'b1)
+`endif
      )
    icache
     (.clk_i(clk_i)

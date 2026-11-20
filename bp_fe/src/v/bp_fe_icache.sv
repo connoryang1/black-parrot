@@ -50,6 +50,9 @@ module bp_fe_icache
    , parameter id_width_p    = icache_req_id_width_p
    , parameter bit replay_buffer_p = 1'b0
    , parameter replay_buffer_els_p = 16
+   // Experimental equal-capacity control: ordinary cached demand refills
+   // populate the existing advisory store without any replay trigger/table.
+   , parameter bit replay_buffer_demand_capture_p = 1'b0
 
    `declare_bp_common_if_widths(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
    `declare_bp_fe_icache_engine_if_widths(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p)
@@ -776,12 +779,37 @@ module bp_fe_icache
   ///////////////////////////
   // Data Mem Control
   ///////////////////////////
-  wire replay_buffer_input = replay_buffer_p & data_mem_pkt_v_i
+  wire replay_buffer_prefetch_input = replay_buffer_p & data_mem_pkt_v_i
     & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_prefetch);
-  bp_fe_icache_data_mem_pkt_s replay_buffer_pkt_r;
-  logic replay_buffer_pkt_v_r;
-  wire replay_buffer_write = replay_buffer_pkt_v_r;
   wire replay_buffer_inval = cache_req_yumi_i & inval_req;
+  logic demand_capture_active_r, demand_capture_first_r;
+  // Observe the ordinary SRAM handshake, never bypass or drive it. A write
+  // can be held across frontend arbitration, so valid alone is insufficient.
+  wire demand_capture_input = replay_buffer_p & replay_buffer_demand_capture_p
+    & demand_capture_active_r & data_mem_pkt_yumi_o
+    & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_write)
+    & ~miss_abort_i & ~abort_inflight;
+  wire replay_buffer_input = replay_buffer_prefetch_input | demand_capture_input;
+  bp_fe_icache_data_mem_pkt_s replay_buffer_pkt_r;
+  logic replay_buffer_pkt_v_r, replay_buffer_pkt_demand_r, replay_buffer_pkt_first_r;
+  // Abort may arrive while the final accepted beat is in this register.
+  // Suppress that pending demand publication as well as new capture beats.
+  wire replay_buffer_write = replay_buffer_pkt_v_r
+    & (~replay_buffer_pkt_demand_r | (~miss_abort_i & ~abort_inflight));
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i | replay_buffer_inval | miss_abort_i | abort_inflight) begin
+      demand_capture_active_r <= 1'b0;
+      demand_capture_first_r <= 1'b0;
+    end else if (cache_req_yumi_i) begin
+      demand_capture_active_r <= replay_buffer_demand_capture_p & cached_req;
+      demand_capture_first_r <= replay_buffer_demand_capture_p & cached_req;
+    end else if (demand_capture_input) begin
+      demand_capture_first_r <= 1'b0;
+      if (cache_req_last_i)
+        demand_capture_active_r <= 1'b0;
+    end
+  end
 
   // Register advisory packets before associative allocation. The UCE can
   // still deliver one beat every cycle: an older registered beat retires as
@@ -793,8 +821,15 @@ module bp_fe_icache
       replay_buffer_pkt_v_r <= 1'b0;
     else begin
       replay_buffer_pkt_v_r <= replay_buffer_input;
-      if (replay_buffer_input)
+      if (replay_buffer_input) begin
         replay_buffer_pkt_r <= data_mem_pkt_cast_i;
+        replay_buffer_pkt_demand_r <= demand_capture_input;
+        // Ordinary responses are critical-first and may start at any beat.
+        // Beat zero can arrive midway through a wrapped demand packet; only
+        // its first accepted beat starts the new publication epoch.
+        replay_buffer_pkt_first_r <= demand_capture_input
+          ? demand_capture_first_r : data_mem_pkt_cast_i.fill_index[0];
+      end
     end
   end
 
@@ -855,9 +890,10 @@ module bp_fe_icache
       replay_buffer_alloc_r[replay_buffer_write_slot] <= 1'b1;
       replay_buffer_addr_r[replay_buffer_write_slot]
         <= replay_buffer_pkt_r.addr[paddr_width_p-1:block_offset_width_lp];
-      // Beat zero starts a new publication epoch even when the same line is
-      // being refreshed. Until all beats arrive the entry cannot hit.
-      if (!replay_buffer_write_match | replay_buffer_pkt_r.fill_index[0])
+      // Start a fresh publication epoch even when refreshing the same line.
+      // A critical-first demand packet need not start with beat zero.
+      // Until all beats of this epoch arrive the entry cannot hit.
+      if (!replay_buffer_write_match | replay_buffer_pkt_first_r)
         replay_buffer_beat_v_r[replay_buffer_write_slot]
           <= replay_buffer_pkt_r.fill_index;
       else
@@ -963,7 +999,7 @@ module bp_fe_icache
         : {data_mem_pkt_cast_i.index, {(assoc_p > 1){data_mem_pkt_offset}}};
       assign data_mem_data_li[i] = data_mem_pkt_data_li[i];
     end
-  assign data_mem_pkt_yumi_o = replay_buffer_input
+  assign data_mem_pkt_yumi_o = replay_buffer_prefetch_input
     ? 1'b1
     : (data_mem_pkt_cast_i.opcode == e_cache_data_mem_uncached)
       ? data_mem_pkt_v_i
@@ -1029,6 +1065,10 @@ module bp_fe_icache
   assign snoop_bank_sel_one_hot = bank_sel_one_hot_tv_r;
 
   // synopsys translate_off
+  initial if (replay_buffer_demand_capture_p)
+    assert (replay_buffer_p && !coherent_p)
+      else $error("Demand retention requires the noncoherent instruction replay store");
+
   always_ff @(negedge clk_i) if (!reset_i && cache_req_lock_i)
     assert (!yumi_o)
       else $error("I-cache accepted a new frontend request while SRAM slow path was locked");
