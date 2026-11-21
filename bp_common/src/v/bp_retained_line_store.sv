@@ -1,12 +1,12 @@
 /*
- * Shared full-64-byte retained payload, with one independent-clock port per
+ * Partitioned full-64-byte retained payload, with one owning-clock RAM per
  * I/D partition. Ordinary L1 geometry is unchanged. This is an experimental
  * miss-only lookaside: synchronous tag-way scan followed by eight word reads,
  * never an asynchronous capacity-wide CAM or 512-bit payload mux.
  *
  * Slots are real full lines; a partial final way is supported. I and D may
- * have different capacities, including zero. Shared RAM ports never address
- * the other partition. Reset/clear sweeps tag validity only, not payload RAM.
+ * have different capacities, including zero. Logical global addresses never
+ * leave their partition. Reset/clear sweeps tag validity only, not payload RAM.
  *
  * Conservative coherence: every invalidation retires ALL retained lines in
  * that backend set by advancing a per-set epoch. Collateral invalidation and
@@ -77,36 +77,38 @@ module bp_retained_line_store
   logic [1:0][tag_bits_lp-1:0] tag_wdata, tag_rdata;
   logic [1:0][63:0] data_wdata, data_rdata;
 
-  // Canonical true-dual-port, independent-clock block RAM. Different clocks
-  // intentionally drive the two write ports; static partitions plus assertions
-  // exclude cross-port read/write collisions. These arrays have NO reset.
-  /* verilator lint_off MULTIDRIVEN */
-  /* verilator tracing_off */
-  (* ram_style = "block", ram_decomp = "area" *) logic [tag_bits_lp-1:0] tag_mem [ram_lines_lp];
-  (* ram_style = "block", ram_decomp = "area" *) logic [63:0] payload_mem [ram_lines_lp * 8];
-  /* verilator tracing_on */
-  /* verilator lint_on MULTIDRIVEN */
-  for (genvar port = 0; port < 2; port++) begin : ram_port
-    logic [tag_bits_lp-1:0] tag_q;
-    logic [63:0] data_q;
-    assign tag_rdata[port] = tag_q;
-    assign data_rdata[port] = data_q;
-    always @(posedge clk_i[port]) begin
-      if (tag_v[port]) begin
-        if (tag_w[port]) tag_mem[tag_addr[port]] <= tag_wdata[port];
-        tag_q <= tag_mem[tag_addr[port]];
-      end
-      if (data_v[port]) begin
-        if (data_w[port]) payload_mem[data_addr[port]] <= data_wdata[port];
-        data_q <= payload_mem[data_addr[port]];
-      end
-    end
-  end
-
   for (genvar lane = 0; lane < 2; lane++) begin : lane_fsm
     localparam int lines_lp = (lane == 0) ? i_lines_p : d_lines_p;
     localparam int base_lp = (lane == 0) ? 0 : i_lines_p;
     localparam int local_addr_width_lp = (lines_lp > 1) ? $clog2(lines_lp) : 1;
+    localparam int lane_ram_lines_lp = (lines_lp > 0) ? lines_lp : 1;
+    localparam int lane_data_addr_width_lp = $clog2(lane_ram_lines_lp * 8);
+    // Static lane ownership needs only one synchronous read/write port.
+    // Preserve read-first behavior, enables and read latency; only physical
+    // storage/indexing changes. Existing global-address assertions below still
+    // bound every access. Disabled lanes never access their placeholder arrays.
+    /* verilator tracing_off */
+    (* ram_style = "block", ram_decomp = "area" *) logic [tag_bits_lp-1:0] tag_mem [lane_ram_lines_lp];
+    (* ram_style = "block", ram_decomp = "area" *) logic [63:0] payload_mem [lane_ram_lines_lp * 8];
+    /* verilator tracing_on */
+    logic [tag_bits_lp-1:0] tag_q;
+    logic [63:0] data_q;
+    wire [local_addr_width_lp-1:0] local_tag_addr
+      = local_addr_width_lp'(tag_addr[lane] - tag_addr_width_lp'(base_lp));
+    wire [lane_data_addr_width_lp-1:0] local_data_addr
+      = lane_data_addr_width_lp'(data_addr[lane] - data_addr_width_lp'(base_lp * 8));
+    assign tag_rdata[lane] = tag_q;
+    assign data_rdata[lane] = data_q;
+    always @(posedge clk_i[lane]) begin
+      if (tag_v[lane]) begin
+        if (tag_w[lane]) tag_mem[local_tag_addr] <= tag_wdata[lane];
+        tag_q <= tag_mem[local_tag_addr];
+      end
+      if (data_v[lane]) begin
+        if (data_w[lane]) payload_mem[local_data_addr] <= data_wdata[lane];
+        data_q <= payload_mem[local_data_addr];
+      end
+    end
     localparam int ways_lp = (lines_lp + sets_p - 1) / sets_p;
     localparam int way_width_lp = (ways_lp > 1) ? $clog2(ways_lp) : 1;
     typedef enum logic [3:0] {
