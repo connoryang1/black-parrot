@@ -117,8 +117,10 @@ module bp_retained_line_store
       e_insert_data
     } state_e;
     state_e state_r;
-    logic [epoch_width_p-1:0] epochs_r [sets_p];
-    logic [way_width_lp-1:0] rr_r [sets_p];
+    // Separate writers are required: an unrelated invalidation and final
+    // insertion publication may update epoch and RR on the same clock edge.
+    (* ram_style = "distributed" *) logic [epoch_width_p-1:0] epochs_r [sets_p];
+    (* ram_style = "distributed" *) logic [way_width_lp-1:0] rr_r [sets_p];
     logic [set_width_lp-1:0] set_r;
     logic [tag_width_lp-1:0] ptag_r;
     logic [epoch_width_p-1:0] insert_epoch_r;
@@ -139,6 +141,69 @@ module bp_retained_line_store
     wire wrap = (state_r != e_clear) && invalidate_v_i[lane]
                   && (&epochs_r[inv_set]) && (lines_lp != 0);
     wire clear_now = clear_i[lane] || wrap;
+    // The idle insert capture and active tag comparison never use their epoch
+    // read simultaneously. Invalidation retains its independent async read.
+    wire [set_width_lp-1:0] insert_set
+      = set_width_lp'(insert_addr_i[lane] >> 6) & set_width_lp'(sets_p-1);
+    wire [set_width_lp-1:0] epoch_read_set = (state_r == e_idle) ? insert_set : set_r;
+    wire [epoch_width_p-1:0] line_epoch = epochs_r[epoch_read_set];
+    wire [set_width_lp-1:0] clear_set
+      = set_width_lp'(clear_slot_r) & set_width_lp'(sets_p-1);
+    wire publish_metadata = (state_r == e_insert_data) && (word_r == 3'd7)
+                            && !clear_now && !set_kill && !insert_cancel_i[lane];
+
+    // A full tag sweep already covers every metadata set when lines>=sets.
+    // No memory reset, no new busy cycles: init writes share that existing
+    // sweep, including held/restarted clears. I epochs retain their original
+    // FF form so the production invalidate=0 connection trivially prunes them.
+    // Small/disabled partitions retain all-set reset and unused-set wrap rules.
+    if ((lane != 0) && (lines_lp >= sets_p)) begin : distributed_epochs
+      always_ff @(posedge clk_i[lane]) begin
+        if (!reset_i[lane]) begin
+          if (state_r == e_clear) epochs_r[clear_set] <= '0;
+          else if (!clear_now && invalidate_v_i[lane])
+            epochs_r[inv_set] <= epochs_r[inv_set] + 1'b1;
+        end
+      end
+    end else begin : flop_epochs
+      always_ff @(posedge clk_i[lane]) begin
+        if (reset_i[lane] || clear_now)
+          for (int s = 0; s < sets_p; s++) epochs_r[s] <= '0;
+        else if (invalidate_v_i[lane] && (state_r != e_clear))
+          epochs_r[inv_set] <= epochs_r[inv_set] + 1'b1;
+      end
+    end
+    if (lines_lp >= sets_p) begin : distributed_rr
+      always_ff @(posedge clk_i[lane]) begin
+        if (!reset_i[lane]) begin
+          if (state_r == e_clear) rr_r[clear_set] <= '0;
+          else if (publish_metadata) begin
+            if (last_slot) rr_r[set_r] <= '0;
+            else rr_r[set_r] <= way_width_lp'((int'(slot_r) >> set_bits_lp) + 1);
+          end
+        end
+      end
+    end else begin : flop_rr
+      always_ff @(posedge clk_i[lane]) begin
+        if (reset_i[lane] || clear_now)
+          for (int s = 0; s < sets_p; s++) rr_r[s] <= '0;
+        else if (publish_metadata) begin
+          if (last_slot) rr_r[set_r] <= '0;
+          else rr_r[set_r] <= way_width_lp'((int'(slot_r) >> set_bits_lp) + 1);
+        end
+      end
+    end
+`ifdef BP_RETAINED_METADATA_VERIFY
+    // Verification-only initialization accounting: intentionally excluded from
+    // implementation builds; RAM initial contents must never be assumed zero.
+    logic [sets_p-1:0] metadata_initialized_r;
+    always_ff @(posedge clk_i[lane]) begin
+      if (reset_i[lane] || clear_now) metadata_initialized_r <= '0;
+      else if (state_r == e_clear) metadata_initialized_r[clear_set] <= 1'b1;
+      if (!reset_i[lane] && (lines_lp >= sets_p) && (state_r == e_idle))
+        assert (&metadata_initialized_r) else $fatal(1,"retained metadata used before complete sweep");
+    end
+`endif
     wire lookup_active = (state_r == e_lookup_tag) || (state_r == e_lookup_compare)
                           || (state_r == e_lookup_data) || (state_r == e_lookup_collect);
     wire insert_active = (state_r == e_insert_tag) || (state_r == e_insert_compare)
@@ -151,7 +216,7 @@ module bp_retained_line_store
     end
     tag_info_s read_tag;
     assign read_tag = tag_info_s'(tag_rdata[lane]);
-    wire valid_tag = read_tag.valid && (read_tag.epoch == epochs_r[set_r]);
+    wire valid_tag = read_tag.valid && (read_tag.epoch == line_epoch);
     wire tag_match = valid_tag && (read_tag.tag == ptag_r);
 
     assign lookup_ready_o[lane] = (state_r == e_idle) && !resp_v_r && !clear_now && !reset_i[lane];
@@ -203,14 +268,11 @@ module bp_retained_line_store
         set_r <= '0; ptag_r <= '0; slot_r <= '0; empty_slot_r <= '0;
         insert_epoch_r <= '0; word_r <= '0; empty_found_r <= 1'b0; replace_r <= 1'b0;
         insert_done_r <= 1'b0; insert_published_r <= 1'b0; epoch_wrap_r <= 1'b0;
-        for (int s = 0; s < sets_p; s++) begin epochs_r[s] <= '0; rr_r[s] <= '0; end
       end else begin
         insert_done_r <= 1'b0; insert_published_r <= 1'b0; epoch_wrap_r <= wrap;
         if (resp_v_r && resp_ready_i[lane]) resp_v_r <= 1'b0;
-        if (invalidate_v_i[lane] && (state_r != e_clear)) epochs_r[inv_set] <= epochs_r[inv_set] + 1'b1;
         if (clear_now) begin
           state_r <= (lines_lp == 0) ? e_idle : e_clear; clear_slot_r <= '0;
-          for (int s = 0; s < sets_p; s++) begin epochs_r[s] <= '0; rr_r[s] <= '0; end
           if (lookup_active) begin resp_v_r <= 1'b1; resp_hit_r <= 1'b0; end
           else if (resp_v_r) resp_hit_r <= 1'b0;
           if (insert_active) insert_done_r <= 1'b1;
@@ -237,7 +299,7 @@ module bp_retained_line_store
                 set_r <= set_width_lp'(insert_addr_i[lane] >> 6) & set_width_lp'(sets_p-1);
                 ptag_r <= tag_width_lp'(insert_addr_i[lane] >> (6+set_bits_lp));
                 slot_r <= local_addr_width_lp'((insert_addr_i[lane] >> 6) & paddr_width_p'(sets_p-1));
-                insert_epoch_r <= epochs_r[set_width_lp'(insert_addr_i[lane] >> 6) & set_width_lp'(sets_p-1)];
+                insert_epoch_r <= line_epoch;
                 insert_data_r <= insert_data_i[lane]; replace_r <= insert_replace_i[lane]; empty_found_r <= 1'b0;
                 if ((lines_lp == 0) || (int'((insert_addr_i[lane] >> 6) & paddr_width_p'(sets_p-1)) >= lines_lp))
                   insert_done_r <= 1'b1;
@@ -274,8 +336,6 @@ module bp_retained_line_store
             e_insert_data: begin
               if (word_r == 3'd7) begin
                 state_r <= e_idle; insert_done_r <= 1'b1; insert_published_r <= 1'b1;
-                if (last_slot) rr_r[set_r] <= '0;
-                else rr_r[set_r] <= way_width_lp'((int'(slot_r) >> set_bits_lp) + 1);
               end else word_r <= word_r + 1'b1;
             end
             default: state_r <= e_clear;
