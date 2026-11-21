@@ -623,8 +623,8 @@ module bp_uce
   logic retained_insert_owned_r, retained_insert_pf_r;
   logic [paddr_width_p-1:0] retained_insert_addr_r;
   wire retained_mutation = retained_buffer_p & retained_mutation_v_i;
-  assign retained_maintenance_o = retained_buffer_p & cache_req_yumi_o
-    & (inval_v_li | clean_v_li | flush_v_li | binval_v_li | bclean_v_li);
+  wire retained_maintenance_v_li
+    = inval_v_li | clean_v_li | flush_v_li | binval_v_li | bclean_v_li;
   wire retained_clear = retained_buffer_p & (retained_clear_i | retained_maintenance_o);
   wire retained_demand_mutation = retained_mutation
     & (retained_mutation_paddr_i[paddr_width_p-1:block_offset_width_lp]
@@ -832,6 +832,14 @@ module bp_uce
        | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_tag, e_pf_check_tag,
                                           e_pf_read_stat, e_pf_check_stat,
                                           e_pf_invalidate, e_pf_fill, e_pf_publish}));
+  // Maintenance and prefetch opcodes are exclusive. Derive the exact ordinary
+  // maintenance acceptance independently of the mixed request yumi: prefetch
+  // yumi depends on retained_clear, which includes this same-cycle pulse.
+  // Preserve the final installer's ordinary-request suppression, including
+  // demand priority. No clear is delayed and the common yumi path is unchanged.
+  assign retained_maintenance_o = retained_buffer_p & retained_maintenance_v_li
+    & is_ready & cache_req_ready_lo & ~cache_req_v_r
+    & ~(prefetch_install_owned & ~(prefetch_demand_priority_p & cache_req_v_i));
   wire prefetch_install_retire
     = (prefetch_install_state_r == e_pf_drop)
       | (prefetch_side_buffer_p
@@ -2028,6 +2036,9 @@ module bp_uce
   // prefetch slots must not interleave within a packet. This is the existing
   // bridge/stream contract, not a new guarantee about arbitrary AXI RID order.
   always_ff @(negedge clk_i) if (!reset_i) begin
+    assert (retained_maintenance_o
+            == (retained_buffer_p & cache_req_yumi_o & retained_maintenance_v_li))
+      else $error("UCE retained maintenance differs from accepted maintenance request");
     if (!prefetch_full_line_p && prefetch_install_begin)
       assert (fsm_rev_new_li && prefetch_fill_count_r[prefetch_response_slot] == '0)
         else $error("UCE prefetch installation did not start at a packet boundary");
