@@ -50,6 +50,7 @@ module bp_fe_icache
    , parameter id_width_p    = icache_req_id_width_p
    , parameter bit replay_buffer_p = 1'b0
    , parameter replay_buffer_els_p = 16
+   , parameter bit replay_buffer_bram_p = 1'b0
 
    `declare_bp_common_if_widths(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
    `declare_bp_fe_icache_engine_if_widths(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p)
@@ -108,6 +109,29 @@ module bp_fe_icache
    , input [1:0]                                      retention_mode_i
    , output logic [63:0]                              retention_status_o
 
+   // Optional miss-only synchronous retained-store lane.  Lookup enable is
+   // separate from demand admission: baseline-off bypasses its extra latency,
+   // while advisory-only replay may look up lines with retention mode zero.
+   , input                                            retention_lookup_enable_i
+   , output                                           retained_lookup_v_o
+   , input                                            retained_lookup_ready_i
+   , output [paddr_width_p-1:0]                        retained_lookup_paddr_o
+   , input                                            retained_resp_v_i
+   , output                                           retained_resp_ready_o
+   , input                                            retained_resp_hit_i
+   , input [block_width_p-1:0]                        retained_resp_data_i
+   , output                                           retained_insert_v_o
+   , input                                            retained_insert_ready_i
+   , output [paddr_width_p-1:0]                        retained_insert_paddr_o
+   , output [block_width_p-1:0]                        retained_insert_data_o
+   , output                                           retained_insert_replace_o
+   , output                                           retained_insert_cancel_o
+   , input                                            retained_insert_done_i
+   , input                                            retained_insert_published_i
+   , output                                           retained_clear_o
+   , output                                           retained_drop_o
+   , output                                           retained_idle_o
+
    // Cache Engine Interface
    // This is considered the "slow path", handling uncached requests
    //   and fill DMAs. It also handles coherence transactions for
@@ -155,7 +179,10 @@ module bp_fe_icache
     : byte_offset_width_lp;
   localparam block_size_in_fill_lp  = block_width_p / fill_width_p;
   localparam fill_size_in_bank_lp   = fill_width_p / bank_width_lp;
-  localparam replay_buffer_els_lp = replay_buffer_p ? replay_buffer_els_p : 1;
+  // The large backend owns all payload/tag capacity.  Constant-prune the
+  // legacy asynchronous store rather than silently growing its CAM.
+  localparam replay_buffer_els_lp = (replay_buffer_p & ~replay_buffer_bram_p)
+    ? replay_buffer_els_p : 1;
   localparam replay_buffer_slot_width_lp = `BSG_SAFE_CLOG2(replay_buffer_els_lp);
   localparam replay_words_per_line_lp = block_width_p / data_width_p;
   localparam replay_words_per_fill_lp = fill_width_p / data_width_p;
@@ -491,12 +518,15 @@ module bp_fe_icache
     replay_buffer_word_data_lo;
 
   logic replay_buffer_hit_tv;
+  logic legacy_replay_buffer_hit_tv;
+  logic retained_wait, retained_hit, retained_demand_published;
+  logic [block_width_p-1:0] retained_data;
   logic [replay_buffer_slot_width_lp-1:0] replay_buffer_hit_slot_tv;
   logic [data_width_p-1:0] replay_buffer_data_tv;
   wire [replay_buffer_bank_width_lp-1:0] replay_buffer_hit_bank_tv
     = replay_buffer_bank(paddr_tv_r[paddr_width_p-1:block_offset_width_lp]);
   always_comb begin
-    replay_buffer_hit_tv = 1'b0;
+    legacy_replay_buffer_hit_tv = 1'b0;
     replay_buffer_hit_slot_tv = '0;
     if (replay_buffer_banked_lp) begin
       for (int way = replay_buffer_bank_ways_lp-1; way >= 0; way--) begin
@@ -507,21 +537,21 @@ module bp_fe_icache
             & (&replay_buffer_beat_v_r[slot])
             & (replay_buffer_addr_r[slot]
                == paddr_tv_r[paddr_width_p-1:block_offset_width_lp])) begin
-          replay_buffer_hit_tv = 1'b1;
+          legacy_replay_buffer_hit_tv = 1'b1;
           replay_buffer_hit_slot_tv = slot;
         end
       end
     end else begin
       for (int i = replay_buffer_els_lp-1; i >= 0; i--)
-        if (replay_buffer_p & replay_buffer_alloc_r[i]
+        if (replay_buffer_p & ~replay_buffer_bram_p & replay_buffer_alloc_r[i]
             & (&replay_buffer_beat_v_r[i])
             & (replay_buffer_addr_r[i]
                == paddr_tv_r[paddr_width_p-1:block_offset_width_lp])) begin
-          replay_buffer_hit_tv = 1'b1;
+          legacy_replay_buffer_hit_tv = 1'b1;
           replay_buffer_hit_slot_tv = replay_buffer_slot_width_lp'(i);
         end
     end
-    replay_buffer_hit_tv &= v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r
+    legacy_replay_buffer_hit_tv &= v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r
       & ~uncached_tv_r & ~cache_hit_v_tv;
   end
   wire [replay_buffer_bank_width_lp-1:0] replay_buffer_query_bank
@@ -541,12 +571,13 @@ module bp_fe_icache
       end
     end else begin
       for (int i = 0; i < replay_buffer_els_lp; i++)
-        replay_query_hit_o |= replay_buffer_p & replay_query_v_i
+        replay_query_hit_o |= replay_buffer_p & ~replay_buffer_bram_p & replay_query_v_i
           & replay_buffer_alloc_r[i] & (&replay_buffer_beat_v_r[i])
           & (replay_buffer_addr_r[i]
              == replay_query_paddr_i[paddr_width_p-1:block_offset_width_lp]);
     end
   end
+  assign replay_buffer_hit_tv = replay_buffer_bram_p ? retained_hit : legacy_replay_buffer_hit_tv;
   bsg_mux
    #(.width_p(data_width_p), .els_p(replay_words_per_line_lp))
    replay_buffer_word_mux
@@ -569,7 +600,11 @@ module bp_fe_icache
      ,.data_o(cache_data_tv)
      );
 
-  assign data_o = replay_buffer_hit_tv ? replay_buffer_data_tv : cache_data_tv;
+  wire [data_width_p-1:0] retained_word = retained_data
+    [paddr_tv_r[`BSG_SAFE_CLOG2(data_width_p/8)+:`BSG_SAFE_CLOG2(replay_words_per_line_lp)]
+     *data_width_p+:data_width_p];
+  assign data_o = replay_buffer_hit_tv
+    ? (replay_buffer_bram_p ? retained_word : replay_buffer_data_tv) : cache_data_tv;
   assign hit_v_o   = is_ready & v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r &  hit_v_tv;
   assign miss_v_o  = is_ready & v_tv_r & decode_tv_r.fetch_op &  spec_tv_r & ~hit_v_tv;
   assign fence_v_o = is_ready & v_tv_r & decode_tv_r.inval_op & snoop_tv_r;
@@ -619,7 +654,8 @@ module bp_fe_icache
   wire uncached_req = decode_tv_r.fetch_op & ~snoop_tv_r & ~hit_v_tv &  uncached_tv_r & ~spec_tv_r;
   wire inval_req    = decode_tv_r.inval_op & ~snoop_tv_r;
 
-  assign cache_req_v_o = is_ready & v_tv_r & |{uncached_req, cached_req, inval_req} & ~tv_flush_i;
+  assign cache_req_v_o = is_ready & v_tv_r & |{uncached_req, cached_req, inval_req}
+    & ~tv_flush_i & ~retained_wait;
   assign cache_req_cast_o =
    '{addr     : paddr_tv_r
      ,size    : bp_cache_req_size_e'(cached_req ? block_req_size : uncached_req_size)
@@ -787,7 +823,8 @@ module bp_fe_icache
   logic [1:0] retention_mode_r;
   logic retention_published_r;
   logic [15:0] retention_side_hits_r;
-  wire demand_capture_enabled = replay_buffer_p & (retention_mode_r != 0);
+  wire demand_capture_enabled = replay_buffer_p & (retention_mode_r != 0)
+    & (~replay_buffer_bram_p | retention_lookup_enable_i);
   logic demand_capture_active_r, demand_capture_first_r;
   // Observe the ordinary SRAM handshake, never bypass or drive it. A write
   // can be held across frontend arbitration, so valid alone is insufficient.
@@ -795,7 +832,8 @@ module bp_fe_icache
     & demand_capture_active_r & data_mem_pkt_yumi_o
     & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_write)
     & ~retention_cmd_v_i & ~miss_abort_i & ~abort_inflight;
-  wire replay_buffer_input = replay_buffer_prefetch_input | demand_capture_input;
+  wire replay_buffer_input = (replay_buffer_prefetch_input | demand_capture_input)
+    & (~replay_buffer_bram_p | retention_lookup_enable_i);
   bp_fe_icache_data_mem_pkt_s replay_buffer_pkt_r;
   logic replay_buffer_pkt_v_r, replay_buffer_pkt_demand_r, replay_buffer_pkt_first_r;
   // Abort may arrive while the final accepted beat is in this register.
@@ -806,11 +844,12 @@ module bp_fe_icache
   // First-completed admission pins complete entries in the selected bank.
   // Advisory replay keeps its historical replacement behavior in every mode.
   wire retention_pin = replay_buffer_pkt_demand_r & (retention_mode_r == 2);
-  wire replay_buffer_write = replay_buffer_pending_write
+  wire replay_buffer_write = ~replay_buffer_bram_p & replay_buffer_pending_write
     & (~retention_pin | replay_buffer_write_match | replay_buffer_write_free);
 
   always_ff @(posedge clk_i) begin
-    if (reset_i | replay_buffer_inval | retention_cmd_v_i | miss_abort_i | abort_inflight) begin
+    if (reset_i | replay_buffer_inval | retention_cmd_v_i | miss_abort_i | abort_inflight
+        | (replay_buffer_bram_p & ~retention_lookup_enable_i)) begin
       demand_capture_active_r <= 1'b0;
       demand_capture_first_r <= 1'b0;
     end else if (cache_req_yumi_i) begin
@@ -821,6 +860,59 @@ module bp_fe_icache
       if (cache_req_last_i)
         demand_capture_active_r <= 1'b0;
     end
+  end
+
+  if (replay_buffer_bram_p & replay_buffer_p) begin : retained_bram
+    logic adapter_idle;
+    wire eligible = is_ready & v_tv_r & decode_tv_r.fetch_op
+      & ~spec_tv_r & ~uncached_tv_r & ~cache_hit_v_tv & retention_lookup_enable_i;
+    assign retained_clear_o = replay_buffer_inval;
+    // Client-local lifecycle only. Backend busy/sweep and detached UCE
+    // traffic are separate and must not be inferred drained from this bit.
+    assign retained_idle_o = adapter_idle & ~replay_buffer_pkt_v_r & ~demand_capture_active_r;
+    bp_fe_icache_retained_bram
+     #(.paddr_width_p(paddr_width_p), .block_width_p(block_width_p), .fill_width_p(fill_width_p))
+     adapter
+      (.clk_i(clk_i), .reset_i(reset_i), .clear_i(replay_buffer_inval)
+       ,.enable_i(retention_lookup_enable_i)
+       ,.lookup_v_i(eligible), .lookup_paddr_i(paddr_tv_r)
+       ,.cancel_i(tv_flush_i | miss_abort_i | retention_cmd_v_i)
+       ,.consume_i((hit_v_o & yumi_i) | cache_req_yumi_i)
+       ,.wait_o(retained_wait), .hit_o(retained_hit), .data_o(retained_data)
+       ,.lookup_v_o(retained_lookup_v_o), .lookup_ready_i(retained_lookup_ready_i)
+       ,.lookup_paddr_o(retained_lookup_paddr_o)
+       ,.resp_v_i(retained_resp_v_i), .resp_ready_o(retained_resp_ready_o)
+       ,.resp_hit_i(retained_resp_hit_i), .resp_data_i(retained_resp_data_i)
+       ,.capture_v_i(replay_buffer_pending_write)
+       ,.capture_demand_i(replay_buffer_pkt_demand_r)
+       ,.capture_first_i(replay_buffer_pkt_first_r)
+       ,.capture_paddr_i(replay_buffer_pkt_r.addr)
+       ,.capture_beats_i(replay_buffer_pkt_r.fill_index)
+       ,.capture_data_i(replay_buffer_pkt_r.data)
+       ,.demand_cancel_i(retention_cmd_v_i | miss_abort_i | abort_inflight)
+       ,.demand_pin_i(retention_mode_r == 2)
+       ,.insert_v_o(retained_insert_v_o), .insert_ready_i(retained_insert_ready_i)
+       ,.insert_paddr_o(retained_insert_paddr_o), .insert_data_o(retained_insert_data_o)
+       ,.insert_replace_o(retained_insert_replace_o), .insert_cancel_o(retained_insert_cancel_o)
+       ,.insert_done_i(retained_insert_done_i), .insert_published_i(retained_insert_published_i)
+       ,.demand_published_o(retained_demand_published), .drop_o(retained_drop_o), .idle_o(adapter_idle)
+       );
+  end else begin : no_retained_bram
+    assign retained_wait = 1'b0;
+    assign retained_hit = 1'b0;
+    assign retained_data = '0;
+    assign retained_demand_published = 1'b0;
+    assign retained_lookup_v_o = 1'b0;
+    assign retained_lookup_paddr_o = '0;
+    assign retained_resp_ready_o = 1'b1;
+    assign retained_insert_v_o = 1'b0;
+    assign retained_insert_paddr_o = '0;
+    assign retained_insert_data_o = '0;
+    assign retained_insert_replace_o = 1'b0;
+    assign retained_insert_cancel_o = 1'b0;
+    assign retained_clear_o = 1'b0;
+    assign retained_drop_o = 1'b0;
+    assign retained_idle_o = 1'b1;
   end
 
   // Register advisory packets before associative allocation. The UCE can
@@ -954,7 +1046,8 @@ module bp_fe_icache
       retention_published_r <= 1'b0;
       retention_side_hits_r <= '0;
     end else begin
-      if (replay_buffer_write & replay_buffer_pkt_demand_r & (&retention_next_beats))
+      if ((replay_buffer_write & replay_buffer_pkt_demand_r & (&retention_next_beats))
+          | retained_demand_published)
         retention_published_r <= 1'b1;
       if (replay_buffer_hit_tv & hit_v_o & yumi_i & !(&retention_side_hits_r))
         retention_side_hits_r <= retention_side_hits_r + 1'b1;
