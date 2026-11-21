@@ -119,7 +119,6 @@ module bp_retained_line_store
     state_e state_r;
     // Separate writers are required: an unrelated invalidation and final
     // insertion publication may update epoch and RR on the same clock edge.
-    (* ram_style = "distributed" *) logic [epoch_width_p-1:0] epochs_r [sets_p];
     (* ram_style = "distributed" *) logic [way_width_lp-1:0] rr_r [sets_p];
     logic [set_width_lp-1:0] set_r;
     logic [tag_width_lp-1:0] ptag_r;
@@ -135,18 +134,19 @@ module bp_retained_line_store
     assign epoch_wrap_o[lane] = epoch_wrap_r;
     logic [511:0] resp_data_r;
 
+    wire [epoch_width_p-1:0] line_epoch, inv_epoch;
+    wire last_slot;
     wire [set_width_lp-1:0] inv_set = set_width_lp'(invalidate_addr_i[lane] >> 6)
                                                     & set_width_lp'(sets_p-1);
     wire set_kill = invalidate_v_i[lane] && (inv_set == set_r);
     wire wrap = (state_r != e_clear) && invalidate_v_i[lane]
-                  && (&epochs_r[inv_set]) && (lines_lp != 0);
+                  && (&inv_epoch) && (lines_lp != 0);
     wire clear_now = clear_i[lane] || wrap;
     // The idle insert capture and active tag comparison never use their epoch
     // read simultaneously. Invalidation retains its independent async read.
     wire [set_width_lp-1:0] insert_set
       = set_width_lp'(insert_addr_i[lane] >> 6) & set_width_lp'(sets_p-1);
     wire [set_width_lp-1:0] epoch_read_set = (state_r == e_idle) ? insert_set : set_r;
-    wire [epoch_width_p-1:0] line_epoch = epochs_r[epoch_read_set];
     wire [set_width_lp-1:0] clear_set
       = set_width_lp'(clear_slot_r) & set_width_lp'(sets_p-1);
     wire publish_metadata = (state_r == e_insert_data) && (word_r == 3'd7)
@@ -158,14 +158,24 @@ module bp_retained_line_store
     // FF form so the production invalidate=0 connection trivially prunes them.
     // Small/disabled partitions retain all-set reset and unused-set wrap rules.
     if ((lane != 0) && (lines_lp >= sets_p)) begin : distributed_epochs
-      always_ff @(posedge clk_i[lane]) begin
-        if (!reset_i[lane]) begin
-          if (state_r == e_clear) epochs_r[clear_set] <= '0;
-          else if (!clear_now && invalidate_v_i[lane])
-            epochs_r[inv_set] <= epochs_r[inv_set] + 1'b1;
-        end
-      end
+      wire epoch_write_v = !reset_i[lane]
+        && ((state_r == e_clear) || (!clear_now && invalidate_v_i[lane]));
+      wire [set_width_lp-1:0] epoch_write_addr
+        = (state_r == e_clear) ? clear_set : inv_set;
+      wire [epoch_width_p-1:0] epoch_write_data
+        = (state_r == e_clear) ? '0 : (inv_epoch + 1'b1);
+      // Canonical one-port write shape; the controller still owns every
+      // reset/clear/wrap priority and both original asynchronous read indices.
+      bp_retained_epoch_ram
+       #(.sets_p(sets_p), .width_p(epoch_width_p)) epoch_ram
+       (.clk_i(clk_i[lane]), .write_v_i(epoch_write_v)
+        ,.write_addr_i(epoch_write_addr), .write_data_i(epoch_write_data)
+        ,.read_addr_i(epoch_read_set), .invalidate_addr_i(inv_set)
+        ,.read_data_o(line_epoch), .invalidate_data_o(inv_epoch));
     end else begin : flop_epochs
+      (* ram_style = "distributed" *) logic [epoch_width_p-1:0] epochs_r [sets_p];
+      assign line_epoch = epochs_r[epoch_read_set];
+      assign inv_epoch = epochs_r[inv_set];
       always_ff @(posedge clk_i[lane]) begin
         if (reset_i[lane] || clear_now)
           for (int s = 0; s < sets_p; s++) epochs_r[s] <= '0;
@@ -208,7 +218,6 @@ module bp_retained_line_store
                           || (state_r == e_lookup_data) || (state_r == e_lookup_collect);
     wire insert_active = (state_r == e_insert_tag) || (state_r == e_insert_compare)
                           || (state_r == e_insert_invalidate) || (state_r == e_insert_data);
-    wire last_slot;
     if (lines_lp == 0) begin : disabled_partition
       assign last_slot = 1'b1;
     end else begin : nonempty_partition
@@ -361,3 +370,28 @@ module bp_retained_line_store
     assert (paddr_width_p > 6+set_bits_lp && epoch_width_p > 0) else $fatal(1,"invalid retained address/epoch width");
   end
 endmodule
+
+/* verilator lint_off DECLFILENAME */
+/* Canonical no-reset single-write/two-asynchronous-read epoch storage.
+ * The owning controller supplies the existing clear sweep and invalidation
+ * priority. No initialization, policy, latency or additional BRAM is implied.
+ */
+module bp_retained_epoch_ram
+ #(parameter int unsigned sets_p = 256
+   , parameter int unsigned width_p = 8
+   , localparam int addr_width_lp = (sets_p > 1) ? $clog2(sets_p) : 1
+   )
+  (input logic clk_i
+   , input logic write_v_i
+   , input logic [addr_width_lp-1:0] write_addr_i
+   , input logic [width_p-1:0] write_data_i
+   , input logic [addr_width_lp-1:0] read_addr_i, invalidate_addr_i
+   , output logic [width_p-1:0] read_data_o, invalidate_data_o
+   );
+  (* ram_style = "distributed" *) logic [width_p-1:0] mem [sets_p];
+  assign read_data_o = mem[read_addr_i];
+  assign invalidate_data_o = mem[invalidate_addr_i];
+  always_ff @(posedge clk_i)
+    if (write_v_i) mem[write_addr_i] <= write_data_i;
+endmodule
+/* verilator lint_on DECLFILENAME */
