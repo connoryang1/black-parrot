@@ -12,6 +12,7 @@ module bp_be_top
  import bp_common_pkg::*;
  import bp_be_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter bit retained_buffer_p = 1'b0
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_core_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p)
    `declare_bp_be_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p)
@@ -24,6 +25,14 @@ module bp_be_top
   )
   (input                                             clk_i
    , input                                           reset_i
+
+   , input [63:0] retained_control_status_i
+   , output logic retained_control_cmd_v_o
+   , output logic [3:0] retained_control_o
+
+   , output logic retained_mutation_v_o
+   , output logic [paddr_width_p-1:0] retained_mutation_paddr_o
+   , output logic retained_maintenance_v_o
 
    // Processor configuration
    , input [cfg_bus_width_lp-1:0]                    cfg_bus_i
@@ -1504,10 +1513,17 @@ module bp_be_top
      );
 
   bp_be_calculator_top
-   #(.bp_params_p(bp_params_p))
+   #(.bp_params_p(bp_params_p)
+     ,.retained_buffer_p(retained_buffer_p))
    calculator
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
+     ,.retained_control_status_i(retained_control_status_i)
+     ,.retained_control_cmd_v_o(retained_control_cmd_v_o)
+     ,.retained_control_o(retained_control_o)
+     ,.retained_mutation_v_o(retained_mutation_v_o)
+     ,.retained_mutation_paddr_o(retained_mutation_paddr_o)
+     ,.retained_maintenance_v_o(retained_maintenance_v_o)
      ,.cfg_bus_i(cfg_bus_i)
 
      ,.decode_info_o(decode_info_lo)

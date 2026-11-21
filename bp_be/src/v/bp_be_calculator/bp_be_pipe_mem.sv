@@ -17,6 +17,7 @@ module bp_be_pipe_mem
  import bp_common_pkg::*;
  import bp_be_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter bit retained_buffer_p = 1'b0
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_be_dcache_engine_if_widths(paddr_width_p, dcache_tag_width_p, dcache_sets_p, dcache_assoc_p, dword_width_gp, dcache_block_width_p, dcache_fill_width_p, dcache_req_id_width_p)
    `declare_bp_be_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p)
@@ -25,6 +26,10 @@ module bp_be_pipe_mem
    )
   (input                                  clk_i
    , input                                reset_i
+
+   , output logic retained_mutation_v_o
+   , output logic [paddr_width_p-1:0] retained_mutation_paddr_o
+   , output logic retained_maintenance_v_o
 
    , input [cfg_bus_width_lp-1:0]         cfg_bus_i
    , input                                flush_i
@@ -373,10 +378,14 @@ module bp_be_pipe_mem
                                              ? context_cache_dcache_data_r
                                              : rs2_val_i;
   bp_be_dcache
-   #(.bp_params_p(bp_params_p))
+   #(.bp_params_p(bp_params_p)
+     ,.retained_buffer_p(retained_buffer_p))
    dcache
     (.clk_i(negedge_clk)
      ,.reset_i(reset_i)
+     ,.retained_mutation_v_o(retained_mutation_v_o)
+     ,.retained_mutation_paddr_o(retained_mutation_paddr_o)
+     ,.retained_maintenance_v_o(retained_maintenance_v_o)
 
      ,.busy_o(dcache_busy_lo)
      ,.ordered_o(dcache_ordered_lo)

@@ -13,6 +13,28 @@ module bp_unicore_lite
  import bsg_noc_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
    , parameter bit cache_miss_trace_p = 1'b0
+   // These dimensions count retained 64-byte payload lines, never L1 ways,
+   // replay addresses or outstanding request slots. Legacy elaboration is 0.
+`ifdef BP_RETAINED_BUFFER
+   , parameter bit retained_buffer_p = `BP_RETAINED_BUFFER
+`else
+   , parameter bit retained_buffer_p = 1'b0
+`endif
+`ifdef BP_RETAINED_I_LINES
+   , parameter int unsigned retained_i_lines_p = `BP_RETAINED_I_LINES
+`else
+   , parameter int unsigned retained_i_lines_p = 64
+`endif
+`ifdef BP_RETAINED_D_LINES
+   , parameter int unsigned retained_d_lines_p = `BP_RETAINED_D_LINES
+`else
+   , parameter int unsigned retained_d_lines_p = 64
+`endif
+`ifdef BP_RETAINED_SETS
+   , parameter int unsigned retained_sets_p = `BP_RETAINED_SETS
+`else
+   , parameter int unsigned retained_sets_p = 64
+`endif
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_bedrock_if_widths(paddr_width_p, lce_id_width_p, cce_id_width_p, did_width_p, lce_assoc_p)
 
@@ -155,17 +177,143 @@ module bp_unicore_lite
   wire posedge_clk = clk_i;
   wire negedge_clk = ~clk_i;
 
+
+  // Global S/M CSR 0x5c2: I enable, D enable, D demand-copy, I demand-copy.
+  // A command clears both stores. Keep the pulse registered for a full cycle:
+  // I UCE runs at the positive edge, D UCE at the negative edge. Accepted
+  // operations still drain; enable/clear never abandons transport ownership.
+  logic retained_control_cmd_v;
+  logic [3:0] retained_control_cmd, retained_control_r;
+  logic retained_control_clear_r;
+  logic [63:0] retained_status;
+  logic dcache_retained_mutation_v, dcache_retained_maintenance_v;
+  logic [paddr_width_p-1:0] dcache_retained_mutation_paddr;
+  logic icache_retained_capture_cancel;
+  logic [1:0] retained_lookup_v, retained_lookup_ready;
+  logic [1:0][paddr_width_p-1:0] retained_lookup_addr;
+  logic [1:0] retained_resp_v, retained_resp_ready, retained_resp_hit;
+  logic [1:0][511:0] retained_resp_data;
+  logic [1:0] retained_insert_v, retained_insert_ready;
+  logic [1:0][paddr_width_p-1:0] retained_insert_addr;
+  logic [1:0][511:0] retained_insert_data;
+  logic [1:0] retained_insert_replace, retained_insert_cancel;
+  logic [1:0] retained_insert_done, retained_insert_published;
+  logic [1:0] retained_clear, retained_backend_busy, retained_uce_idle;
+  logic [1:0] retained_maintenance, retained_epoch_wrap, retained_wrap_seen_r;
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      retained_control_r <= '0;
+      retained_control_clear_r <= 1'b0;
+      retained_wrap_seen_r <= '0;
+    end else begin
+      retained_control_clear_r <= retained_buffer_p & retained_control_cmd_v;
+      if (retained_buffer_p & retained_control_cmd_v) begin
+        retained_control_r[0] <= retained_control_cmd[0] & (retained_i_lines_p != 0);
+        retained_control_r[1] <= retained_control_cmd[1] & (retained_d_lines_p != 0);
+        retained_control_r[2] <= retained_control_cmd[2] & retained_control_cmd[1]
+                                & (retained_d_lines_p != 0);
+        retained_control_r[3] <= retained_control_cmd[3] & retained_control_cmd[0]
+                                & (retained_i_lines_p != 0);
+        retained_wrap_seen_r <= retained_epoch_wrap;
+      end else
+        retained_wrap_seen_r <= retained_wrap_seen_r | retained_epoch_wrap;
+    end
+  end
+  assign retained_clear[0] = retained_control_clear_r | retained_maintenance[0];
+  assign retained_clear[1] = retained_control_clear_r | retained_maintenance[1]
+                             | dcache_retained_maintenance_v;
+  always_comb begin
+    retained_status = '0;
+    if (retained_buffer_p) begin
+      retained_status[63] = 1'b1;
+      retained_status[3:0] = retained_control_r;
+      retained_status[9:8] = ~retained_uce_idle | retained_backend_busy
+                            | {2{retained_control_clear_r}};
+      retained_status[11:10] = retained_wrap_seen_r;
+      retained_status[31:16] = 16'(retained_i_lines_p);
+      retained_status[47:32] = 16'(retained_d_lines_p);
+      retained_status[55:48] = 8'($clog2(retained_sets_p));
+      retained_status[56] = 1'b1; // full 64-byte payload
+      retained_status[57] = 1'b1; // conservative same-set mutation invalidation
+    end
+  end
+  if (retained_buffer_p) begin : retained_store
+    bp_retained_line_store
+     #(.paddr_width_p(paddr_width_p), .sets_p(retained_sets_p)
+       ,.i_lines_p(retained_i_lines_p), .d_lines_p(retained_d_lines_p))
+     storage
+      (.clk_i({negedge_clk, posedge_clk}), .reset_i({2{reset_i}})
+       ,.clear_i(retained_clear)
+       ,.invalidate_v_i({dcache_retained_mutation_v, 1'b0})
+       ,.invalidate_addr_i({dcache_retained_mutation_paddr, {paddr_width_p{1'b0}}})
+       ,.lookup_v_i(retained_lookup_v), .lookup_ready_o(retained_lookup_ready)
+       ,.lookup_addr_i(retained_lookup_addr)
+       ,.resp_v_o(retained_resp_v), .resp_ready_i(retained_resp_ready)
+       ,.resp_hit_o(retained_resp_hit), .resp_data_o(retained_resp_data)
+       ,.insert_v_i(retained_insert_v), .insert_ready_o(retained_insert_ready)
+       ,.insert_addr_i(retained_insert_addr), .insert_data_i(retained_insert_data)
+       ,.insert_replace_i(retained_insert_replace), .insert_cancel_i(retained_insert_cancel)
+       ,.insert_done_o(retained_insert_done), .insert_published_o(retained_insert_published)
+       ,.busy_o(retained_backend_busy), .epoch_wrap_o(retained_epoch_wrap));
+    initial begin
+      assert (icache_block_width_p == 512 && dcache_block_width_p == 512)
+        else $error("retained payload requires full 64-byte I/D cache lines");
+      assert (retained_i_lines_p <= 65535 && retained_d_lines_p <= 65535)
+        else $error("retained geometry exceeds CSR representation");
+    end
+  end else begin : no_retained_store
+    assign retained_lookup_ready = '0;
+    assign retained_resp_v = '0;
+    assign retained_resp_hit = '0;
+    assign retained_resp_data = '0;
+    assign retained_insert_ready = '0;
+    assign retained_insert_done = '0;
+    assign retained_insert_published = '0;
+    assign retained_backend_busy = '0;
+    assign retained_epoch_wrap = '0;
+  end
+
   wire [did_width_p-1:0] did_li = cfg_bus_cast_i.did;
   wire [1:0][lce_id_width_p-1:0] lce_id_li = {cfg_bus_cast_i.dcache_id, cfg_bus_cast_i.icache_id};
   bp_core_minimal
    #(.bp_params_p(bp_params_p)
      ,.cache_miss_trace_p(cache_miss_trace_p)
-     ,.icache_replay_buffer_p(1'b1)
+     ,.retained_buffer_p(retained_buffer_p)
+     ,.icache_replay_buffer_p(~retained_buffer_p)
      ,.icache_replay_buffer_els_p(32)
      )
    core_minimal
     (.clk_i(posedge_clk)
      ,.reset_i(reset_i)
+     ,.retained_control_status_i(retained_status)
+     ,.retained_control_cmd_v_o(retained_control_cmd_v)
+     ,.retained_control_o(retained_control_cmd)
+     ,.dcache_retained_mutation_v_o(dcache_retained_mutation_v)
+     ,.dcache_retained_mutation_paddr_o(dcache_retained_mutation_paddr)
+     ,.dcache_retained_maintenance_v_o(dcache_retained_maintenance_v)
+     // The optional per-word I$ adapter is not used by this architecture.
+     // Both sides restore complete L1 lines through their ordinary UCEs.
+     ,.icache_retention_lookup_enable_i(1'b0)
+     ,.icache_retained_lookup_v_o()
+     ,.icache_retained_lookup_ready_i(1'b0)
+     ,.icache_retained_lookup_paddr_o()
+     ,.icache_retained_resp_v_i(1'b0)
+     ,.icache_retained_resp_ready_o()
+     ,.icache_retained_resp_hit_i(1'b0)
+     ,.icache_retained_resp_data_i('0)
+     ,.icache_retained_insert_v_o()
+     ,.icache_retained_insert_ready_i(1'b0)
+     ,.icache_retained_insert_paddr_o()
+     ,.icache_retained_insert_data_o()
+     ,.icache_retained_insert_replace_o()
+     ,.icache_retained_insert_cancel_o()
+     ,.icache_retained_insert_done_i(1'b0)
+     ,.icache_retained_insert_published_i(1'b0)
+     ,.icache_retained_clear_o()
+     ,.icache_retained_drop_o()
+     ,.icache_retained_capture_cancel_o(icache_retained_capture_cancel)
+     ,.icache_retained_idle_o()
      ,.cfg_bus_i(cfg_bus_cast_i)
      ,.physical_preview_v_o(physical_preview_v_lo)
      ,.physical_preview_paddr_o(physical_preview_paddr_lo)
@@ -290,6 +438,7 @@ module bp_unicore_lite
 
   bp_uce
    #(.bp_params_p(bp_params_p)
+     ,.retained_buffer_p(retained_buffer_p)
      ,.assoc_p(icache_assoc_p)
      ,.sets_p(icache_sets_p)
      ,.block_width_p(icache_block_width_p)
@@ -303,7 +452,7 @@ module bp_unicore_lite
      ,.prefetch_full_line_p(1'b1)
      ,.prefetch_demand_priority_p(1'b1)
      ,.prefetch_critical_forward_p(1'b0)
-     ,.prefetch_side_buffer_p(1'b1)
+     ,.prefetch_side_buffer_p(~retained_buffer_p)
      )
    icache_uce
     (.clk_i(posedge_clk)
@@ -311,6 +460,30 @@ module bp_unicore_lite
 
      ,.did_i(did_li)
      ,.lce_id_i(lce_id_li[0])
+     ,.retained_enable_i(retained_control_r[0])
+     ,.retained_demand_capture_i(retained_control_r[3])
+     ,.retained_capture_cancel_i(icache_retained_capture_cancel)
+     ,.retained_clear_i(retained_clear[0])
+     ,.retained_maintenance_o(retained_maintenance[0])
+     ,.retained_mutation_v_i(1'b0)
+     ,.retained_mutation_paddr_i('0)
+     ,.retained_idle_o(retained_uce_idle[0])
+     ,.retained_lookup_v_o(retained_lookup_v[0])
+     ,.retained_lookup_ready_i(retained_lookup_ready[0])
+     ,.retained_lookup_addr_o(retained_lookup_addr[0])
+     ,.retained_resp_v_i(retained_resp_v[0])
+     ,.retained_resp_ready_o(retained_resp_ready[0])
+     ,.retained_resp_hit_i(retained_resp_hit[0])
+     ,.retained_resp_data_i(retained_resp_data[0])
+     ,.retained_insert_v_o(retained_insert_v[0])
+     ,.retained_insert_ready_i(retained_insert_ready[0])
+     ,.retained_insert_addr_o(retained_insert_addr[0])
+     ,.retained_insert_data_o(retained_insert_data[0])
+     ,.retained_insert_replace_o(retained_insert_replace[0])
+     ,.retained_insert_cancel_o(retained_insert_cancel[0])
+     ,.retained_insert_done_i(retained_insert_done[0])
+     ,.retained_insert_published_i(retained_insert_published[0])
+     ,.retained_backend_busy_i(retained_backend_busy[0])
 
      ,.cache_req_i(icache_req_lo)
      ,.cache_req_v_i(icache_req_v_lo)
@@ -402,6 +575,7 @@ module bp_unicore_lite
 
   bp_uce
    #(.bp_params_p(bp_params_p)
+     ,.retained_buffer_p(retained_buffer_p)
      ,.assoc_p(dcache_assoc_p)
      ,.sets_p(dcache_sets_p)
      ,.block_width_p(dcache_block_width_p)
@@ -411,7 +585,8 @@ module bp_unicore_lite
      ,.id_width_p(dcache_req_id_width_p)
      ,.writeback_p(dcache_features_p[e_cfg_writeback])
      ,.prefetch_els_p(dcache_prefetch_els_p)
-     ,.prefetch_full_line_p(dcache_prefetch_full_line_p)
+     ,.prefetch_full_line_p(retained_buffer_p ? 1'b1 : dcache_prefetch_full_line_p)
+     ,.prefetch_critical_forward_p(~retained_buffer_p)
      ,.prefetch_ignore_credits_p(1'b1)
      )
    dcache_uce
@@ -420,6 +595,30 @@ module bp_unicore_lite
 
      ,.did_i(did_li)
      ,.lce_id_i(lce_id_li[1])
+     ,.retained_enable_i(retained_control_r[1])
+     ,.retained_demand_capture_i(retained_control_r[2])
+     ,.retained_capture_cancel_i(1'b0)
+     ,.retained_clear_i(retained_clear[1])
+     ,.retained_maintenance_o(retained_maintenance[1])
+     ,.retained_mutation_v_i(dcache_retained_mutation_v)
+     ,.retained_mutation_paddr_i(dcache_retained_mutation_paddr)
+     ,.retained_idle_o(retained_uce_idle[1])
+     ,.retained_lookup_v_o(retained_lookup_v[1])
+     ,.retained_lookup_ready_i(retained_lookup_ready[1])
+     ,.retained_lookup_addr_o(retained_lookup_addr[1])
+     ,.retained_resp_v_i(retained_resp_v[1])
+     ,.retained_resp_ready_o(retained_resp_ready[1])
+     ,.retained_resp_hit_i(retained_resp_hit[1])
+     ,.retained_resp_data_i(retained_resp_data[1])
+     ,.retained_insert_v_o(retained_insert_v[1])
+     ,.retained_insert_ready_i(retained_insert_ready[1])
+     ,.retained_insert_addr_o(retained_insert_addr[1])
+     ,.retained_insert_data_o(retained_insert_data[1])
+     ,.retained_insert_replace_o(retained_insert_replace[1])
+     ,.retained_insert_cancel_o(retained_insert_cancel[1])
+     ,.retained_insert_done_i(retained_insert_done[1])
+     ,.retained_insert_published_i(retained_insert_published[1])
+     ,.retained_backend_busy_i(retained_backend_busy[1])
 
      ,.cache_req_i(dcache_req_lo)
      ,.cache_req_v_i(dcache_req_v_lo)

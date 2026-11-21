@@ -13,6 +13,8 @@ module bp_core_minimal
  import bp_fe_pkg::*;
  import bp_be_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter bit retained_buffer_p = 1'b0
+   , parameter bit icache_replay_buffer_bram_p = 1'b0
    , parameter bit icache_replay_buffer_p = 1'b0
    , parameter icache_replay_buffer_els_p = 16
    `declare_bp_proc_params(bp_params_p)
@@ -23,6 +25,35 @@ module bp_core_minimal
    )
   (input                                             clk_i
    , input                                           reset_i
+
+   , input logic  icache_retention_lookup_enable_i
+   , output logic  icache_retained_lookup_v_o
+   , input logic  icache_retained_lookup_ready_i
+   , output logic [paddr_width_p-1:0] icache_retained_lookup_paddr_o
+   , input logic  icache_retained_resp_v_i
+   , output logic  icache_retained_resp_ready_o
+   , input logic  icache_retained_resp_hit_i
+   , input logic [511:0] icache_retained_resp_data_i
+   , output logic  icache_retained_insert_v_o
+   , input logic  icache_retained_insert_ready_i
+   , output logic [paddr_width_p-1:0] icache_retained_insert_paddr_o
+   , output logic [511:0] icache_retained_insert_data_o
+   , output logic  icache_retained_insert_replace_o
+   , output logic  icache_retained_insert_cancel_o
+   , input logic  icache_retained_insert_done_i
+   , input logic  icache_retained_insert_published_i
+   , output logic  icache_retained_clear_o
+   , output logic  icache_retained_drop_o
+   , output logic icache_retained_capture_cancel_o
+   , output logic  icache_retained_idle_o
+
+   , input [63:0] retained_control_status_i
+   , output logic retained_control_cmd_v_o
+   , output logic [3:0] retained_control_o
+
+   , output logic dcache_retained_mutation_v_o
+   , output logic [paddr_width_p-1:0] dcache_retained_mutation_paddr_o
+   , output logic dcache_retained_maintenance_v_o
 
    , input [cfg_bus_width_lp-1:0]                    cfg_bus_i
 
@@ -245,12 +276,33 @@ module bp_core_minimal
 
   bp_fe_top
    #(.bp_params_p(bp_params_p)
+     ,.icache_replay_buffer_bram_p(icache_replay_buffer_bram_p)
      ,.icache_replay_buffer_p(icache_replay_buffer_p)
      ,.icache_replay_buffer_els_p(icache_replay_buffer_els_p)
      )
    fe
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
+     ,.retention_lookup_enable_i(icache_retention_lookup_enable_i)
+     ,.retained_lookup_v_o(icache_retained_lookup_v_o)
+     ,.retained_lookup_ready_i(icache_retained_lookup_ready_i)
+     ,.retained_lookup_paddr_o(icache_retained_lookup_paddr_o)
+     ,.retained_resp_v_i(icache_retained_resp_v_i)
+     ,.retained_resp_ready_o(icache_retained_resp_ready_o)
+     ,.retained_resp_hit_i(icache_retained_resp_hit_i)
+     ,.retained_resp_data_i(icache_retained_resp_data_i)
+     ,.retained_insert_v_o(icache_retained_insert_v_o)
+     ,.retained_insert_ready_i(icache_retained_insert_ready_i)
+     ,.retained_insert_paddr_o(icache_retained_insert_paddr_o)
+     ,.retained_insert_data_o(icache_retained_insert_data_o)
+     ,.retained_insert_replace_o(icache_retained_insert_replace_o)
+     ,.retained_insert_cancel_o(icache_retained_insert_cancel_o)
+     ,.retained_insert_done_i(icache_retained_insert_done_i)
+     ,.retained_insert_published_i(icache_retained_insert_published_i)
+     ,.retained_clear_o(icache_retained_clear_o)
+     ,.retained_drop_o(icache_retained_drop_o)
+     ,.retained_capture_cancel_o(icache_retained_capture_cancel_o)
+     ,.retained_idle_o(icache_retained_idle_o)
 
      ,.cfg_bus_i(cfg_bus_cast_i)
 
@@ -307,10 +359,17 @@ module bp_core_minimal
      );
 
   bp_be_top
-   #(.bp_params_p(bp_params_p))
+   #(.bp_params_p(bp_params_p)
+     ,.retained_buffer_p(retained_buffer_p))
    be
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
+     ,.retained_control_status_i(retained_control_status_i)
+     ,.retained_control_cmd_v_o(retained_control_cmd_v_o)
+     ,.retained_control_o(retained_control_o)
+     ,.retained_mutation_v_o(dcache_retained_mutation_v_o)
+     ,.retained_mutation_paddr_o(dcache_retained_mutation_paddr_o)
+     ,.retained_maintenance_v_o(dcache_retained_maintenance_v_o)
 
      ,.cfg_bus_i(cfg_bus_cast_i)
 

@@ -23,6 +23,7 @@ module bp_be_csr_wrapper_mt
  import bp_common_pkg::*;
  import bp_be_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter bit retained_buffer_p = 1'b0
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_be_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p)
    , localparam cfg_bus_width_lp = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
@@ -31,6 +32,10 @@ module bp_be_csr_wrapper_mt
    )
   (input                                     clk_i
    , input                                   reset_i
+
+   , input [63:0] retained_control_status_i
+   , output logic retained_control_cmd_v_o
+   , output logic [3:0] retained_control_o
 
    , input [cfg_bus_width_lp-1:0]            cfg_bus_i
 
@@ -185,6 +190,8 @@ module bp_be_csr_wrapper_mt
   logic [num_threads_p-1:0][8:0]                       icache_prefix_trigger_count_co;
   logic [num_threads_p-1:0] icache_retention_cmd_v_co;
   logic [num_threads_p-1:0][1:0] icache_retention_mode_co;
+  logic [num_threads_p-1:0] retained_control_cmd_v_co;
+  logic [num_threads_p-1:0][3:0] retained_control_co;
   logic [num_threads_p-1:0]                            icache_prefix_clear_v_co;
   logic [num_threads_p-1:0]                            physical_preview_v_co;
   logic [num_threads_p-1:0][paddr_width_p-1:0]         physical_preview_paddr_co;
@@ -223,10 +230,14 @@ module bp_be_csr_wrapper_mt
 
   for (genvar i = 0; i < num_threads_p; i++) begin : gen_csr
     bp_be_csr
-     #(.bp_params_p(bp_params_p))
+     #(.bp_params_p(bp_params_p)
+       ,.retained_buffer_p(retained_buffer_p))
      csr_inst
       (.clk_i(clk_i)
        ,.reset_i(reset_i)
+       ,.retained_control_status_i(retained_control_status_i)
+       ,.retained_control_cmd_v_o(retained_control_cmd_v_co[i])
+       ,.retained_control_o(retained_control_co[i])
        ,.cfg_bus_i(cfg_bus_i)
        ,.global_cycle_i(global_cycle_r)
 
@@ -364,6 +375,8 @@ module bp_be_csr_wrapper_mt
     icache_prefix_trigger_count_co[retire_thread_id_i];
   assign icache_retention_cmd_v_o = icache_retention_cmd_v_co[retire_thread_id_i];
   assign icache_retention_mode_o = icache_retention_mode_co[retire_thread_id_i];
+  assign retained_control_cmd_v_o = retained_control_cmd_v_co[retire_thread_id_i];
+  assign retained_control_o = retained_control_co[retire_thread_id_i];
   assign icache_prefix_clear_v_o = icache_prefix_clear_v_co[retire_thread_id_i];
   assign physical_preview_v_o = physical_preview_v_co[retire_thread_id_i];
   assign physical_preview_paddr_o = physical_preview_paddr_co[retire_thread_id_i];

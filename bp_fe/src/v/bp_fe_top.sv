@@ -10,6 +10,7 @@ module bp_fe_top
  import bp_common_pkg::*;
  import bp_be_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter bit icache_replay_buffer_bram_p = 1'b0
    , parameter bit icache_replay_buffer_p = 1'b0
    , parameter icache_replay_buffer_els_p = 16
    `declare_bp_proc_params(bp_params_p)
@@ -20,6 +21,27 @@ module bp_fe_top
    )
   (input                                              clk_i
    , input                                            reset_i
+
+   , input logic  retention_lookup_enable_i
+   , output logic  retained_lookup_v_o
+   , input logic  retained_lookup_ready_i
+   , output logic [paddr_width_p-1:0] retained_lookup_paddr_o
+   , input logic  retained_resp_v_i
+   , output logic  retained_resp_ready_o
+   , input logic  retained_resp_hit_i
+   , input logic [511:0] retained_resp_data_i
+   , output logic  retained_insert_v_o
+   , input logic  retained_insert_ready_i
+   , output logic [paddr_width_p-1:0] retained_insert_paddr_o
+   , output logic [511:0] retained_insert_data_o
+   , output logic  retained_insert_replace_o
+   , output logic  retained_insert_cancel_o
+   , input logic  retained_insert_done_i
+   , input logic  retained_insert_published_i
+   , output logic  retained_clear_o
+   , output logic  retained_drop_o
+   , output logic retained_capture_cancel_o
+   , output logic  retained_idle_o
 
    , input [cfg_bus_width_lp-1:0]                     cfg_bus_i
 
@@ -140,6 +162,7 @@ module bp_fe_top
   bp_fe_icache_pkt_s icache_pkt_li;
   logic [icache_data_width_p-1:0] icache_data_lo;
   logic icache_v_li, icache_force_li, icache_miss_abort_li, icache_yumi_lo, tl_flush_lo;
+  assign retained_capture_cancel_o = icache_miss_abort_li;
   logic icache_tv_we;
   logic icache_hit_v_lo, icache_miss_v_lo, icache_fence_v_lo, icache_hit_yumi_li, icache_yumi_li;
   logic [thread_id_width_p-1:0] redirect_thread_id_li;
@@ -284,12 +307,32 @@ module bp_fe_top
 
   bp_fe_icache
    #(.bp_params_p(bp_params_p)
+     ,.replay_buffer_bram_p(icache_replay_buffer_bram_p)
      ,.replay_buffer_p(icache_replay_buffer_p)
      ,.replay_buffer_els_p(icache_replay_buffer_els_p)
      )
    icache
     (.clk_i(clk_i)
      ,.reset_i(reset_i)
+     ,.retention_lookup_enable_i(retention_lookup_enable_i)
+     ,.retained_lookup_v_o(retained_lookup_v_o)
+     ,.retained_lookup_ready_i(retained_lookup_ready_i)
+     ,.retained_lookup_paddr_o(retained_lookup_paddr_o)
+     ,.retained_resp_v_i(retained_resp_v_i)
+     ,.retained_resp_ready_o(retained_resp_ready_o)
+     ,.retained_resp_hit_i(retained_resp_hit_i)
+     ,.retained_resp_data_i(retained_resp_data_i)
+     ,.retained_insert_v_o(retained_insert_v_o)
+     ,.retained_insert_ready_i(retained_insert_ready_i)
+     ,.retained_insert_paddr_o(retained_insert_paddr_o)
+     ,.retained_insert_data_o(retained_insert_data_o)
+     ,.retained_insert_replace_o(retained_insert_replace_o)
+     ,.retained_insert_cancel_o(retained_insert_cancel_o)
+     ,.retained_insert_done_i(retained_insert_done_i)
+     ,.retained_insert_published_i(retained_insert_published_i)
+     ,.retained_clear_o(retained_clear_o)
+     ,.retained_drop_o(retained_drop_o)
+     ,.retained_idle_o(retained_idle_o)
 
      ,.icache_pkt_i(icache_pkt_li)
      ,.v_i(icache_v_li)

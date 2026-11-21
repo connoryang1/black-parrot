@@ -6,6 +6,7 @@ module bp_be_csr
  import bp_common_pkg::*;
  import bp_be_pkg::*;
  #(parameter bp_params_e bp_params_p = e_bp_default_cfg
+   , parameter bit retained_buffer_p = 1'b0
    `declare_bp_proc_params(bp_params_p)
    `declare_bp_be_if_widths(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p, fetch_ptr_p, issue_ptr_p)
    , localparam cfg_bus_width_lp = `bp_cfg_bus_width(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p)
@@ -14,6 +15,10 @@ module bp_be_csr
    )
   (input                                     clk_i
    , input                                   reset_i
+
+   , input [63:0] retained_control_status_i
+   , output logic retained_control_cmd_v_o
+   , output logic [3:0] retained_control_o
 
    , input [cfg_bus_width_lp-1:0]            cfg_bus_i
 
@@ -588,6 +593,14 @@ module bp_be_csr
           csr_data_lo = is_m_mode ? icache_prefix_status_i : '0;
         12'h5c1:  // S-mode global instruction retention policy/status
           csr_data_lo = icache_retention_status_i;
+        12'h5c2: begin  // Optional global large I/D retained-store control
+          if (retained_buffer_p)
+            csr_data_lo = retained_control_status_i;
+          else begin
+            csr_data_lo = '0;
+            csr_r_illegal_o = csr_r_v_i;
+          end
+        end
         12'h5c0:  // S-mode shared-prefix trigger/status
           csr_data_lo = icache_prefix_status_i;
         12'h9c0:  // S-mode physical data preview / drained status
@@ -1105,6 +1118,10 @@ module bp_be_csr
   assign icache_retention_cmd_v_o = csr_w_v_li & retire_pkt_cast_i.instret
     & (csr_addr_li == 12'h5c1) & (is_s_mode | is_m_mode);
   assign icache_retention_mode_o = csr_data_li[1:0];
+  assign retained_control_cmd_v_o = retained_buffer_p & csr_w_v_li
+    & retire_pkt_cast_i.instret & (csr_addr_li == 12'h5c2)
+    & (is_s_mode | is_m_mode);
+  assign retained_control_o = csr_data_li[3:0];
   assign icache_prefix_trigger_v_o = csr_w_v_li & (csr_addr_li == 12'h5c0)
                                       & (is_s_mode | is_m_mode);
   assign icache_prefix_trigger_range_v_o = csr_data_li[63];
