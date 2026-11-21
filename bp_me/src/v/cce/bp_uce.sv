@@ -2061,7 +2061,7 @@ module bp_uce
     if (!prefetch_side_buffer_p && !retained_buffer_p && prefetch_install_state_r == e_pf_publish)
       assert (prefetch_install_full && !data_mem_pkt_v_o && stat_mem_pkt_v_o)
         else $error("UCE prefetch publishes before complete data installation");
-    if (!prefetch_side_buffer_p && prefetch_install_state_r == e_pf_publish)
+    if (!prefetch_side_buffer_p && !retained_buffer_p && prefetch_install_state_r == e_pf_publish)
       assert (!prefetch_cancel_r[prefetch_install_slot_r] && !prefetch_cancel_all)
         else $error("UCE published a detached prefetch across fence.i");
     if (prefetch_issue)
