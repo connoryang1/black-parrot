@@ -959,10 +959,12 @@ module bp_uce
 
   // Bank by line beat so every bank has one response-write port and one
   // independent installer-read port. Selecting an install slot loads the
-  // complete line into the BRAM output registers in parallel; the existing
+  // complete line into registered outputs in parallel; the existing
   // L1 port can then drain one beat per accepted cycle with no RAM-read bubble.
   for (genvar i = 0; i < block_size_in_fill_lp; i++) begin : prefetch_fill_bank
-    (* ram_style = "block" *)
+    // Retained production uses shallow four-slot banks. Use LUTRAM while
+    // preserving the registered read and same-slot old-data RTL semantics.
+    (* ram_style = "distributed" *)
     logic [fill_width_p-1:0] mem [prefetch_els_p];
     always_ff @(posedge clk_i) begin
       if (prefetch_full_line_p) begin
