@@ -103,6 +103,7 @@ module bp_be_dcache
    , parameter tag_width_p    = dcache_tag_width_p
    , parameter mshr_p         = dcache_mshr_p
    , parameter id_width_p     = dcache_req_id_width_p
+   , parameter bit retained_buffer_p = 1'b0
 
    `declare_bp_be_dcache_engine_if_widths(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p)
 
@@ -146,6 +147,11 @@ module bp_be_dcache
    , output logic                                    replay_issue_o
    , output logic                                    replay_done_o
    , output logic                                    replay_accepted_o
+   // Registered accepted mutations cross to the opposite-edge data UCE.
+   // They invalidate retained clean copies, including pending captures.
+   , output logic                                    retained_mutation_v_o
+   , output logic [paddr_width_p-1:0]                retained_mutation_paddr_o
+   , output logic                                    retained_maintenance_v_o
 
    // Cache Engine Interface
    // This is considered the "slow path", handling uncached requests
@@ -519,7 +525,7 @@ module bp_be_dcache
         end
       end
     end
-    prefetch_buffer_hit_tv &= v_tv_r & decode_tv_r.load_op
+    prefetch_buffer_hit_tv &= !retained_buffer_p & v_tv_r & decode_tv_r.load_op
                               & ~uncached_tv_r & ~cache_load_hit_tv;
   end
   wire load_hit_tv = cache_load_hit_tv | prefetch_buffer_hit_tv;
@@ -1077,7 +1083,7 @@ module bp_be_dcache
   // If we didn't read all banks, this could be more efficient
   assign data_mem_write_hazard = |{data_mem_fast_read & data_mem_force_write};
 
-  wire prefetch_buffer_write = data_mem_pkt_v_i
+  wire prefetch_buffer_write = !retained_buffer_p & data_mem_pkt_v_i
     & (data_mem_pkt_cast_i.opcode == e_cache_data_mem_prefetch);
   logic prefetch_buffer_write_match;
   logic [prefetch_buffer_slot_width_lp-1:0] prefetch_buffer_write_slot;
@@ -1114,6 +1120,23 @@ module bp_be_dcache
   assign data_mem_pkt_yumi_o = prefetch_buffer_write
     ? 1'b1
     : data_mem_pkt_sram_yumi;
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      retained_mutation_v_o <= 1'b0;
+      retained_mutation_paddr_o <= '0;
+      retained_maintenance_v_o <= 1'b0;
+    end else begin
+      // wbuf admission covers cached stores, AMOs and successful SC only.
+      // Failed SC never enters wbuf. Uncached/WT mutations use their actual
+      // engine acceptance and can alias a retained physical DRAM line.
+      retained_mutation_v_o <= wbuf_v_li
+        | (cache_req_yumi_i & (uncached_store_req | uncached_amo_req | wt_req));
+      retained_mutation_paddr_o <= paddr_tv_r;
+      retained_maintenance_v_o <= cache_req_yumi_i
+        & (inval_req | clean_req | flush_req | binval_req | bclean_req | bflush_req);
+    end
+  end
 
   always_ff @(posedge clk_i) begin
     if (reset_i) begin

@@ -48,6 +48,9 @@ module bp_uce
     // waiting for detached hint responses.  Standalone CCE users retain the
     // conservative fence semantics by default.
     , parameter prefetch_ignore_credits_p = 1'b0
+    // A physically indexed full-line lookaside behind ordinary L1 load misses.
+    // Its storage is external/shared; legacy UCE behavior is unchanged at 0.
+    , parameter bit retained_buffer_p = 1'b0
 
     `declare_bp_cache_engine_generic_if_widths(paddr_width_p, tag_width_p, sets_p, assoc_p, data_width_p, block_width_p, fill_width_p, id_width_p, cache)
     )
@@ -70,6 +73,33 @@ module bp_uce
     , input                                          preview_cancel_i
     , output logic                                   preview_ready_o
     , output logic                                   preview_idle_o
+    , input                                          retained_enable_i
+    , input                                          retained_demand_capture_i
+    // Instruction redirect/abort cancels copying, not architectural request
+    // ownership. Data clients tie this low and use address-qualified kills.
+    , input                                          retained_capture_cancel_i
+    , input                                          retained_clear_i
+    , output logic                                   retained_maintenance_o
+    , input                                          retained_mutation_v_i
+    , input [paddr_width_p-1:0]                      retained_mutation_paddr_i
+    , output logic                                   retained_idle_o
+    // All lane signals use this UCE's clock (physical negative edge).
+    , output logic                                   retained_lookup_v_o
+    , input                                          retained_lookup_ready_i
+    , output logic [paddr_width_p-1:0]               retained_lookup_addr_o
+    , input                                          retained_resp_v_i
+    , output logic                                   retained_resp_ready_o
+    , input                                          retained_resp_hit_i
+    , input [block_width_p-1:0]                     retained_resp_data_i
+    , output logic                                   retained_insert_v_o
+    , input                                          retained_insert_ready_i
+    , output logic [paddr_width_p-1:0]               retained_insert_addr_o
+    , output logic [block_width_p-1:0]               retained_insert_data_o
+    , output logic                                   retained_insert_replace_o
+    , output logic                                   retained_insert_cancel_o
+    , input                                          retained_insert_done_i
+    , input                                          retained_insert_published_i
+    , input                                          retained_backend_busy_i
     , output logic [id_width_p-1:0]                  cache_req_id_o
     , output logic                                   cache_req_critical_o
     , output logic                                   cache_req_last_o
@@ -210,8 +240,9 @@ module bp_uce
   logic [preview_queue_count_width_lp-1:0] preview_count_r;
   logic preview_duplicate_v;
   wire [paddr_width_p-1:0] preview_head_addr = preview_queue_r[preview_head_r];
-  assign preview_ready_o = prefetch_p & ~prefetch_full_line_p
-    & ~reset_i & ~preview_cancel_i & (preview_count_r < preview_queue_els_lp);
+  assign preview_ready_o = prefetch_p & (~prefetch_full_line_p | retained_buffer_p)
+    & ~reset_i & ~preview_cancel_i & ~retained_clear
+    & (preview_count_r < preview_queue_els_lp);
   // Page ownership may be released only after cancellation removes queued
   // work and every issued physical reply has drained from the shared link.
   assign preview_idle_o = (preview_count_r == '0)
@@ -223,13 +254,13 @@ module bp_uce
   // Demand retains priority. A queued hint takes a detached slot only when
   // the architectural ingress is idle; duplicates and overtaken hints retire.
   wire preview_dequeue = (preview_count_r != '0) & ~cache_req_v_i
-    & ~preview_cancel_i & ~prefetch_accept
+    & ~preview_cancel_i & ~retained_clear & ~prefetch_accept
     & (prefetch_free_v | preview_duplicate_v | preview_demand_match);
   wire preview_allocate = preview_dequeue & ~preview_duplicate_v
     & ~preview_demand_match;
 
   always_ff @(posedge clk_i) begin
-    if (reset_i | preview_cancel_i) begin
+    if (reset_i | preview_cancel_i | retained_clear) begin
       preview_head_r <= '0;
       preview_tail_r <= '0;
       preview_count_r <= '0;
@@ -335,7 +366,7 @@ module bp_uce
   assign detached_prefetch_ready_and_o = prefetch_p & prefetch_full_line_p
     & (prefetch_free_v | detached_prefetch_duplicate_v
        | detached_prefetch_demand_match)
-    & ~is_reset & ~is_init & ~inval_v_li & ~inval_v_r;
+    & ~is_reset & ~is_init & ~inval_v_li & ~inval_v_r & ~retained_clear;
   assign prefetch_response_id = {fsm_rev_header_li.payload.state
                                  ,fsm_rev_header_li.payload.way_id};
   assign prefetch_response_slot = prefetch_response_id[0+:prefetch_slot_width_lp];
@@ -368,6 +399,9 @@ module bp_uce
     ,e_write_wait
     ,e_read_wait
     ,e_uc_read_wait
+    ,e_retained_lookup
+    ,e_retained_wait
+    ,e_retained_fill
   } state_n, state_r;
 
   wire is_reset           = (state_r == e_reset);
@@ -548,7 +582,8 @@ module bp_uce
   // epoch may subsequently become visible in L1. Unsent/buffered lines can be
   // discarded immediately; issued packets retain their slots solely so their
   // tagged replies can be drained from the shared reverse link.
-  wire prefetch_cancel_all = cache_req_yumi_o & inval_v_li;
+  wire prefetch_cancel_all = (cache_req_yumi_o & inval_v_li)
+    | retained_clear;
 
   wire store_resp_v_li  = fsm_rev_v_li & fsm_rev_header_li.msg_type inside {e_bedrock_mem_wr};
   wire load_resp_v_li   = fsm_rev_v_li & ~fsm_rev_header_li.payload.prefetch
@@ -577,6 +612,40 @@ module bp_uce
   wire nonblocking_v_r = cache_req_v_r & (uc_store_v_r | wt_store_v_r) & ~uc_evict_v_r;
 
   wire [block_size_in_fill_lp-1:0] fill_index_shift = (assoc_p > 1) ? (fsm_rev_addr_li[byte_offset_width_lp+:bank_offset_width_lp] >> bank_sub_offset_width_lp) : '0;
+
+  logic retained_hit_r;
+  logic [block_width_p-1:0] retained_hit_data_r;
+  logic [fill_cnt_width_lp-1:0] retained_fill_count_r;
+  logic [block_width_p-1:0] retained_capture_data_r, retained_pending_data_r;
+  logic [block_size_in_fill_lp-1:0] retained_capture_mask_r;
+  logic retained_demand_cancel_r, retained_pending_v_r;
+  logic [paddr_width_p-1:0] retained_pending_addr_r;
+  logic retained_insert_owned_r, retained_insert_pf_r;
+  logic [paddr_width_p-1:0] retained_insert_addr_r;
+  wire retained_mutation = retained_buffer_p & retained_mutation_v_i;
+  assign retained_maintenance_o = retained_buffer_p & cache_req_yumi_o
+    & (inval_v_li | clean_v_li | flush_v_li | binval_v_li | bclean_v_li);
+  wire retained_clear = retained_buffer_p & (retained_clear_i | retained_maintenance_o);
+  wire retained_demand_mutation = retained_mutation
+    & (retained_mutation_paddr_i[paddr_width_p-1:block_offset_width_lp]
+       == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
+  wire retained_pending_mutation = retained_mutation
+    & (retained_mutation_paddr_i[paddr_width_p-1:block_offset_width_lp]
+       == retained_pending_addr_r[paddr_width_p-1:block_offset_width_lp]);
+  wire retained_owned_mutation = retained_mutation
+    & (retained_mutation_paddr_i[paddr_width_p-1:block_offset_width_lp]
+       == retained_insert_addr_r[paddr_width_p-1:block_offset_width_lp]);
+  assign retained_lookup_v_o = retained_buffer_p & retained_enable_i & ~retained_clear
+    & (state_r == e_retained_lookup);
+  assign retained_lookup_addr_o
+    = {cache_req_r.addr[paddr_width_p-1:block_offset_width_lp],block_offset_width_lp'(0)};
+  assign retained_resp_ready_o = retained_buffer_p & (state_r == e_retained_wait);
+  assign retained_insert_replace_o = 1'b1;
+  assign retained_insert_cancel_o = retained_buffer_p
+    & (retained_clear | (retained_insert_owned_r
+       & (retained_owned_mutation
+          | (retained_insert_pf_r ? ~retained_enable_i
+             : (~retained_demand_capture_i | retained_capture_cancel_i)))));
 
   logic [index_width_lp-1:0] index_cnt;
   logic index_clear, index_up;
@@ -770,10 +839,115 @@ module bp_uce
          & data_mem_pkt_v_o & data_mem_pkt_yumi_i
          & (prefetch_install_count_r == fill_cnt_width_lp'(block_size_in_fill_lp-1)))
       | ((prefetch_install_state_r == e_pf_publish)
-         & tag_mem_pkt_v_o & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i);
+         & (retained_buffer_p
+            ? (retained_insert_owned_r & retained_insert_pf_r & retained_insert_done_i)
+            : (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i)));
   wire prefetch_install_packet = prefetch_response
     & (prefetch_response_slot == prefetch_install_slot_r);
   wire prefetch_install_full = prefetch_complete_r[prefetch_install_slot_r];
+  // A physical preview may have read old L2 data before a dirty normal line
+  // was evicted. Once that line leaves L1, the resident scan alone cannot
+  // identify the stale reply. Cancel the still-owned packet at the actual
+  // writeback boundary; ordinary ownership/credits prevent publication until
+  // after this boundary. Later reads observe the ordered writeback instead.
+  wire retained_writeback = retained_buffer_p & fsm_fwd_v_lo & fsm_fwd_ready_then_li
+    & (fsm_fwd_header_lo.msg_type == e_bedrock_mem_wr);
+
+  wire retained_prefetch_mutation = retained_mutation
+    & (retained_mutation_paddr_i[paddr_width_p-1:block_offset_width_lp]
+       == prefetch_addr_r[prefetch_install_slot_r][paddr_width_p-1:block_offset_width_lp]);
+  wire retained_pending_safe = retained_pending_v_r & ~retained_pending_mutation
+    & retained_demand_capture_i & ~retained_capture_cancel_i;
+  wire retained_prefetch_safe = (prefetch_install_state_r == e_pf_publish)
+    & prefetch_install_full & ~prefetch_cancel_r[prefetch_install_slot_r]
+    & ~retained_prefetch_mutation;
+  assign retained_insert_v_o = retained_buffer_p & ~retained_clear
+    & ~retained_insert_owned_r & (retained_pending_safe | (retained_prefetch_safe & retained_enable_i));
+  assign retained_insert_addr_o = retained_pending_safe ? retained_pending_addr_r
+    : prefetch_addr_r[prefetch_install_slot_r];
+  assign retained_insert_data_o = retained_pending_safe ? retained_pending_data_r
+    : prefetch_install_line_r;
+  wire retained_insert_accept = retained_insert_v_o & retained_insert_ready_i;
+  assign retained_idle_o = !retained_buffer_p
+    | (~retained_backend_busy_i & ~retained_pending_v_r & ~retained_insert_owned_r
+       & (is_ready | is_backoff) & ~cache_req_v_r & ~cache_req_metadata_v_r
+       & ~cache_req_v_i & ~cache_req_metadata_v_i
+       & ~preview_v_i & ~detached_prefetch_v_i
+       & ~prefetch_metadata_pending_v_r & (credit_count_lo == '0)
+       & ~(|prefetch_valid_r) & (preview_count_r == '0));
+
+  // Capture only accepted ordinary full load-refill beats. The memory stream
+  // can be critical-first; use its actual physical fill index, not arrival
+  // order. A partial/cancelled packet never becomes a retained full line.
+  wire retained_capture_beat = retained_buffer_p & miss_load_v_r
+    & load_resp_v_li & load_resp_yumi_lo
+    & (fsm_rev_header_li.size == block_msg_size_lp);
+  logic [block_width_p-1:0] retained_capture_next_data;
+  logic [block_size_in_fill_lp-1:0] retained_capture_next_mask;
+  always_comb begin
+    retained_capture_next_data = retained_capture_data_r;
+    retained_capture_next_data[fill_width_p*fill_index_shift+:fill_width_p] = fsm_rev_data_li;
+    retained_capture_next_mask = (fsm_rev_new_li ? '0 : retained_capture_mask_r)
+      | (block_size_in_fill_lp'(1) << fill_index_shift);
+  end
+
+  always_ff @(posedge clk_i) begin
+    if (reset_i) begin
+      retained_hit_r <= 1'b0;
+      retained_fill_count_r <= '0;
+      retained_capture_mask_r <= '0;
+      retained_demand_cancel_r <= 1'b0;
+      retained_pending_v_r <= 1'b0;
+      retained_pending_addr_r <= '0;
+      retained_insert_owned_r <= 1'b0;
+      retained_insert_pf_r <= 1'b0;
+      retained_insert_addr_r <= '0;
+    end else if (retained_buffer_p) begin
+      if (cache_req_yumi_o & ~prefetch_v_li) begin
+        retained_hit_r <= 1'b0;
+        retained_capture_mask_r <= '0;
+        retained_demand_cancel_r <= ~retained_demand_capture_i | retained_capture_cancel_i | retained_clear
+          | (retained_mutation
+             & (retained_mutation_paddr_i[paddr_width_p-1:block_offset_width_lp]
+                == cache_req_cast_i.addr[paddr_width_p-1:block_offset_width_lp]));
+      end else if (retained_clear | ~retained_demand_capture_i | retained_capture_cancel_i | retained_demand_mutation)
+        retained_demand_cancel_r <= 1'b1;
+      if (retained_resp_v_i & retained_resp_ready_o) begin
+        retained_hit_r <= retained_resp_hit_i & retained_enable_i
+          & ~retained_clear & ~retained_demand_mutation;
+        retained_hit_data_r <= retained_resp_data_i;
+        retained_fill_count_r <= '0;
+      end
+      if ((state_r == e_retained_fill) & data_mem_pkt_yumi_i
+          & ((retained_fill_count_r != '0) | tag_mem_pkt_yumi_i))
+        retained_fill_count_r <= retained_fill_count_r + 1'b1;
+      if (retained_insert_accept) begin
+        retained_insert_owned_r <= 1'b1;
+        retained_insert_pf_r <= ~retained_pending_safe;
+        retained_insert_addr_r <= retained_insert_addr_o;
+        if (retained_pending_safe) retained_pending_v_r <= 1'b0;
+      end
+      if (retained_insert_owned_r & retained_insert_done_i)
+        retained_insert_owned_r <= 1'b0;
+      if (retained_capture_beat) begin
+        retained_capture_data_r <= retained_capture_next_data;
+        retained_capture_mask_r <= retained_capture_next_mask;
+        if (fsm_rev_last_li & (&retained_capture_next_mask)
+            & retained_demand_capture_i & ~retained_capture_cancel_i & ~retained_clear & ~retained_demand_cancel_r
+            & ~retained_demand_mutation) begin
+          // This pending copy is advisory. The architectural memory response
+          // never waits for a retained insertion port. An older unpublished
+          // pending copy may be replaced; no partial line is ever exposed.
+          retained_pending_v_r <= 1'b1;
+          retained_pending_data_r <= retained_capture_next_data;
+          retained_pending_addr_r <= retained_lookup_addr_o;
+        end
+      end
+      // Mutation/clear wins same-cycle accepted insertion and final refill.
+      if (retained_clear | ~retained_demand_capture_i | retained_capture_cancel_i | retained_pending_mutation)
+        retained_pending_v_r <= 1'b0;
+    end
+  end
 
   // Bank by line beat so every bank has one response-write port and one
   // independent installer-read port. Selecting an install slot loads the
@@ -1025,7 +1199,7 @@ module bp_uce
               // slot holds another line, refuse this execution so the memory
               // pipe can replay it after capacity becomes available.
               cache_req_yumi_o = ~cache_req_v_r & prefetch_metadata_can_accept
-                & (prefetch_free_v | prefetch_duplicate_v);
+                & (prefetch_free_v | prefetch_duplicate_v) & ~retained_clear;
             end else begin
             // Keep a same-line demand miss at the LCE request boundary while
             // its detached hint is live.  The dcache recomputes its tag hit
@@ -1047,7 +1221,8 @@ module bp_uce
                               ? e_uc_writeback_evict
                               : nonblocking_v_li
                                 ? e_ready
-                                : e_send_critical
+                                : (retained_buffer_p & retained_enable_i & miss_load_v_li & ~retained_clear)
+                                  ? e_retained_lookup : e_send_critical
                       : cache_req_v_i ? e_backoff : state_r;
             end
           end
@@ -1087,6 +1262,51 @@ module bp_uce
                       ? e_send_critical
                       : state_r;
           end
+
+        e_retained_lookup: begin
+          if (~retained_enable_i | retained_clear)
+            state_n = e_send_critical;
+          else if (retained_lookup_v_o & retained_lookup_ready_i)
+            state_n = e_retained_wait;
+        end
+
+        e_retained_wait: begin
+          // Every accepted lookup returns once, even when a store/clear
+          // revokes a held hit. Never abandon response ownership on disable.
+          if (retained_resp_v_i & retained_resp_ready_o)
+            state_n = (retained_resp_hit_i & retained_enable_i
+                       & ~retained_clear & ~retained_demand_mutation)
+              ? (cache_req_metadata.dirty ? e_writeback_evict : e_retained_fill)
+              : e_send_critical;
+        end
+
+        e_retained_fill: begin
+          // Install a complete retained line through the ordinary L1 ports.
+          // No external read was issued, so no memory credit is fabricated.
+          tag_mem_pkt_cast_o.opcode = e_cache_tag_mem_set_tag;
+          tag_mem_pkt_cast_o.index = cache_req_r.addr[block_offset_width_lp+:index_width_lp];
+          tag_mem_pkt_cast_o.way_id = cache_req_metadata.hit_or_repl_way;
+          tag_mem_pkt_cast_o.state = e_COH_M;
+          tag_mem_pkt_cast_o.tag = cache_req_r.addr[block_offset_width_lp+index_width_lp+:tag_width_p];
+          tag_mem_pkt_v_o = (retained_fill_count_r == '0) & cache_req_metadata_v;
+          data_mem_pkt_cast_o.opcode = e_cache_data_mem_write;
+          data_mem_pkt_cast_o.addr = retained_lookup_addr_o
+            + (paddr_width_p'(retained_fill_count_r) << fill_offset_width_lp);
+          data_mem_pkt_cast_o.index = cache_req_r.addr[block_offset_width_lp+:index_width_lp];
+          data_mem_pkt_cast_o.way_id = cache_req_metadata.hit_or_repl_way;
+          data_mem_pkt_cast_o.data = retained_hit_data_r[fill_width_p*retained_fill_count_r+:fill_width_p];
+          data_mem_pkt_cast_o.fill_index = block_size_in_fill_lp'(1) << retained_fill_count_r;
+          data_mem_pkt_v_o = cache_req_metadata_v;
+          cache_req_critical_o = data_mem_pkt_v_o
+            & (retained_fill_count_r == cache_req_r.addr[fill_offset_width_lp+:fill_cnt_width_lp]);
+          cache_req_last_o = data_mem_pkt_v_o
+            & (retained_fill_count_r == fill_cnt_width_lp'(block_size_in_fill_lp-1));
+          if (data_mem_pkt_yumi_i & ((retained_fill_count_r != '0) | tag_mem_pkt_yumi_i)
+              & cache_req_last_o) begin
+            cache_req_done = ~cache_req_metadata.dirty;
+            state_n = cache_req_metadata.dirty ? e_writeback_write_req : e_ready;
+          end
+        end
 
         e_send_critical:
           if (miss_v_r)
@@ -1155,7 +1375,9 @@ module bp_uce
             stat_mem_pkt_cast_o.way_id = cache_req_metadata.hit_or_repl_way;
             stat_mem_pkt_v_o = 1'b1;
 
-            state_n = (data_mem_pkt_yumi_i & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i) ? e_writeback_read_wait : e_writeback_evict;
+            state_n = (data_mem_pkt_yumi_i & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i)
+              ? ((retained_buffer_p & retained_hit_r) ? e_retained_fill : e_writeback_read_wait)
+              : e_writeback_evict;
           end
 
         e_writeback_read_wait:
@@ -1252,7 +1474,7 @@ module bp_uce
       // interface and no second transaction can ever be in flight.
       if (prefetch_v_li & (prefetch_free_v | prefetch_duplicate_v)
           & prefetch_metadata_can_accept
-          & ~is_reset & ~is_init)
+          & ~is_reset & ~is_init & ~retained_clear)
         cache_req_yumi_o = 1'b1;
 
       // Fire off a non-blocking request opportunistically if we have one
@@ -1280,11 +1502,17 @@ module bp_uce
       // data refill is outstanding.  A same-line demand remains deferred
       // until its hint has been issued, preventing duplicate ownership.
       if (prefetch_p & prefetch_issue_v
+          // Retained data mode must not replace an already selected ordinary
+          // nonblocking write with a preview read and still retire its FIFO.
+          & (!retained_buffer_p | ~(is_ready & nonblocking_v_r))
           & ((is_ready | is_read_request | is_uc_read_wait | is_writeback_read)
              & ~prefetch_demand_match
              | (is_send_critical & miss_v_r & prefetch_demand_match))
           & ~load_resp_v_li & ~store_resp_v_li & ~prefetch_response
-          & ~cache_req_credits_full_o & ~inval_v_li & ~inval_v_r) begin
+          & ~cache_req_credits_full_o & ~inval_v_li & ~inval_v_r & ~retained_clear
+          & ~(retained_mutation
+              & (retained_mutation_paddr_i[paddr_width_p-1:block_offset_width_lp]
+                 == prefetch_addr_r[prefetch_issue_slot][paddr_width_p-1:block_offset_width_lp]))) begin
         fsm_fwd_header_lo = '0;
         fsm_fwd_header_lo.msg_type = e_bedrock_mem_rd;
         fsm_fwd_header_lo.addr = prefetch_addr_r[prefetch_issue_slot];
@@ -1324,7 +1552,13 @@ module bp_uce
         // requested 16-byte sector to the D-cache's ordinary advisory buffer.
         // Noncritical beats have no cache-port dependency and are accepted
         // directly. L1 installation proceeds later from the completed buffer.
-        if (inval_v_li | prefetch_cancel_r[prefetch_response_slot]) begin
+        if (inval_v_li | prefetch_cancel_r[prefetch_response_slot]
+            | (retained_buffer_p & (~retained_enable_i | retained_clear))) begin
+          prefetch_response_yumi = 1'b1;
+        end else if (retained_buffer_p) begin
+          // Full data replies remain in their transport slot until the
+          // locked normal-resident scan authorizes retained publication.
+          // Never forward a narrow sector or install directly into L1 here.
           prefetch_response_yumi = 1'b1;
         end else if (prefetch_side_buffer_p) begin
           // The I-cache advisory store already assembles a tagged line and
@@ -1414,6 +1648,7 @@ module bp_uce
             data_mem_pkt_v_o = prefetch_install_full;
           end
           e_pf_publish: begin
+            if (!retained_buffer_p) begin
             tag_mem_pkt_cast_o.opcode = e_cache_tag_mem_set_tag;
             tag_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
             tag_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
@@ -1424,6 +1659,7 @@ module bp_uce
             stat_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
             stat_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
             stat_mem_pkt_v_o = tag_mem_pkt_v_o;
+            end
           end
           default: begin end
         endcase
@@ -1431,7 +1667,7 @@ module bp_uce
         // write. Noncritical beats only write their request buffer and can be
         // accepted alongside tag/stat installer operations.
         if (prefetch_full_line_p && prefetch_response) begin
-          if (inval_v_li | prefetch_cancel_r[prefetch_response_slot]) begin
+          if (inval_v_li | prefetch_cancel_r[prefetch_response_slot] | retained_buffer_p) begin
             prefetch_response_yumi = 1'b1;
           end else if (prefetch_critical_forward_p & prefetch_response_critical) begin
             data_mem_pkt_cast_o = '0;
@@ -1456,7 +1692,14 @@ module bp_uce
       prefetch_install_drain_r <= '0;
       prefetch_install_clean_r <= 1'b0;
     end else begin
-      if (prefetch_demand_priority_p & cache_req_v_i
+      if (retained_buffer_p
+          & (retained_clear | ~retained_enable_i | retained_prefetch_mutation
+             | ~prefetch_install_full)
+          & (prefetch_install_state_r inside {e_pf_drain,e_pf_read_tag,e_pf_check_tag,
+                e_pf_read_stat,e_pf_check_stat,e_pf_invalidate,e_pf_fill,e_pf_publish})
+          & ~(retained_insert_owned_r & retained_insert_pf_r)) begin
+        prefetch_install_state_r <= e_pf_drop;
+      end else if (prefetch_demand_priority_p & cache_req_v_i
           & (prefetch_install_state_r != e_pf_idle)
           // Once the first advisory-buffer beat is visible, finish the
           // four-beat line atomically. Aborting here would strand a partial
@@ -1523,7 +1766,7 @@ module bp_uce
             prefetch_install_state_r <= e_pf_drop;
           else if (prefetch_install_probe_way_r
                    == `BSG_SAFE_CLOG2(assoc_p)'(assoc_p-1))
-            prefetch_install_state_r <= e_pf_read_stat;
+            prefetch_install_state_r <= retained_buffer_p ? e_pf_publish : e_pf_read_stat;
           else begin
             prefetch_install_probe_way_r <= prefetch_install_probe_way_r + 1'b1;
             prefetch_install_state_r <= e_pf_read_tag;
@@ -1552,8 +1795,13 @@ module bp_uce
           else
             prefetch_install_count_r <= prefetch_install_count_r + 1'b1;
         end
-        e_pf_publish: if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i)
-          prefetch_install_state_r <= e_pf_idle;
+        e_pf_publish: begin
+          if (retained_buffer_p) begin
+            if (retained_insert_owned_r & retained_insert_pf_r & retained_insert_done_i)
+              prefetch_install_state_r <= e_pf_idle;
+          end else if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i)
+            prefetch_install_state_r <= e_pf_idle;
+        end
         e_pf_drop: prefetch_install_state_r <= e_pf_idle;
         default: prefetch_install_state_r <= e_pf_idle;
       endcase
@@ -1655,7 +1903,12 @@ module bp_uce
       if (prefetch_full_line_p && prefetch_response_yumi) begin
         if (fsm_rev_last_li
             & (prefetch_cancel_r[prefetch_response_slot]
-               | prefetch_side_buffer_p)) begin
+               | prefetch_side_buffer_p
+               | (retained_buffer_p
+                  & (~retained_enable_i | retained_clear
+                     | (fsm_rev_header_li.size != block_msg_size_lp)
+                     | (prefetch_fill_count_r[prefetch_response_slot]
+                        != fill_cnt_width_lp'(block_size_in_fill_lp-1)))))) begin
           // Cancellation cannot retract a request already accepted by memory.
           // Consume its final beat, then release the slot. In instruction
           // side-buffer mode every accepted beat has already gone directly
@@ -1701,6 +1954,33 @@ module bp_uce
                     & (prefetch_response_slot == prefetch_slot_width_lp'(i)))) begin
               // An issued memory request cannot be retracted; retain only its
               // response identity and drain the returning packet.
+              prefetch_cancel_r[i] <= 1'b1;
+            end else begin
+              prefetch_valid_r[i] <= 1'b0;
+              prefetch_sent_r[i] <= 1'b0;
+              prefetch_way_v_r[i] <= 1'b0;
+              prefetch_cancel_r[i] <= 1'b0;
+              prefetch_complete_r[i] <= 1'b0;
+              prefetch_preview_r[i] <= 1'b0;
+              prefetch_fill_count_r[i] <= '0;
+            end
+          end
+        end
+      end
+
+      if (retained_mutation | retained_writeback) begin
+        for (int i = 0; i < prefetch_els_p; i++) begin
+          if (prefetch_valid_r[i]
+              & ((retained_mutation
+                  & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
+                     == retained_mutation_paddr_i[paddr_width_p-1:block_offset_width_lp]))
+                 | (retained_writeback
+                    & (prefetch_addr_r[i][paddr_width_p-1:block_offset_width_lp]
+                       == fsm_fwd_header_lo.addr[paddr_width_p-1:block_offset_width_lp])))) begin
+            if (prefetch_sent_r[i] & ~prefetch_complete_r[i]
+                & ~(prefetch_response_yumi & fsm_rev_last_li
+                    & (prefetch_response_slot == prefetch_slot_width_lp'(i)))) begin
+              // Keep ownership only to drain every already-issued reply.
               prefetch_cancel_r[i] <= 1'b1;
             end else begin
               prefetch_valid_r[i] <= 1'b0;
@@ -1770,7 +2050,7 @@ module bp_uce
               && credit_count_lo == prefetch_outstanding_count)
         else $error("UCE prefetch installation overlaps accepted ordinary work");
     end
-    if (!prefetch_side_buffer_p
+    if (!prefetch_side_buffer_p && !retained_buffer_p
         && prefetch_install_state_r inside {e_pf_invalidate, e_pf_fill, e_pf_publish})
       assert (prefetch_install_clean_r)
         else $error("UCE prefetch modifies a victim without a fresh clean decision");
@@ -1778,7 +2058,7 @@ module bp_uce
       assert (!prefetch_install_stat.dirty[prefetch_install_way]
               && !prefetch_install_reserved_ways[prefetch_install_way])
         else $error("UCE prefetch selected a dirty or reserved install way");
-    if (!prefetch_side_buffer_p && prefetch_install_state_r == e_pf_publish)
+    if (!prefetch_side_buffer_p && !retained_buffer_p && prefetch_install_state_r == e_pf_publish)
       assert (prefetch_install_full && !data_mem_pkt_v_o && stat_mem_pkt_v_o)
         else $error("UCE prefetch publishes before complete data installation");
     if (!prefetch_side_buffer_p && prefetch_install_state_r == e_pf_publish)
@@ -1804,8 +2084,13 @@ module bp_uce
     assert (prefetch_p && prefetch_full_line_p)
       else $error("UCE detached replay ingress requires full-line prefetch mode");
   always_ff @(negedge clk_i) if (!reset_i && preview_v_i)
-    assert (prefetch_p && !prefetch_full_line_p)
-      else $error("UCE physical data preview requires narrow prefetch mode");
+    assert (prefetch_p && (!prefetch_full_line_p || retained_buffer_p))
+      else $error("UCE physical data preview requires narrow or retained full-line mode");
+  initial if (retained_buffer_p) begin
+    assert (prefetch_full_line_p && !prefetch_side_buffer_p
+            && !prefetch_critical_forward_p && block_width_p == 512)
+      else $error("Retained lookaside requires full64B transport and no legacy critical/L1 prefetch installation");
+  end
   // synopsys translate_on
 
   // synopsys sync_set_reset "reset_i"
