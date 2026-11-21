@@ -82,8 +82,8 @@ module bp_retained_line_store
   // exclude cross-port read/write collisions. These arrays have NO reset.
   /* verilator lint_off MULTIDRIVEN */
   /* verilator tracing_off */
-  (* ram_style = "block", ram_decomp = "area" *) logic [tag_bits_lp-1:0] tag_mem [ram_lines_lp];
-  (* ram_style = "block", ram_decomp = "area" *) logic [63:0] payload_mem [ram_lines_lp * 8];
+  (* ram_style = "block", ram_decomp = "power" *) logic [tag_bits_lp-1:0] tag_mem [ram_lines_lp];
+  (* ram_style = "block", ram_decomp = "power" *) logic [63:0] payload_mem [ram_lines_lp * 8];
   /* verilator tracing_on */
   /* verilator lint_on MULTIDRIVEN */
   for (genvar port = 0; port < 2; port++) begin : ram_port
