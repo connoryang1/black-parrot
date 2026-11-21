@@ -1,9 +1,12 @@
 /*
  * Shared full-64-byte retained payload, with one independent-clock port per
  * I/D partition. Ordinary L1 geometry is unchanged. This is an experimental
- * miss-only lookaside: synchronous tag-way scan followed by eight word reads,
+ * miss-only lookaside: synchronous set-row tags followed by eight word reads,
  * never an asynchronous capacity-wide CAM or 512-bit payload mux.
  *
+ * Up to eight ways use one synchronous tag row and bounded parallel compare.
+ * Larger geometries retain the serial tag-way implementation. This choice is
+ * elaboration-only; it adds no runtime control or synthesis define.
  * Slots are real full lines; a partial final way is supported. I and D may
  * have different capacities, including zero. Shared RAM ports never address
  * the other partition. Reset/clear sweeps tag validity only, not payload RAM.
@@ -62,7 +65,13 @@ module bp_retained_line_store
   localparam int tag_width_lp = paddr_width_p - 6 - set_bits_lp;
   localparam int total_lines_lp = i_lines_p + d_lines_p;
   localparam int ram_lines_lp = (total_lines_lp > 0) ? total_lines_lp : 1;
-  localparam int tag_addr_width_lp = (ram_lines_lp > 1) ? $clog2(ram_lines_lp) : 1;
+  localparam int i_ways_lp = (i_lines_p + sets_p - 1) / sets_p;
+  localparam int d_ways_lp = (d_lines_p + sets_p - 1) / sets_p;
+  localparam int max_ways_lp = (i_ways_lp > d_ways_lp) ? i_ways_lp : d_ways_lp;
+  localparam bit tag_rows_lp = (max_ways_lp <= 8);
+  localparam int row_ways_lp = (tag_rows_lp && (max_ways_lp > 0)) ? max_ways_lp : 1;
+  localparam int tag_depth_lp = tag_rows_lp ? 2*sets_p : ram_lines_lp;
+  localparam int tag_addr_width_lp = (tag_depth_lp > 1) ? $clog2(tag_depth_lp) : 1;
   localparam int data_addr_width_lp = $clog2(ram_lines_lp * 8);
   typedef struct packed {
     logic valid;
@@ -70,11 +79,12 @@ module bp_retained_line_store
     logic [tag_width_lp-1:0] tag;
   } tag_info_s;
   localparam int tag_bits_lp = $bits(tag_info_s);
+  localparam int tag_word_bits_lp = tag_bits_lp * row_ways_lp;
 
   logic [1:0] tag_v, tag_w, data_v, data_w;
   logic [1:0][tag_addr_width_lp-1:0] tag_addr;
   logic [1:0][data_addr_width_lp-1:0] data_addr;
-  logic [1:0][tag_bits_lp-1:0] tag_wdata, tag_rdata;
+  logic [1:0][tag_word_bits_lp-1:0] tag_wdata, tag_rdata;
   logic [1:0][63:0] data_wdata, data_rdata;
 
   // Canonical true-dual-port, independent-clock block RAM. Different clocks
@@ -82,12 +92,12 @@ module bp_retained_line_store
   // exclude cross-port read/write collisions. These arrays have NO reset.
   /* verilator lint_off MULTIDRIVEN */
   /* verilator tracing_off */
-  (* ram_style = "block" *) logic [tag_bits_lp-1:0] tag_mem [ram_lines_lp];
+  (* ram_style = "block" *) logic [tag_word_bits_lp-1:0] tag_mem [tag_depth_lp];
   (* ram_style = "block" *) logic [63:0] payload_mem [ram_lines_lp * 8];
   /* verilator tracing_on */
   /* verilator lint_on MULTIDRIVEN */
   for (genvar port = 0; port < 2; port++) begin : ram_port
-    logic [tag_bits_lp-1:0] tag_q;
+    logic [tag_word_bits_lp-1:0] tag_q;
     logic [63:0] data_q;
     assign tag_rdata[port] = tag_q;
     assign data_rdata[port] = data_q;
@@ -107,6 +117,7 @@ module bp_retained_line_store
     localparam int lines_lp = (lane == 0) ? i_lines_p : d_lines_p;
     localparam int base_lp = (lane == 0) ? 0 : i_lines_p;
     localparam int local_addr_width_lp = (lines_lp > 1) ? $clog2(lines_lp) : 1;
+    localparam int clear_width_lp = tag_rows_lp ? set_width_lp : local_addr_width_lp;
     localparam int ways_lp = (lines_lp + sets_p - 1) / sets_p;
     localparam int way_width_lp = (ways_lp > 1) ? $clog2(ways_lp) : 1;
     typedef enum logic [3:0] {
@@ -120,7 +131,9 @@ module bp_retained_line_store
     logic [set_width_lp-1:0] set_r;
     logic [tag_width_lp-1:0] ptag_r;
     logic [epoch_width_p-1:0] insert_epoch_r;
-    logic [local_addr_width_lp-1:0] slot_r, empty_slot_r, clear_slot_r;
+    logic [local_addr_width_lp-1:0] slot_r, empty_slot_r;
+    logic [clear_width_lp-1:0] clear_slot_r;
+    logic [tag_word_bits_lp-1:0] insert_row_r;
     logic empty_found_r, replace_r;
     logic [511:0] insert_data_r;
     logic [2:0] word_r;
@@ -148,9 +161,38 @@ module bp_retained_line_store
       assign last_slot = (int'(slot_r) + sets_p >= lines_lp);
     end
     tag_info_s read_tag;
-    assign read_tag = tag_info_s'(tag_rdata[lane]);
+    assign read_tag = tag_info_s'(tag_rdata[lane][0+:tag_bits_lp]);
     wire valid_tag = read_tag.valid && (read_tag.epoch == epochs_r[set_r]);
-    wire tag_match = valid_tag && (read_tag.tag == ptag_r);
+    wire tag_match = tag_rows_lp ? row_match_found : valid_tag && (read_tag.tag == ptag_r);
+    logic row_match_found, row_empty_found;
+    logic [local_addr_width_lp-1:0] row_match_slot, row_empty_slot;
+    if (tag_rows_lp && (lines_lp != 0)) begin : row_compare
+      // Padded ways and sets with no physical slot must never match or become
+      // allocation candidates. A later match outranks the first empty way.
+      always_comb begin
+        row_match_found = 1'b0; row_empty_found = 1'b0;
+        row_match_slot = '0; row_empty_slot = '0;
+        for (int way = 0; way < row_ways_lp; way++) begin
+          if ((way*sets_p + int'(set_r)) < int'(lines_lp)) begin
+            if (tag_rdata[lane][way*tag_bits_lp+tag_bits_lp-1]
+                && (tag_rdata[lane][way*tag_bits_lp+tag_width_lp+:epoch_width_p] == epochs_r[set_r])) begin
+              if (!row_match_found && (tag_rdata[lane][way*tag_bits_lp+:tag_width_lp] == ptag_r)) begin
+                row_match_found = 1'b1;
+                row_match_slot = local_addr_width_lp'(way*sets_p + int'(set_r));
+              end
+            end else if (!row_empty_found) begin
+              row_empty_found = 1'b1;
+              row_empty_slot = local_addr_width_lp'(way*sets_p + int'(set_r));
+            end
+          end
+        end
+      end
+    end else begin : serial_compare
+      assign row_match_found = 1'b0;
+      assign row_empty_found = 1'b0;
+      assign row_match_slot = '0;
+      assign row_empty_slot = '0;
+    end
 
     assign lookup_ready_o[lane] = (state_r == e_idle) && !resp_v_r && !clear_now && !reset_i[lane];
     assign insert_ready_o[lane] = lookup_ready_o[lane] && !lookup_v_i[lane]
@@ -162,14 +204,17 @@ module bp_retained_line_store
 
     always_comb begin
       tag_v[lane] = 1'b0; tag_w[lane] = 1'b0;
-      tag_addr[lane] = tag_addr_width_lp'(base_lp + int'(slot_r)); tag_wdata[lane] = '0;
+      tag_addr[lane] = tag_rows_lp ? tag_addr_width_lp'(lane*sets_p + int'(set_r))
+                                  : tag_addr_width_lp'(base_lp + int'(slot_r));
+      tag_wdata[lane] = '0;
       data_v[lane] = 1'b0; data_w[lane] = 1'b0;
       data_addr[lane] = data_addr_width_lp'((base_lp + int'(slot_r)) * 8 + int'(word_r));
       data_wdata[lane] = insert_data_r[int'(word_r)*64+:64];
       if (!reset_i[lane]) begin
         if ((state_r == e_clear) && (lines_lp != 0)) begin
           tag_v[lane] = 1'b1; tag_w[lane] = 1'b1;
-          tag_addr[lane] = tag_addr_width_lp'(base_lp + int'(clear_slot_r));
+          tag_addr[lane] = tag_rows_lp ? tag_addr_width_lp'(lane*sets_p + int'(clear_slot_r))
+                                      : tag_addr_width_lp'(base_lp + int'(clear_slot_r));
         end else if (!clear_now && !set_kill) begin
           case (state_r)
             e_lookup_tag, e_insert_tag: tag_v[lane] = 1'b1;
@@ -180,12 +225,20 @@ module bp_retained_line_store
             end
             e_insert_invalidate: if (!insert_cancel_i[lane]) begin
               tag_v[lane] = 1'b1; tag_w[lane] = 1'b1;
+              if (tag_rows_lp) begin
+                tag_wdata[lane] = insert_row_r;
+                tag_wdata[lane][(int'(slot_r) >> set_bits_lp)*tag_bits_lp+:tag_bits_lp] = '0;
+              end
             end
             e_insert_data: if (!insert_cancel_i[lane]) begin
               data_v[lane] = 1'b1; data_w[lane] = 1'b1;
               if (word_r == 3'd7) begin
                 tag_v[lane] = 1'b1; tag_w[lane] = 1'b1;
-                tag_wdata[lane] = tag_info_s'{valid:1'b1, epoch:insert_epoch_r, tag:ptag_r};
+                if (tag_rows_lp) begin
+                  tag_wdata[lane] = insert_row_r;
+                  tag_wdata[lane][(int'(slot_r) >> set_bits_lp)*tag_bits_lp+:tag_bits_lp]
+                    = tag_info_s'{valid:1'b1, epoch:insert_epoch_r, tag:ptag_r};
+                end else tag_wdata[lane] = tag_word_bits_lp'(tag_info_s'{valid:1'b1, epoch:insert_epoch_r, tag:ptag_r});
               end
             end
             default: begin end
@@ -200,6 +253,7 @@ module bp_retained_line_store
         clear_slot_r <= '0; resp_v_r <= 1'b0; resp_hit_r <= 1'b0;
         set_r <= '0; ptag_r <= '0; slot_r <= '0; empty_slot_r <= '0;
         insert_epoch_r <= '0; word_r <= '0; empty_found_r <= 1'b0; replace_r <= 1'b0;
+        insert_row_r <= '0;
         insert_done_r <= 1'b0; insert_published_r <= 1'b0; epoch_wrap_r <= 1'b0;
         for (int s = 0; s < sets_p; s++) begin epochs_r[s] <= '0; rr_r[s] <= '0; end
       end else begin
@@ -220,7 +274,7 @@ module bp_retained_line_store
           if (resp_v_r && set_kill) resp_hit_r <= 1'b0;
           case (state_r)
             e_clear: begin
-              if ((lines_lp == 0) || (int'(clear_slot_r) == lines_lp-1)) state_r <= e_idle;
+              if ((lines_lp == 0) || (int'(clear_slot_r) == (tag_rows_lp ? int'(sets_p)-1 : int'(lines_lp)-1))) state_r <= e_idle;
               else clear_slot_r <= clear_slot_r + 1'b1;
             end
             e_idle: begin
@@ -244,7 +298,11 @@ module bp_retained_line_store
             end
             e_lookup_tag: state_r <= e_lookup_compare;
             e_lookup_compare: begin
-              if (tag_match) begin word_r <= '0; state_r <= e_lookup_data; end
+              if (tag_match) begin
+                if (tag_rows_lp) slot_r <= row_match_slot;
+                word_r <= '0; state_r <= e_lookup_data;
+              end
+              else if (tag_rows_lp) begin state_r <= e_idle; resp_v_r <= 1'b1; resp_hit_r <= 1'b0; end
               else if (last_slot) begin state_r <= e_idle; resp_v_r <= 1'b1; resp_hit_r <= 1'b0; end
               else begin slot_r <= slot_r + local_addr_width_lp'(sets_p); state_r <= e_lookup_tag; end
             end
@@ -256,7 +314,15 @@ module bp_retained_line_store
             end
             e_insert_tag: state_r <= e_insert_compare;
             e_insert_compare: begin
-              if (tag_match) state_r <= e_insert_invalidate;
+              if (tag_rows_lp) begin
+                insert_row_r <= tag_rdata[lane];
+                if (row_match_found || row_empty_found || replace_r) begin
+                  if (row_match_found) slot_r <= row_match_slot;
+                  else if (row_empty_found) slot_r <= row_empty_slot;
+                  else slot_r <= local_addr_width_lp'(int'(rr_r[set_r]) * sets_p + int'(set_r));
+                  state_r <= e_insert_invalidate;
+                end else begin state_r <= e_idle; insert_done_r <= 1'b1; end
+              end else if (tag_match) state_r <= e_insert_invalidate;
               else if (last_slot) begin
                 if (!valid_tag || empty_found_r || replace_r) begin
                   if (empty_found_r) slot_r <= empty_slot_r;
@@ -284,7 +350,9 @@ module bp_retained_line_store
 
     // These assertions also cover non-power-of-two/partial final partitions.
     always @(posedge clk_i[lane]) if (!reset_i[lane]) begin
-      if (tag_v[lane]) assert ((int'(tag_addr[lane]) >= base_lp) && (int'(tag_addr[lane]) < base_lp+lines_lp))
+      if (tag_v[lane]) assert (tag_rows_lp
+        ? ((lines_lp != 0) && (int'(tag_addr[lane]) >= int'(lane*sets_p)) && (int'(tag_addr[lane]) < int'((lane+1)*sets_p)))
+        : ((int'(tag_addr[lane]) >= base_lp) && (int'(tag_addr[lane]) < base_lp+lines_lp)))
         else $fatal(1,"retained tag port escaped its lane partition");
       if (data_v[lane]) assert ((int'(data_addr[lane]) >= base_lp*8) && (int'(data_addr[lane]) < (base_lp+lines_lp)*8))
         else $fatal(1,"retained payload port escaped its lane partition");
