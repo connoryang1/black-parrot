@@ -614,9 +614,19 @@ module bp_uce
   wire [block_size_in_fill_lp-1:0] fill_index_shift = (assoc_p > 1) ? (fsm_rev_addr_li[byte_offset_width_lp+:bank_offset_width_lp] >> bank_sub_offset_width_lp) : '0;
 
   logic retained_hit_r;
-  logic [block_width_p-1:0] retained_hit_data_r;
+  // One scratch line has exclusive demand lifetimes: a retained reply is
+  // latched in e_retained_wait and consumed through e_retained_fill (including
+  // any intervening dirty-victim read). An ordinary refill writes only when
+  // its reverse beat is accepted in a read-wait state; no memory read was
+  // issued for the retained-hit path. A new request resets the capture mask,
+  // so stale/unfilled scratch words never reach a full-mask publication.
+  logic [block_width_p-1:0] retained_scratch_data_r;
+  wire [block_width_p-1:0] retained_hit_data_r = retained_scratch_data_r;
+  wire [block_width_p-1:0] retained_capture_data_r = retained_scratch_data_r;
   logic [fill_cnt_width_lp-1:0] retained_fill_count_r;
-  logic [block_width_p-1:0] retained_capture_data_r, retained_pending_data_r;
+  // Pending must remain independent: it may await backend acceptance while
+  // the next ordinary refill or retained-hit request uses the scratch line.
+  logic [block_width_p-1:0] retained_pending_data_r;
   logic [block_size_in_fill_lp-1:0] retained_capture_mask_r;
   logic retained_demand_cancel_r, retained_pending_v_r;
   logic [paddr_width_p-1:0] retained_pending_addr_r;
@@ -923,7 +933,7 @@ module bp_uce
       if (retained_resp_v_i & retained_resp_ready_o) begin
         retained_hit_r <= retained_resp_hit_i & retained_enable_i
           & ~retained_clear & ~retained_demand_mutation;
-        retained_hit_data_r <= retained_resp_data_i;
+        retained_scratch_data_r <= retained_resp_data_i;
         retained_fill_count_r <= '0;
       end
       if ((state_r == e_retained_fill) & data_mem_pkt_yumi_i
@@ -938,7 +948,7 @@ module bp_uce
       if (retained_insert_owned_r & retained_insert_done_i)
         retained_insert_owned_r <= 1'b0;
       if (retained_capture_beat) begin
-        retained_capture_data_r <= retained_capture_next_data;
+        retained_scratch_data_r <= retained_capture_next_data;
         retained_capture_mask_r <= retained_capture_next_mask;
         if (fsm_rev_last_li & (&retained_capture_next_mask)
             & retained_demand_capture_i & ~retained_capture_cancel_i & ~retained_clear & ~retained_demand_cancel_r
@@ -2034,6 +2044,21 @@ module bp_uce
   end
 
   // synopsys translate_off
+  // Check the actual pre-edge write/consumer conditions, not a delayed FSM
+  // sample. These are storage-sharing invariants, not new client constraints.
+  always_ff @(posedge clk_i) if (!reset_i && retained_buffer_p) begin
+    assert (!(retained_resp_v_i && retained_resp_ready_o && retained_capture_beat))
+      else $error("UCE retained scratch response/capture writes overlap");
+    // retained_hit_r stays set across a dirty-victim read/writeback path and
+    // is cleared at the next accepted ordinary request, before its read reply.
+    assert (!(retained_hit_r && retained_capture_beat))
+      else $error("UCE retained scratch capture overlaps an owned retained hit");
+    assert (!(state_r == e_retained_fill && retained_capture_beat))
+      else $error("UCE retained scratch overwritten while filling a hit");
+    if (retained_capture_beat)
+      assert (state_r inside {e_read_wait, e_writeback_read_wait, e_uc_read_wait})
+        else $error("UCE retained scratch capture outside accepted read-wait lifetime");
+  end
   // The BedRock stream pump has one packet counter: replies from different
   // prefetch slots must not interleave within a packet. This is the existing
   // bridge/stream contract, not a new guarantee about arbitrary AXI RID order.
