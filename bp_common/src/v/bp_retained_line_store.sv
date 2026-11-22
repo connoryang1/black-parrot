@@ -1,5 +1,5 @@
 /*
- * Partitioned full-64-byte retained payload, with one owning-clock RAM per
+ * Partitioned full-64-byte retained payload, with owning-clock payload RAMs per
  * I/D partition. Ordinary L1 geometry is unchanged. This is an experimental
  * miss-only lookaside: synchronous tag-way scan followed by eight payload transfers,
  * never an asynchronous capacity-wide CAM or 512-bit payload mux.
@@ -97,19 +97,33 @@ module bp_retained_line_store
       = lane_data_addr_width_lp'(data_addr[lane] - data_addr_width_lp'(base_lp * 8));
     if (packed_cells_lp) begin : packed_storage
       // At PA34/sets256/epoch8, fifteen 36-bit cells contain all 512 payload
-      // bits plus epoch8/tag20. Both TDP ports belong to this lane's clock.
+      // bits plus epoch8/tag20. Even/odd single-port banks belong to this lane's clock.
       // Seven cycles access two cells; the eighth accesses only cell14.
       // Publication uses the independent 1-bit valid RAM, not a third BRAM
       // write. Clear/invalid metadata is hidden by valid; RAM payload is not reset.
       localparam int cell_els_lp = lane_ram_lines_lp * cells_per_line_lp;
       localparam int cell_addr_width_lp = (cell_els_lp > 1) ? $clog2(cell_els_lp) : 1;
       /* verilator tracing_off */
-      (* ram_style = "block", ram_decomp = "area" *) logic [35:0] cell_mem [cell_els_lp];
+      // Adjacent logical cells have opposite parity. Each physical bank has
+      // one owning-clock read/write port; no two writes can target one bank.
+      localparam int even_els_lp = (cell_els_lp + 1) / 2;
+      localparam int odd_els_lp = cell_els_lp / 2;
+      localparam int bank_addr_width_lp = (even_els_lp > 1) ? $clog2(even_els_lp) : 1;
+      (* ram_style = "block", ram_decomp = "area" *) logic [35:0] even_mem [even_els_lp];
+      (* ram_style = "block", ram_decomp = "area" *) logic [35:0] odd_mem [odd_els_lp];
       /* verilator tracing_on */
       logic [1:0] cell_v, cell_w;
       logic [1:0][cell_addr_width_lp-1:0] cell_addr;
       logic [1:0][35:0] cell_wdata, cell_q;
+      logic [1:0] bank_v, bank_w;
+      logic [1:0][bank_addr_width_lp-1:0] bank_addr;
+      logic [1:0][35:0] bank_wdata, bank_q;
+      // This datapath selector, like the RAM outputs, is not reset. Every
+      // enabled logical read updates it before the controller consumes data.
+      logic port_order_r;
       logic valid_q;
+      assign cell_q[0] = port_order_r ? bank_q[1] : bank_q[0];
+      assign cell_q[1] = port_order_r ? bank_q[0] : bank_q[1];
       wire [575:0] insert_line = 576'({insert_epoch_r, ptag_r, insert_data_r});
       assign cell_rdata[lane] = {cell_q[1],cell_q[0]};
       assign tag_rdata[lane] = {valid_q,cell_rdata[lane][8+:metadata_bits_lp]};
@@ -160,15 +174,34 @@ module bp_retained_line_store
           cell_addr[1] = line_base + selected_offset + cell_addr_width_lp'(1);
         end
       end
-      // True dual-port, synchronous READ_FIRST. Never combine these into a
-      // single writer: on most cycles both distinct cell addresses are written.
-      always @(posedge clk_i[lane]) if (cell_v[0]) begin
-        if (cell_w[0]) cell_mem[cell_addr[0]] <= cell_wdata[0];
-        cell_q[0] <= cell_mem[cell_addr[0]];
+      // Preserve synchronous READ_FIRST and the logical port order. Only
+      // cell0 is meaningful on a fifteen-cell final transfer/tag read; the
+      // disabled cell1 output is unconsumed by the unchanged controller.
+      always_comb begin
+        bank_v = '0; bank_w = '0; bank_addr = '0; bank_wdata = '0;
+        if (!cell_addr[0][0]) begin
+          bank_v = cell_v; bank_w = cell_w;
+          bank_addr[0] = cell_addr[0][cell_addr_width_lp-1:1];
+          bank_addr[1] = cell_addr[1][cell_addr_width_lp-1:1];
+          bank_wdata = cell_wdata;
+        end else begin
+          bank_v = {cell_v[0],cell_v[1]};
+          bank_w = {cell_w[0],cell_w[1]};
+          bank_addr[0] = cell_addr[1][cell_addr_width_lp-1:1];
+          bank_addr[1] = cell_addr[0][cell_addr_width_lp-1:1];
+          bank_wdata = {cell_wdata[0],cell_wdata[1]};
+        end
       end
-      always @(posedge clk_i[lane]) if (cell_v[1]) begin
-        if (cell_w[1]) cell_mem[cell_addr[1]] <= cell_wdata[1];
-        cell_q[1] <= cell_mem[cell_addr[1]];
+      always @(posedge clk_i[lane]) begin
+        if (cell_v[0]) port_order_r <= cell_addr[0][0];
+        if (bank_v[0]) begin
+          if (bank_w[0]) even_mem[bank_addr[0]] <= bank_wdata[0];
+          bank_q[0] <= even_mem[bank_addr[0]];
+        end
+        if (bank_v[1]) begin
+          if (bank_w[1]) odd_mem[bank_addr[1]] <= bank_wdata[1];
+          bank_q[1] <= odd_mem[bank_addr[1]];
+        end
       end
       always @(posedge clk_i[lane]) begin
         for (int port=0; port<2; port++)
@@ -176,6 +209,12 @@ module bp_retained_line_store
             else $fatal(1,"retained cell port escaped its lane partition");
         if (&cell_v) assert (cell_addr[0] != cell_addr[1])
           else $fatal(1,"retained cell ports collided");
+        if (bank_v[0]) assert (int'(bank_addr[0]) < even_els_lp)
+          else $fatal(1,"retained even cell bank escaped its partition");
+        if (bank_v[1]) assert (int'(bank_addr[1]) < odd_els_lp)
+          else $fatal(1,"retained odd cell bank escaped its partition");
+        if (&cell_v) assert ((&bank_v) && (cell_addr[0][0] != cell_addr[1][0]))
+          else $fatal(1,"retained adjacent cells did not split across banks");
       end
     end else begin : legacy_storage
       // Preserve the original sparse/disabled/oversized-metadata fallback.
