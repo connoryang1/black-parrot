@@ -1,7 +1,7 @@
 /*
  * Partitioned full-64-byte retained payload, with one owning-clock RAM per
  * I/D partition. Ordinary L1 geometry is unchanged. This is an experimental
- * miss-only lookaside: synchronous tag-way scan followed by eight word reads,
+ * miss-only lookaside: synchronous tag-way scan followed by eight payload transfers,
  * never an asynchronous capacity-wide CAM or 512-bit payload mux.
  *
  * Slots are real full lines; a partial final way is supported. I and D may
@@ -76,6 +76,7 @@ module bp_retained_line_store
   logic [1:0][data_addr_width_lp-1:0] data_addr;
   logic [1:0][tag_bits_lp-1:0] tag_wdata, tag_rdata;
   logic [1:0][63:0] data_wdata, data_rdata;
+  logic [1:0][71:0] cell_rdata;
 
   for (genvar lane = 0; lane < 2; lane++) begin : lane_fsm
     localparam int lines_lp = (lane == 0) ? i_lines_p : d_lines_p;
@@ -83,30 +84,97 @@ module bp_retained_line_store
     localparam int local_addr_width_lp = (lines_lp > 1) ? $clog2(lines_lp) : 1;
     localparam int lane_ram_lines_lp = (lines_lp > 0) ? lines_lp : 1;
     localparam int lane_data_addr_width_lp = $clog2(lane_ram_lines_lp * 8);
-    // Static lane ownership needs only one synchronous read/write port.
-    // Preserve read-first behavior, enables and read latency; only physical
-    // storage/indexing changes. Existing global-address assertions below still
-    // bound every access. Disabled lanes never access their placeholder arrays.
-    /* verilator tracing_off */
-    (* ram_style = "block", ram_decomp = "area" *) logic [tag_bits_lp-1:0] tag_mem [lane_ram_lines_lp];
-    (* ram_style = "block", ram_decomp = "area" *) logic [63:0] payload_mem [lane_ram_lines_lp * 8];
-    /* verilator tracing_on */
-    logic [tag_bits_lp-1:0] tag_q;
-    logic [63:0] data_q;
+    localparam int metadata_bits_lp = tag_bits_lp - 1;
+    localparam int cells_per_line_lp = (512 + metadata_bits_lp + 35) / 36;
+    localparam bit packed_cells_lp = (lines_lp >= sets_p) && (lines_lp != 0)
+                                    && (metadata_bits_lp <= 64);
+    logic [tag_width_lp-1:0] ptag_r;
+    logic [epoch_width_p-1:0] insert_epoch_r;
+    logic [511:0] insert_data_r;
     wire [local_addr_width_lp-1:0] local_tag_addr
       = local_addr_width_lp'(tag_addr[lane] - tag_addr_width_lp'(base_lp));
     wire [lane_data_addr_width_lp-1:0] local_data_addr
       = lane_data_addr_width_lp'(data_addr[lane] - data_addr_width_lp'(base_lp * 8));
-    assign tag_rdata[lane] = tag_q;
-    assign data_rdata[lane] = data_q;
-    always @(posedge clk_i[lane]) begin
-      if (tag_v[lane]) begin
-        if (tag_w[lane]) tag_mem[local_tag_addr] <= tag_wdata[lane];
-        tag_q <= tag_mem[local_tag_addr];
+    if (packed_cells_lp) begin : packed_storage
+      // At PA34/sets256/epoch8, fifteen 36-bit cells contain all 512 payload
+      // bits plus epoch8/tag20. Both TDP ports belong to this lane's clock.
+      // Seven cycles access two cells; the eighth accesses only cell14.
+      // Publication uses the independent 1-bit valid RAM, not a third BRAM
+      // write. Clear/invalid metadata is hidden by valid; RAM payload is not reset.
+      localparam int cell_els_lp = lane_ram_lines_lp * cells_per_line_lp;
+      localparam int cell_addr_width_lp = (cell_els_lp > 1) ? $clog2(cell_els_lp) : 1;
+      /* verilator tracing_off */
+      (* ram_style = "block", ram_decomp = "area" *) logic [35:0] cell_mem [cell_els_lp];
+      /* verilator tracing_on */
+      logic [1:0] cell_v, cell_w;
+      logic [1:0][cell_addr_width_lp-1:0] cell_addr;
+      logic [1:0][35:0] cell_wdata, cell_q;
+      logic valid_q;
+      wire [575:0] insert_line = 576'({insert_epoch_r, ptag_r, insert_data_r});
+      assign cell_rdata[lane] = {cell_q[1],cell_q[0]};
+      assign tag_rdata[lane] = {valid_q,cell_rdata[lane][8+:metadata_bits_lp]};
+      assign data_rdata[lane] = cell_rdata[lane][63:0];
+      bp_retained_valid_ram
+       #(.els_p(lane_ram_lines_lp)) validity
+       (.clk_i(clk_i[lane]), .v_i(tag_v[lane]), .w_i(tag_w[lane])
+        ,.addr_i(local_tag_addr), .data_i(tag_wdata[lane][tag_bits_lp-1]), .data_o(valid_q));
+      always_comb begin
+        cell_v = '0; cell_w = '0; cell_addr = '0; cell_wdata = '0;
+        if (data_v[lane]) begin
+          cell_v[0] = 1'b1;
+          cell_v[1] = (int'(local_data_addr[2:0])*2+1 < cells_per_line_lp);
+          cell_w = {2{data_w[lane]}};
+          for (int port=0; port<2; port++) begin
+            cell_addr[port] = cell_addr_width_lp'((int'(local_data_addr) >> 3)*cells_per_line_lp
+                                                 + int'(local_data_addr[2:0])*2 + port);
+            cell_wdata[port] = insert_line[(int'(local_data_addr[2:0])*2+port)*36+:36];
+          end
+        end else if (tag_v[lane] && !tag_w[lane]) begin
+          // Metadata begins at bit512, eight bits into cell14. Generic wider
+          // metadata needs cell15 too; both are read in the same tag cycle.
+          cell_v[0] = 1'b1;
+          cell_v[1] = (cells_per_line_lp == 16);
+          cell_addr[0] = cell_addr_width_lp'(int'(local_tag_addr)*cells_per_line_lp+14);
+          cell_addr[1] = cell_addr_width_lp'(int'(local_tag_addr)*cells_per_line_lp+15);
+        end
       end
-      if (data_v[lane]) begin
-        if (data_w[lane]) payload_mem[local_data_addr] <= data_wdata[lane];
-        data_q <= payload_mem[local_data_addr];
+      // True dual-port, synchronous READ_FIRST. Never combine these into a
+      // single writer: on most cycles both distinct cell addresses are written.
+      always @(posedge clk_i[lane]) if (cell_v[0]) begin
+        if (cell_w[0]) cell_mem[cell_addr[0]] <= cell_wdata[0];
+        cell_q[0] <= cell_mem[cell_addr[0]];
+      end
+      always @(posedge clk_i[lane]) if (cell_v[1]) begin
+        if (cell_w[1]) cell_mem[cell_addr[1]] <= cell_wdata[1];
+        cell_q[1] <= cell_mem[cell_addr[1]];
+      end
+      always @(posedge clk_i[lane]) begin
+        for (int port=0; port<2; port++)
+          if (cell_v[port]) assert (int'(cell_addr[port]) < cell_els_lp)
+            else $fatal(1,"retained cell port escaped its lane partition");
+        if (&cell_v) assert (cell_addr[0] != cell_addr[1])
+          else $fatal(1,"retained cell ports collided");
+      end
+    end else begin : legacy_storage
+      // Preserve the original sparse/disabled/oversized-metadata fallback.
+      /* verilator tracing_off */
+      (* ram_style = "block", ram_decomp = "area" *) logic [tag_bits_lp-1:0] tag_mem [lane_ram_lines_lp];
+      (* ram_style = "block", ram_decomp = "area" *) logic [63:0] payload_mem [lane_ram_lines_lp * 8];
+      /* verilator tracing_on */
+      logic [tag_bits_lp-1:0] tag_q;
+      logic [63:0] data_q;
+      assign tag_rdata[lane] = tag_q;
+      assign data_rdata[lane] = data_q;
+      assign cell_rdata[lane] = '0;
+      always @(posedge clk_i[lane]) begin
+        if (tag_v[lane]) begin
+          if (tag_w[lane]) tag_mem[local_tag_addr] <= tag_wdata[lane];
+          tag_q <= tag_mem[local_tag_addr];
+        end
+        if (data_v[lane]) begin
+          if (data_w[lane]) payload_mem[local_data_addr] <= data_wdata[lane];
+          data_q <= payload_mem[local_data_addr];
+        end
       end
     end
     localparam int ways_lp = (lines_lp + sets_p - 1) / sets_p;
@@ -121,11 +189,8 @@ module bp_retained_line_store
     // insertion publication may update epoch and RR on the same clock edge.
     (* ram_style = "distributed" *) logic [way_width_lp-1:0] rr_r [sets_p];
     logic [set_width_lp-1:0] set_r;
-    logic [tag_width_lp-1:0] ptag_r;
-    logic [epoch_width_p-1:0] insert_epoch_r;
     logic [local_addr_width_lp-1:0] slot_r, empty_slot_r, clear_slot_r;
     logic empty_found_r, replace_r;
-    logic [511:0] insert_data_r;
     logic [2:0] word_r;
     logic resp_v_r, resp_hit_r;
     logic insert_done_r, insert_published_r, epoch_wrap_r;
@@ -323,7 +388,12 @@ module bp_retained_line_store
             end
             e_lookup_data: state_r <= e_lookup_collect;
             e_lookup_collect: begin
-              resp_data_r[int'(word_r)*64+:64] <= data_rdata[lane];
+              // Only hit responses define payload. Collect the complete line
+              // in the same eight cycles; cancelled/miss payload is not consumed.
+              if (packed_cells_lp) begin
+                if (word_r == 3'd7) resp_data_r[504+:8] <= data_rdata[lane][7:0];
+                else resp_data_r[int'(word_r)*72+:72] <= {cell_rdata[lane][71:64],data_rdata[lane]};
+              end else resp_data_r[int'(word_r)*64+:64] <= data_rdata[lane];
               if (word_r == 3'd7) begin state_r <= e_idle; resp_v_r <= 1'b1; resp_hit_r <= 1'b1; end
               else word_r <= word_r + 1'b1;
             end
@@ -393,5 +463,28 @@ module bp_retained_epoch_ram
   assign invalidate_data_o = mem[invalidate_addr_i];
   always_ff @(posedge clk_i)
     if (write_v_i) mem[write_addr_i] <= write_data_i;
+endmodule
+/* verilator lint_on DECLFILENAME */
+
+/* verilator lint_off DECLFILENAME */
+/* Canonical no-reset one-write validity storage with enabled synchronous
+ * READ_FIRST output. The unchanged line sweep initializes every active slot.
+ */
+module bp_retained_valid_ram
+ #(parameter int unsigned els_p = 256
+   , localparam int addr_width_lp = (els_p > 1) ? $clog2(els_p) : 1)
+  (input logic clk_i, v_i, w_i
+   , input logic [addr_width_lp-1:0] addr_i
+   , input logic data_i
+   , output logic data_o);
+  /* verilator tracing_off */
+  (* ram_style = "distributed" *) logic mem [els_p];
+  /* verilator tracing_on */
+  always_ff @(posedge clk_i) begin
+    if (v_i) begin
+      if (w_i) mem[addr_i] <= data_i;
+      data_o <= mem[addr_i];
+    end
+  end
 endmodule
 /* verilator lint_on DECLFILENAME */
