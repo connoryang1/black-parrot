@@ -118,24 +118,46 @@ module bp_retained_line_store
        #(.els_p(lane_ram_lines_lp)) validity
        (.clk_i(clk_i[lane]), .v_i(tag_v[lane]), .w_i(tag_w[lane])
         ,.addr_i(local_tag_addr), .data_i(tag_wdata[lane][tag_bits_lp-1]), .data_o(valid_q));
+      // Narrow cell arithmetic avoids signed int-width multiplication. The
+      // dense format has fifteen or sixteen cells; both physical ports share
+      // one line base and adjacent offsets, never a capacity-wide data mux.
+      wire [cell_addr_width_lp-1:0] selected_line
+        = data_v[lane] ? (cell_addr_width_lp'(local_data_addr) >> 3)
+                       : cell_addr_width_lp'(local_tag_addr);
+      wire [cell_addr_width_lp-1:0] line_base
+        = (cells_per_line_lp == 15)
+          ? ((selected_line << 4) - selected_line) : (selected_line << 4);
+      wire [cell_addr_width_lp-1:0] selected_offset
+        = data_v[lane] ? cell_addr_width_lp'({local_data_addr[2:0],1'b0})
+                       : cell_addr_width_lp'(14);
       always_comb begin
         cell_v = '0; cell_w = '0; cell_addr = '0; cell_wdata = '0;
         if (data_v[lane]) begin
           cell_v[0] = 1'b1;
-          cell_v[1] = (int'(local_data_addr[2:0])*2+1 < cells_per_line_lp);
+          cell_v[1] = (cells_per_line_lp == 16) || (local_data_addr[2:0] != 3'd7);
           cell_w = {2{data_w[lane]}};
-          for (int port=0; port<2; port++) begin
-            cell_addr[port] = cell_addr_width_lp'((int'(local_data_addr) >> 3)*cells_per_line_lp
-                                                 + int'(local_data_addr[2:0])*2 + port);
-            cell_wdata[port] = insert_line[(int'(local_data_addr[2:0])*2+port)*36+:36];
-          end
+          cell_addr[0] = line_base + selected_offset;
+          cell_addr[1] = line_base + selected_offset + cell_addr_width_lp'(1);
+          // Fixed slices make the eight choices explicit; the previous wide
+          // variable 72-bit selector produced a DSP and large selector logic
+          // in the measured production mapping. Client cycles are unchanged.
+          case (local_data_addr[2:0])
+            3'd0: cell_wdata = insert_line[0+:72];
+            3'd1: cell_wdata = insert_line[72+:72];
+            3'd2: cell_wdata = insert_line[144+:72];
+            3'd3: cell_wdata = insert_line[216+:72];
+            3'd4: cell_wdata = insert_line[288+:72];
+            3'd5: cell_wdata = insert_line[360+:72];
+            3'd6: cell_wdata = insert_line[432+:72];
+            3'd7: cell_wdata = insert_line[504+:72];
+          endcase
         end else if (tag_v[lane] && !tag_w[lane]) begin
           // Metadata begins at bit512, eight bits into cell14. Generic wider
           // metadata needs cell15 too; both are read in the same tag cycle.
           cell_v[0] = 1'b1;
           cell_v[1] = (cells_per_line_lp == 16);
-          cell_addr[0] = cell_addr_width_lp'(int'(local_tag_addr)*cells_per_line_lp+14);
-          cell_addr[1] = cell_addr_width_lp'(int'(local_tag_addr)*cells_per_line_lp+15);
+          cell_addr[0] = line_base + selected_offset;
+          cell_addr[1] = line_base + selected_offset + cell_addr_width_lp'(1);
         end
       end
       // True dual-port, synchronous READ_FIRST. Never combine these into a
@@ -391,8 +413,18 @@ module bp_retained_line_store
               // Only hit responses define payload. Collect the complete line
               // in the same eight cycles; cancelled/miss payload is not consumed.
               if (packed_cells_lp) begin
-                if (word_r == 3'd7) resp_data_r[504+:8] <= data_rdata[lane][7:0];
-                else resp_data_r[int'(word_r)*72+:72] <= {cell_rdata[lane][71:64],data_rdata[lane]};
+                // Constant destinations avoid a wide variable part-select
+                // decoder. No extra line staging or changed RAM/client cycle.
+                case (word_r)
+                  3'd0: resp_data_r[0+:72] <= cell_rdata[lane];
+                  3'd1: resp_data_r[72+:72] <= cell_rdata[lane];
+                  3'd2: resp_data_r[144+:72] <= cell_rdata[lane];
+                  3'd3: resp_data_r[216+:72] <= cell_rdata[lane];
+                  3'd4: resp_data_r[288+:72] <= cell_rdata[lane];
+                  3'd5: resp_data_r[360+:72] <= cell_rdata[lane];
+                  3'd6: resp_data_r[432+:72] <= cell_rdata[lane];
+                  3'd7: resp_data_r[504+:8] <= data_rdata[lane][7:0];
+                endcase
               end else resp_data_r[int'(word_r)*64+:64] <= data_rdata[lane];
               if (word_r == 3'd7) begin state_r <= e_idle; resp_v_r <= 1'b1; resp_hit_r <= 1'b1; end
               else word_r <= word_r + 1'b1;
