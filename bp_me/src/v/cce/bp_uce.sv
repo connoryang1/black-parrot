@@ -614,7 +614,11 @@ module bp_uce
   wire [block_size_in_fill_lp-1:0] fill_index_shift = (assoc_p > 1) ? (fsm_rev_addr_li[byte_offset_width_lp+:bank_offset_width_lp] >> bank_sub_offset_width_lp) : '0;
 
   logic retained_hit_r;
-  logic [block_width_p-1:0] retained_hit_data_r;
+  // The single-master backend lends its registered full response payload
+  // through the next accepted lookup, including clear/mutation/insertion.
+  // No new lookup is issued before this hit's final accepted L1 refill;
+  // retain hit qualification locally, but do not duplicate its 512 data bits.
+  wire [block_width_p-1:0] retained_hit_data = retained_resp_data_i;
   logic [fill_cnt_width_lp-1:0] retained_fill_count_r;
   logic [block_width_p-1:0] retained_capture_data_r, retained_pending_data_r;
   logic [block_size_in_fill_lp-1:0] retained_capture_mask_r;
@@ -923,7 +927,6 @@ module bp_uce
       if (retained_resp_v_i & retained_resp_ready_o) begin
         retained_hit_r <= retained_resp_hit_i & retained_enable_i
           & ~retained_clear & ~retained_demand_mutation;
-        retained_hit_data_r <= retained_resp_data_i;
         retained_fill_count_r <= '0;
       end
       if ((state_r == e_retained_fill) & data_mem_pkt_yumi_i
@@ -1304,7 +1307,7 @@ module bp_uce
             + (paddr_width_p'(retained_fill_count_r) << fill_offset_width_lp);
           data_mem_pkt_cast_o.index = cache_req_r.addr[block_offset_width_lp+:index_width_lp];
           data_mem_pkt_cast_o.way_id = cache_req_metadata.hit_or_repl_way;
-          data_mem_pkt_cast_o.data = retained_hit_data_r[fill_width_p*retained_fill_count_r+:fill_width_p];
+          data_mem_pkt_cast_o.data = retained_hit_data[fill_width_p*retained_fill_count_r+:fill_width_p];
           data_mem_pkt_cast_o.fill_index = block_size_in_fill_lp'(1) << retained_fill_count_r;
           data_mem_pkt_v_o = cache_req_metadata_v;
           cache_req_critical_o = data_mem_pkt_v_o
@@ -2034,6 +2037,48 @@ module bp_uce
   end
 
   // synopsys translate_off
+  // Verification-only lease follows the whole accepted-hit lifetime, not
+  // just fill cycles: a dirty victim or SRAM backpressure may delay use.
+  logic retained_borrow_v_r;
+  logic [block_width_p-1:0] retained_borrow_snapshot_r;
+  wire retained_borrow_fill_selected = (state_r == e_retained_fill)
+    & ~(prefetch_install_owned & ~(prefetch_demand_priority_p & cache_req_v_i));
+  always_ff @(posedge clk_i) begin
+    if (reset_i || !retained_buffer_p)
+      retained_borrow_v_r <= 1'b0;
+    else begin
+      if (retained_borrow_v_r) begin
+        assert (!(retained_lookup_v_o && retained_lookup_ready_i))
+          else $error("UCE borrowed payload lookup before final refill use");
+        // Clear/disable/mutation/insert do not end this data lease. The
+        // live backend hit/valid flags are deliberately NOT reconsumed.
+        assert (retained_resp_data_i === retained_borrow_snapshot_r)
+          else $error("UCE borrowed full512 payload changed before final refill use");
+        if (retained_borrow_fill_selected && data_mem_pkt_v_o) begin
+          assert (data_mem_pkt_cast_o.data
+                  === retained_borrow_snapshot_r[fill_width_p*retained_fill_count_r+:fill_width_p])
+            else $error("UCE borrowed presented refill differs from accepted full512 snapshot");
+          if (data_mem_pkt_yumi_i)
+            assert (data_mem_pkt_cast_o.data
+                    === retained_borrow_snapshot_r[fill_width_p*retained_fill_count_r+:fill_width_p])
+              else $error("UCE borrowed accepted refill differs from accepted full512 snapshot");
+        end
+        if ((state_r == e_retained_fill) && (state_n != e_retained_fill)) begin
+          assert (retained_borrow_fill_selected && data_mem_pkt_v_o
+                  && data_mem_pkt_yumi_i && cache_req_last_o)
+            else $error("UCE borrowed payload retired without final accepted refill");
+          retained_borrow_v_r <= 1'b0;
+        end
+      end
+      if (retained_resp_v_i && retained_resp_ready_o && retained_resp_hit_i
+          && retained_enable_i && !retained_clear && !retained_demand_mutation) begin
+        assert (!retained_borrow_v_r)
+          else $error("UCE borrowed payload response overlaps prior final use");
+        retained_borrow_v_r <= 1'b1;
+        retained_borrow_snapshot_r <= retained_resp_data_i;
+      end
+    end
+  end
   // The BedRock stream pump has one packet counter: replies from different
   // prefetch slots must not interleave within a packet. This is the existing
   // bridge/stream contract, not a new guarantee about arbitrary AXI RID order.

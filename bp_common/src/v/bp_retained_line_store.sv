@@ -18,6 +18,12 @@
  * invalidation (a forced miss). Response valid is held until ready. Coherence
  * may revoke a queued hit to a miss while stalled; consume hit/data ONLY at
  * the response handshake. Absent coherence, a held response is stable.
+ * After an accepted HIT, resp_data_o keeps that complete payload until the
+ * next accepted lookup on the SAME lane (reset ends the consumer lease).
+ * Inserts, clear, epoch wrap and invalidation do not shorten the payload
+ * hold. Hit/valid may change after acceptance: only the data is lent.
+ * Single-master clients may use this held data after ready without a copy;
+ * they must finish all uses before issuing their next accepted lookup.
  * Every accepted atomic insert produces one done pulse, with published set
  * only after all eight payload writes and atomic tag publication. Cancel,
  * clear, matching-set invalidation, or a full nonreplacing set retire an
@@ -352,6 +358,28 @@ module bp_retained_line_store
         end
       end
     end
+
+    // synopsys translate_off
+    // Payload lease is stronger than valid/ready stability: coherence may
+    // clear the store after handshake while its client still fills L1.
+    logic resp_payload_lease_v_r;
+    logic [511:0] resp_payload_lease_r;
+    always_ff @(posedge clk_i[lane]) begin
+      if (reset_i[lane])
+        resp_payload_lease_v_r <= 1'b0;
+      else begin
+        if (resp_payload_lease_v_r)
+          assert (resp_data_r === resp_payload_lease_r)
+            else $error("retained response payload lease changed before next lookup");
+        if (lookup_v_i[lane] && lookup_ready_o[lane])
+          resp_payload_lease_v_r <= 1'b0;
+        if (resp_v_o[lane] && resp_ready_i[lane] && resp_hit_o[lane]) begin
+          resp_payload_lease_v_r <= 1'b1;
+          resp_payload_lease_r <= resp_data_r;
+        end
+      end
+    end
+    // synopsys translate_on
 
     // These assertions also cover non-power-of-two/partial final partitions.
     always @(posedge clk_i[lane]) if (!reset_i[lane]) begin
