@@ -233,7 +233,7 @@ module bp_be_top
   logic [num_contexts_p-1:0] virtual_context_translation_en_r;
   logic [num_contexts_p-1:0][asid_width_p-1:0] virtual_context_asid_r;
   logic [num_contexts_p-1:0] virtual_context_csr_valid_r;
-  logic [num_contexts_p-1:0][csr_context_width_lp-1:0] virtual_context_csr_state_r;
+  logic [csr_context_width_lp-1:0] virtual_context_csr_read_data_lo;
   logic [num_threads_p-1:0][(2**reg_addr_width_gp)-1:0] physical_thread_fp_dirty_r;
   logic [num_contexts_p-1:0][(2**reg_addr_width_gp)-1:0] virtual_context_fp_dirty_r;
   logic [num_threads_p-1:0][(2**reg_addr_width_gp)-1:0] physical_thread_int_dirty_r;
@@ -358,6 +358,32 @@ module bp_be_top
     context_cache_commit_v_li
     ? context_cache_victim_physical_thread_id_r
     : pending_ctxtsw_sent_r ? pending_ctxtsw_prev_physical_thread_id_r : current_physical_thread_id_lo;
+  // Only inactive CSR snapshots move to the single-write store. The exact
+  // retirement decoder excludes simultaneous committed save and NPC seed.
+  wire [context_id_width_p-1:0] csr_snapshot_save_context_id_li =
+    context_cache_commit_v_li
+    ? context_cache_victim_virtual_context_id_r : current_virtual_context_id_r;
+  wire csr_snapshot_save_v_li = commit_pkt.ctxtsw
+    && (csr_snapshot_save_context_id_li < num_contexts_p);
+  wire csr_snapshot_seed_v_li = ctx_npc_write_v_lo
+    && (ctx_npc_write_virtual_context_id_lo < num_contexts_p)
+    && (ctx_npc_write_rebind_lo
+        || !virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]);
+  bp_be_csr_snapshot_store_production
+   #(.contexts_p(num_contexts_p)
+     ,.width_p(csr_context_width_lp)
+     ,.addr_width_p(context_id_width_p))
+   csr_snapshot_store
+    (.clk_i(clk_i)
+     ,.reset_i(reset_i)
+     ,.write_v_i(csr_snapshot_save_v_li | csr_snapshot_seed_v_li)
+     ,.write_addr_i(csr_snapshot_seed_v_li
+                    ? ctx_npc_write_virtual_context_id_lo : csr_snapshot_save_context_id_li)
+     ,.read_addr_i(context_cache_target_virtual_context_id_r)
+     ,.write_data_i(csr_context_save_data_lo)
+     ,.valid_o(virtual_context_csr_valid_r)
+     ,.read_valid_o()
+     ,.read_data_o(virtual_context_csr_read_data_lo));
   // First NPC seeding clones the caller's CSR image. A resident target never
   // takes the context-cache install path, so initialize its inactive physical
   // bank at that same committed seed. Existing contexts keep their own CSRs
@@ -396,7 +422,7 @@ module bp_be_top
     & ~virtual_context_csr_valid_r[context_cache_target_virtual_context_id_r];
   wire [csr_context_width_lp-1:0] csr_context_restore_data_li =
     csr_context_cache_restore_v_li
-    ? virtual_context_csr_state_r[context_cache_target_virtual_context_id_r]
+    ? virtual_context_csr_read_data_lo
     : csr_context_save_data_lo;
   wire [vaddr_width_p-1:0] csr_context_restore_npc_li =
     csr_context_cache_restore_v_li
@@ -846,8 +872,6 @@ module bp_be_top
         virtual_context_priv_mode_r[i] <= 2'b11;
         virtual_context_translation_en_r[i] <= 1'b0;
         virtual_context_asid_r[i] <= '0;
-        virtual_context_csr_valid_r[i] <= 1'b0;
-        virtual_context_csr_state_r[i] <= '0;
       end
     end else begin
       if (commit_pkt.ctxtsw) begin
@@ -876,8 +900,6 @@ module bp_be_top
           virtual_context_priv_mode_r[save_virtual_context_id_li] <= commit_pkt.priv_n;
           virtual_context_translation_en_r[save_virtual_context_id_li] <= commit_pkt.translation_en_n;
           virtual_context_asid_r[save_virtual_context_id_li] <= trans_info_lo.asid;
-          virtual_context_csr_state_r[save_virtual_context_id_li] <= csr_context_save_data_lo;
-          virtual_context_csr_valid_r[save_virtual_context_id_li] <= 1'b1;
         end
 
         // A protected call always enters through the descriptor's fixed PC.
@@ -900,17 +922,6 @@ module bp_be_top
           virtual_context_priv_mode_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.priv_n;
           virtual_context_translation_en_r[ctx_npc_write_virtual_context_id_lo] <= commit_pkt.translation_en_n;
           virtual_context_asid_r[ctx_npc_write_virtual_context_id_lo] <= trans_info_lo.asid;
-        end
-
-        if (ctx_npc_write_rebind_lo
-            || !virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo]) begin
-          // A bootstrap target has no prior CSR image.  Clone the seeding
-          // context's architectural CSR state so a first launch
-          // preserves the caller's privilege mode and SATP translation root.
-          // Never overwrite CSR state when only reseeding an existing NPC.
-          virtual_context_csr_state_r[ctx_npc_write_virtual_context_id_lo]
-            <= csr_context_save_data_lo;
-          virtual_context_csr_valid_r[ctx_npc_write_virtual_context_id_lo] <= 1'b1;
         end
 
         if (ctx_npc_write_resident_v_li && (ctx_npc_write_physical_thread_id_li < num_threads_p)) begin
