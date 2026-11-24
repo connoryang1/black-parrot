@@ -179,7 +179,8 @@ module bp_unicore_lite
 
 
   // Global S/M CSR 0x5c2: I enable, D enable, D demand-copy, I demand-copy.
-  // A command clears both stores. Keep the pulse registered for a full cycle:
+  // A command that changes a lane enable clears both stores (see below). Keep
+  // the clear pulse registered for a full cycle:
   // I UCE runs at the positive edge, D UCE at the negative edge. Accepted
   // operations still drain; enable/clear never abandons transport ownership.
   logic retained_control_cmd_v;
@@ -201,13 +202,23 @@ module bp_unicore_lite
   logic [1:0] retained_clear, retained_backend_busy, retained_uce_idle;
   logic [1:0] retained_maintenance, retained_epoch_wrap, retained_wrap_seen_r;
 
+  wire [1:0] retained_control_enable_next =
+    {retained_control_cmd[1] & (retained_d_lines_p != 0),
+     retained_control_cmd[0] & (retained_i_lines_p != 0)};
   always_ff @(posedge clk_i) begin
     if (reset_i) begin
       retained_control_r <= '0;
       retained_control_clear_r <= 1'b0;
       retained_wrap_seen_r <= '0;
     end else begin
-      retained_control_clear_r <= retained_buffer_p & retained_control_cmd_v;
+      // Clear only when a lane's lookup enable changes. A command that keeps
+      // both enables and toggles only demand capture preserves the retained
+      // payload, so software can capture one task's fills and keep them while
+      // another task runs with capture off. Correctness never depends on this
+      // clear: every D mutation still invalidates its retained set, and cache
+      // maintenance (including fence.i) still clears the affected lanes.
+      retained_control_clear_r <= retained_buffer_p & retained_control_cmd_v
+        & (retained_control_enable_next != retained_control_r[1:0]);
       if (retained_buffer_p & retained_control_cmd_v) begin
         retained_control_r[0] <= retained_control_cmd[0] & (retained_i_lines_p != 0);
         retained_control_r[1] <= retained_control_cmd[1] & (retained_d_lines_p != 0);

@@ -144,8 +144,57 @@ module bp_retained_line_store
     wire last_slot;
     wire [set_width_lp-1:0] inv_set = set_width_lp'(invalidate_addr_i[lane] >> 6)
                                                     & set_width_lp'(sets_p-1);
-    wire set_kill = invalidate_v_i[lane] && (inv_set == set_r);
-    wire wrap = (state_r != e_clear) && invalidate_v_i[lane]
+
+    // Shadow tag filter. A distributed copy of {valid, tag} mirrors EVERY
+    // tag-RAM write (publication, replacement invalidation and clear sweep),
+    // so it is a superset of the lines the epoch-qualified tag RAM can report
+    // valid: epoch-retired lines may still look valid here, never the reverse.
+    // "No shadow match" is therefore exact. It is used twice:
+    //  * a lookup with no shadow match answers miss immediately instead of
+    //    scanning every way through the synchronous tag port;
+    //  * a store invalidates its set only if it may match a published line, or
+    //    if any operation is in flight (an unpublished insert or held response
+    //    still uses the original conservative same-set kill). This replaces
+    //    collateral loss from unrelated stores without changing the protocol.
+    // Insert acceptance still refuses any same-cycle raw invalidation.
+    // Only the D lane receives store invalidations, so only it carries the
+    // filter; the I lane keeps the original serial lookup (no added area).
+    logic shadow_lookup_hit, shadow_inv_hit;
+    if (lane == 1) begin : shadow_filter
+      (* ram_style = "distributed" *) logic [tag_width_lp:0] shadow_mem [lane_ram_lines_lp];
+      always_ff @(posedge clk_i[lane])
+        if (tag_v[lane] && tag_w[lane] && (lines_lp != 0))
+          // Packed tag_info_s is {valid, epoch, tag}.
+          shadow_mem[local_tag_addr] <= {tag_wdata[lane][tag_bits_lp-1],
+                                         tag_wdata[lane][tag_width_lp-1:0]};
+      wire [set_width_lp-1:0] lookup_set
+        = set_width_lp'(lookup_addr_i[lane] >> 6) & set_width_lp'(sets_p-1);
+      wire [tag_width_lp-1:0] lookup_ptag = tag_width_lp'(lookup_addr_i[lane] >> (6+set_bits_lp));
+      wire [tag_width_lp-1:0] inv_ptag = tag_width_lp'(invalidate_addr_i[lane] >> (6+set_bits_lp));
+      always_comb begin
+        shadow_lookup_hit = 1'b0; shadow_inv_hit = 1'b0;
+        for (int w = 0; w < ways_lp; w++) begin
+          if (w*sets_p + int'(lookup_set) < lines_lp) begin
+            logic [tag_width_lp:0] e;
+            e = shadow_mem[local_addr_width_lp'(w*sets_p + int'(lookup_set))];
+            if (e[tag_width_lp] && (e[tag_width_lp-1:0] == lookup_ptag)) shadow_lookup_hit = 1'b1;
+          end
+          if (w*sets_p + int'(inv_set) < lines_lp) begin
+            logic [tag_width_lp:0] e;
+            e = shadow_mem[local_addr_width_lp'(w*sets_p + int'(inv_set))];
+            if (e[tag_width_lp] && (e[tag_width_lp-1:0] == inv_ptag)) shadow_inv_hit = 1'b1;
+          end
+        end
+      end
+    end else begin : no_shadow_filter
+      assign shadow_lookup_hit = 1'b1;
+      assign shadow_inv_hit = 1'b1;
+    end
+    wire inv_v = invalidate_v_i[lane]
+      && (shadow_inv_hit || (state_r != e_idle) || resp_v_r);
+
+    wire set_kill = inv_v && (inv_set == set_r);
+    wire wrap = (state_r != e_clear) && inv_v
                   && (&inv_epoch) && (lines_lp != 0);
     wire clear_now = clear_i[lane] || wrap;
     // The idle insert capture and active tag comparison never use their epoch
@@ -165,7 +214,7 @@ module bp_retained_line_store
     // Small/disabled partitions retain all-set reset and unused-set wrap rules.
     if ((lane != 0) && (lines_lp >= sets_p)) begin : distributed_epochs
       wire epoch_write_v = !reset_i[lane]
-        && ((state_r == e_clear) || (!clear_now && invalidate_v_i[lane]));
+        && ((state_r == e_clear) || (!clear_now && inv_v));
       wire [set_width_lp-1:0] epoch_write_addr
         = (state_r == e_clear) ? clear_set : inv_set;
       wire [epoch_width_p-1:0] epoch_write_data
@@ -185,7 +234,7 @@ module bp_retained_line_store
       always_ff @(posedge clk_i[lane]) begin
         if (reset_i[lane] || clear_now)
           for (int s = 0; s < sets_p; s++) epochs_r[s] <= '0;
-        else if (invalidate_v_i[lane] && (state_r != e_clear))
+        else if (inv_v && (state_r != e_clear))
           epochs_r[inv_set] <= epochs_r[inv_set] + 1'b1;
       end
     end
@@ -307,7 +356,9 @@ module bp_retained_line_store
                 set_r <= set_width_lp'(lookup_addr_i[lane] >> 6) & set_width_lp'(sets_p-1);
                 ptag_r <= tag_width_lp'(lookup_addr_i[lane] >> (6+set_bits_lp));
                 slot_r <= local_addr_width_lp'((lookup_addr_i[lane] >> 6) & paddr_width_p'(sets_p-1));
-                if ((lines_lp == 0) || (int'((lookup_addr_i[lane] >> 6) & paddr_width_p'(sets_p-1)) >= lines_lp)) begin
+                if ((lines_lp == 0) || (int'((lookup_addr_i[lane] >> 6) & paddr_width_p'(sets_p-1)) >= lines_lp)
+                    || !shadow_lookup_hit) begin
+                  // Exact miss: no published line in this set can match.
                   resp_v_r <= 1'b1; resp_hit_r <= 1'b0;
                 end else state_r <= e_lookup_tag;
               end else if (insert_v_i[lane] && insert_ready_o[lane]) begin
