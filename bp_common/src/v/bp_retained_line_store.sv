@@ -157,10 +157,11 @@ module bp_retained_line_store
     //    still uses the original conservative same-set kill). This replaces
     //    collateral loss from unrelated stores without changing the protocol.
     // Insert acceptance still refuses any same-cycle raw invalidation.
-    // Only the D lane receives store invalidations, so only it carries the
-    // filter; the I lane keeps the original serial lookup (no added area).
+    // Both lanes carry the filter: D uses it for exact store invalidation and
+    // one-cycle lookup misses; I (no store invalidations) for one-cycle
+    // lookup misses, removing the serial way scan from every I-cache miss.
     logic shadow_lookup_hit, shadow_inv_hit;
-    if (lane == 1) begin : shadow_filter
+    if (lines_lp != 0) begin : shadow_filter
       wire [set_width_lp-1:0] lookup_set
         = set_width_lp'(lookup_addr_i[lane] >> 6) & set_width_lp'(sets_p-1);
       wire [tag_width_lp-1:0] lookup_ptag = tag_width_lp'(lookup_addr_i[lane] >> (6+set_bits_lp));
