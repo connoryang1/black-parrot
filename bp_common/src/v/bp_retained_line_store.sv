@@ -161,31 +161,32 @@ module bp_retained_line_store
     // filter; the I lane keeps the original serial lookup (no added area).
     logic shadow_lookup_hit, shadow_inv_hit;
     if (lane == 1) begin : shadow_filter
-      (* ram_style = "distributed" *) logic [tag_width_lp:0] shadow_mem [lane_ram_lines_lp];
-      always_ff @(posedge clk_i[lane])
-        if (tag_v[lane] && tag_w[lane] && (lines_lp != 0))
-          // Packed tag_info_s is {valid, epoch, tag}.
-          shadow_mem[local_tag_addr] <= {tag_wdata[lane][tag_bits_lp-1],
-                                         tag_wdata[lane][tag_width_lp-1:0]};
       wire [set_width_lp-1:0] lookup_set
         = set_width_lp'(lookup_addr_i[lane] >> 6) & set_width_lp'(sets_p-1);
       wire [tag_width_lp-1:0] lookup_ptag = tag_width_lp'(lookup_addr_i[lane] >> (6+set_bits_lp));
       wire [tag_width_lp-1:0] inv_ptag = tag_width_lp'(invalidate_addr_i[lane] >> (6+set_bits_lp));
-      always_comb begin
-        shadow_lookup_hit = 1'b0; shadow_inv_hit = 1'b0;
-        for (int w = 0; w < ways_lp; w++) begin
-          if (w*sets_p + int'(lookup_set) < lines_lp) begin
-            logic [tag_width_lp:0] e;
-            e = shadow_mem[local_addr_width_lp'(w*sets_p + int'(lookup_set))];
-            if (e[tag_width_lp] && (e[tag_width_lp-1:0] == lookup_ptag)) shadow_lookup_hit = 1'b1;
-          end
-          if (w*sets_p + int'(inv_set) < lines_lp) begin
-            logic [tag_width_lp:0] e;
-            e = shadow_mem[local_addr_width_lp'(w*sets_p + int'(inv_set))];
-            if (e[tag_width_lp] && (e[tag_width_lp-1:0] == inv_ptag)) shadow_inv_hit = 1'b1;
-          end
-        end
+      // One sets-deep RAM per way (slot = way*sets + set), so each way needs
+      // only its own two read ports. A single lines-deep array would be
+      // replicated for every way's read port.
+      logic [ways_lp-1:0] way_lookup_hit, way_inv_hit;
+      for (genvar w = 0; w < ways_lp; w++) begin : shadow_way
+        (* ram_style = "distributed" *) logic [tag_width_lp:0] mem [sets_p];
+        wire write_v = tag_v[lane] && tag_w[lane] && (lines_lp != 0)
+          && ((int'(local_tag_addr) >> set_bits_lp) == w);
+        always_ff @(posedge clk_i[lane])
+          if (write_v)
+            // Packed tag_info_s is {valid, epoch, tag}.
+            mem[set_width_lp'(local_tag_addr) & set_width_lp'(sets_p-1)]
+              <= {tag_wdata[lane][tag_bits_lp-1], tag_wdata[lane][tag_width_lp-1:0]};
+        wire [tag_width_lp:0] lookup_e = mem[lookup_set];
+        wire [tag_width_lp:0] inv_e = mem[inv_set];
+        assign way_lookup_hit[w] = (w*sets_p + int'(lookup_set) < lines_lp)
+          && lookup_e[tag_width_lp] && (lookup_e[tag_width_lp-1:0] == lookup_ptag);
+        assign way_inv_hit[w] = (w*sets_p + int'(inv_set) < lines_lp)
+          && inv_e[tag_width_lp] && (inv_e[tag_width_lp-1:0] == inv_ptag);
       end
+      assign shadow_lookup_hit = |way_lookup_hit;
+      assign shadow_inv_hit = |way_inv_hit;
     end else begin : no_shadow_filter
       assign shadow_lookup_hit = 1'b1;
       assign shadow_inv_hit = 1'b1;
