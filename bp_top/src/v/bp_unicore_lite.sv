@@ -30,6 +30,24 @@ module bp_unicore_lite
 `else
    , parameter int unsigned retained_d_lines_p = 64
 `endif
+`ifdef BP_REPLAY_INSTALL
+   // Address replay installs whole lines into the L1 I-cache instead of the
+   // small advisory buffer (only without the retained store).
+   , parameter bit replay_install_p = `BP_REPLAY_INSTALL
+`else
+   , parameter bit replay_install_p = 1'b0
+`endif
+`ifdef BP_ICACHE_PF_ELS
+   , parameter int unsigned icache_pf_els_p = `BP_ICACHE_PF_ELS
+`else
+   , parameter int unsigned icache_pf_els_p = 4
+`endif
+`ifdef BP_DREPLAY_ENTRIES
+   // Per-task D replay footprint length (lines per slot).
+   , parameter int unsigned dreplay_entries_p = `BP_DREPLAY_ENTRIES
+`else
+   , parameter int unsigned dreplay_entries_p = 32
+`endif
 `ifdef BP_RETAINED_SETS
    , parameter int unsigned retained_sets_p = `BP_RETAINED_SETS
 `else
@@ -459,11 +477,11 @@ module bp_unicore_lite
      ,.id_width_p(icache_req_id_width_p)
      ,.writeback_p(icache_features_p[e_cfg_writeback])
      ,.prefetch_p(1'b1)
-     ,.prefetch_els_p(4)
+     ,.prefetch_els_p(icache_pf_els_p)
      ,.prefetch_full_line_p(1'b1)
      ,.prefetch_demand_priority_p(1'b1)
      ,.prefetch_critical_forward_p(1'b0)
-     ,.prefetch_side_buffer_p(~retained_buffer_p)
+     ,.prefetch_side_buffer_p(~retained_buffer_p & ~replay_install_p)
      )
    icache_uce
     (.clk_i(posedge_clk)
@@ -552,18 +570,24 @@ module bp_unicore_lite
   logic [1:1][bedrock_fill_width_p-1:0] _mem_rev_data_i;
   logic [1:1] _mem_rev_v_i, _mem_rev_ready_and_o;
 
+  // Wide D replay tables take index bits 52:48 above the original 44:40
+  // field and count bits 36:32 above 7:2; both are zero for <=32 entries.
+  localparam dreplay_index_w_lp = $clog2(dreplay_entries_p);
+  localparam dreplay_count_w_lp = $clog2(dreplay_entries_p+1);
+  wire [9:0] dreplay_index_wide = {dcache_replay_payload_lo[52:48], dcache_replay_payload_lo[44:40]};
+  wire [10:0] dreplay_count_wide = {dcache_replay_payload_lo[36:32], dcache_replay_payload_lo[7:2]};
   bp_dcache_replay_ctrl
-   #(.paddr_width_p(paddr_width_p))
+   #(.paddr_width_p(paddr_width_p), .entries_per_slot_p(dreplay_entries_p))
    dcache_replay_ctrl
     (.clk_i(posedge_clk)
      ,.reset_i(reset_i)
      ,.entry_write_v_i(dcache_replay_entry_v_lo)
      ,.entry_write_slot_i(dcache_replay_payload_lo[46:45])
-     ,.entry_write_index_i(dcache_replay_payload_lo[44:40])
+     ,.entry_write_index_i(dreplay_index_wide[0+:dreplay_index_w_lp])
      ,.entry_write_paddr_i(dcache_replay_payload_lo[0+:paddr_width_p])
      ,.config_write_v_i(dcache_replay_config_v_lo)
      ,.config_write_slot_i(dcache_replay_payload_lo[1:0])
-     ,.config_write_count_i(dcache_replay_payload_lo[7:2])
+     ,.config_write_count_i(dreplay_count_wide[0+:dreplay_count_w_lp])
      ,.config_write_delay_i(dcache_replay_payload_lo[23:8])
      ,.config_write_gap_i(dcache_replay_payload_lo[31:24])
      ,.trigger_v_i(dcache_replay_trigger_v_lo)
