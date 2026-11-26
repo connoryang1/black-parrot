@@ -1155,12 +1155,27 @@ module bp_fe_icache
     end
   // See hit_v_o/miss_v_o: fetches that may have observed an install write.
   logic install_stale_tl_r, install_stale_tv_r;
-  wire install_write = is_ready & (tag_mem_slow_write | (|data_mem_slow_write));
+  // The SRAMs latch their last read (latch_last_read_p), so a write to a
+  // different set cannot disturb an in-flight fetch; only same-set writes
+  // (stale tags/data, or a same-index bypass of them) need the refetch.
+  wire install_tag_write = is_ready & tag_mem_slow_write;
+  wire install_data_write = is_ready & (|data_mem_slow_write);
+  wire [sindex_width_lp-1:0] paddr_index_tv = paddr_tv_r[block_offset_width_lp+:sindex_width_lp];
+  wire install_write_tl = (install_tag_write & (tag_mem_pkt_cast_i.index == vaddr_index_tl))
+    | (install_data_write & (data_mem_pkt_cast_i.index == vaddr_index_tl));
+  wire install_write_tv = (install_tag_write & (tag_mem_pkt_cast_i.index == paddr_index_tv))
+    | (install_data_write & (data_mem_pkt_cast_i.index == paddr_index_tv));
+  // TL compares against the tag SRAM's latched output combinationally. The
+  // installer's own tag reads (duplicate scan of other sets) replace that
+  // output, so any such read invalidates a fetch waiting in TL whatever its
+  // set: it could otherwise miss on a resident line (duplicate refill) or hit
+  // another set's way (wrong instructions).
+  wire install_tag_read = is_ready & tag_mem_slow_read;
   always_ff @(posedge clk_i)
     if (reset_i | tl_flush_i)
       install_stale_tl_r <= 1'b0;
     else
-      install_stale_tl_r <= install_write
+      install_stale_tl_r <= install_write_tl | install_tag_read
         | (tl_we ? (install_stale_tl_r & (tag_mem_bypass | data_mem_bypass)) : install_stale_tl_r);
   always_ff @(posedge clk_i)
     if (reset_i | tv_flush_i)
@@ -1168,7 +1183,10 @@ module bp_fe_icache
     else if (critical_recv)
       install_stale_tv_r <= 1'b0;
     else
-      install_stale_tv_r <= install_write | (tv_we ? install_stale_tl_r : install_stale_tv_r);
+      // On a TL->TV move the incoming fetch carries the TL flag, including a
+      // same-set write in this very cycle.
+      install_stale_tv_r <= tv_we ? (install_stale_tl_r | install_write_tl)
+                                  : (install_stale_tv_r | install_write_tv);
   assign install_stale_fetch_tv = install_stale_tv_r & ~snoop_tv_r;
 
   assign data_mem_pkt_yumi_o = replay_buffer_prefetch_input
