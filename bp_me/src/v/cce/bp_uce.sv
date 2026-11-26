@@ -1515,9 +1515,11 @@ module bp_uce
       // data refill is outstanding.  A same-line demand remains deferred
       // until its hint has been issued, preventing duplicate ownership.
       if (prefetch_p & prefetch_issue_v
-          // Retained data mode must not replace an already selected ordinary
-          // nonblocking write with a preview read and still retire its FIFO.
-          & (!retained_buffer_p | ~(is_ready & nonblocking_v_r))
+          // Never replace an already selected ordinary nonblocking write
+          // with a hint read: the write's FIFO entry would still retire,
+          // silently dropping the store (seen as lost uncached I/O bytes
+          // when replay ran without the retained buffer).
+          & ~(is_ready & nonblocking_v_r)
           & ((is_ready | is_read_request | is_uc_read_wait | is_writeback_read)
              & ~prefetch_demand_match
              | (is_send_critical & miss_v_r & prefetch_demand_match))
@@ -1994,6 +1996,38 @@ module bp_uce
                 & ~(prefetch_response_yumi & fsm_rev_last_li
                     & (prefetch_response_slot == prefetch_slot_width_lp'(i)))) begin
               // Keep ownership only to drain every already-issued reply.
+              prefetch_cancel_r[i] <= 1'b1;
+            end else begin
+              prefetch_valid_r[i] <= 1'b0;
+              prefetch_sent_r[i] <= 1'b0;
+              prefetch_way_v_r[i] <= 1'b0;
+              prefetch_cancel_r[i] <= 1'b0;
+              prefetch_complete_r[i] <= 1'b0;
+              prefetch_preview_r[i] <= 1'b0;
+              prefetch_fill_count_r[i] <= '0;
+            end
+          end
+        end
+      end
+
+      // With demand priority, the installer never starts while a demand is
+      // presented, yet a same-line miss is held at the boundary until the
+      // live hint retires: neither can proceed. A cache that cannot recompute
+      // its hit while held (the I-cache) must not have the hint publish under
+      // the held miss either. Retire the matching hint instead; the demand
+      // then refills the line itself. A slot already owned by the installer
+      // is dropped by the installer's own demand-priority path.
+      if (prefetch_demand_priority_p & (miss_load_v_li | miss_store_v_li)
+          & prefetch_duplicate_v) begin
+        for (int i = 0; i < prefetch_els_p; i++) begin
+          if (prefetch_valid_r[i] & ~prefetch_cancel_r[i]
+              & (prefetch_addr_r[i][paddr_width_p-1:prefetch_match_offset_width_lp]
+                 == cache_req_cast_i.addr[paddr_width_p-1:prefetch_match_offset_width_lp])
+              & ~((prefetch_install_state_r != e_pf_idle)
+                  & (prefetch_install_slot_r == prefetch_slot_width_lp'(i)))) begin
+            if (prefetch_sent_r[i] & ~prefetch_complete_r[i]
+                & ~(prefetch_response_yumi & fsm_rev_last_li
+                    & (prefetch_response_slot == prefetch_slot_width_lp'(i)))) begin
               prefetch_cancel_r[i] <= 1'b1;
             end else begin
               prefetch_valid_r[i] <= 1'b0;

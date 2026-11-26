@@ -605,8 +605,19 @@ module bp_fe_icache
      *data_width_p+:data_width_p];
   assign data_o = replay_buffer_hit_tv
     ? (replay_buffer_bram_p ? retained_word : replay_buffer_data_tv) : cache_data_tv;
-  assign hit_v_o   = is_ready & v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r &  hit_v_tv;
-  assign miss_v_o  = is_ready & v_tv_r & decode_tv_r.fetch_op &  spec_tv_r & ~hit_v_tv;
+  // Detached replay installs write the tag/data SRAMs while the cache is
+  // e_ready (demand fills only write in e_miss and then recover). A fetch in
+  // TL/TV across such a write may hold a stale miss (refilling it would
+  // duplicate the line in a second way) or SRAM output disturbed by the write
+  // or reused through the same-index bypass. Report such a fetch as a miss
+  // without a request so the FE refetches; the redirect flushes TL, so the
+  // refetch re-reads the SRAMs.
+  logic install_stale_fetch_tv;  // driven below the SRAM write decode
+
+  assign hit_v_o   = is_ready & v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r &  hit_v_tv
+    & ~install_stale_fetch_tv;
+  assign miss_v_o  = is_ready & v_tv_r & decode_tv_r.fetch_op
+    & ((spec_tv_r & ~hit_v_tv) | install_stale_fetch_tv);
   assign fence_v_o = is_ready & v_tv_r & decode_tv_r.inval_op & snoop_tv_r;
 
   ///////////////////////////
@@ -655,6 +666,7 @@ module bp_fe_icache
   wire inval_req    = decode_tv_r.inval_op & ~snoop_tv_r;
 
   assign cache_req_v_o = is_ready & v_tv_r & |{uncached_req, cached_req, inval_req}
+    & ~(decode_tv_r.fetch_op & install_stale_fetch_tv)
     & ~tv_flush_i & ~retained_wait;
   assign cache_req_cast_o =
    '{addr     : paddr_tv_r
@@ -1141,6 +1153,24 @@ module bp_fe_icache
         : {data_mem_pkt_cast_i.index, {(assoc_p > 1){data_mem_pkt_offset}}};
       assign data_mem_data_li[i] = data_mem_pkt_data_li[i];
     end
+  // See hit_v_o/miss_v_o: fetches that may have observed an install write.
+  logic install_stale_tl_r, install_stale_tv_r;
+  wire install_write = is_ready & (tag_mem_slow_write | (|data_mem_slow_write));
+  always_ff @(posedge clk_i)
+    if (reset_i | tl_flush_i)
+      install_stale_tl_r <= 1'b0;
+    else
+      install_stale_tl_r <= install_write
+        | (tl_we ? (install_stale_tl_r & (tag_mem_bypass | data_mem_bypass)) : install_stale_tl_r);
+  always_ff @(posedge clk_i)
+    if (reset_i | tv_flush_i)
+      install_stale_tv_r <= 1'b0;
+    else if (critical_recv)
+      install_stale_tv_r <= 1'b0;
+    else
+      install_stale_tv_r <= install_write | (tv_we ? install_stale_tl_r : install_stale_tv_r);
+  assign install_stale_fetch_tv = install_stale_tv_r & ~snoop_tv_r;
+
   assign data_mem_pkt_yumi_o = replay_buffer_prefetch_input
     ? 1'b1
     : (data_mem_pkt_cast_i.opcode == e_cache_data_mem_uncached)
