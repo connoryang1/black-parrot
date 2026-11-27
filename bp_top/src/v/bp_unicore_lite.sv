@@ -89,6 +89,20 @@ module bp_unicore_lite
 
   bp_fe_icache_req_s icache_req_lo;
   logic icache_req_v_lo, icache_req_yumi_li, icache_req_lock_li, icache_req_metadata_v_lo;
+  // While either cache has ordinary misses outstanding, cap the replay reads
+  // in flight so the replay burst does not queue ahead of those misses at the
+  // in-order memory port. A cap of 0 disables throttling.
+`ifdef BP_REPLAY_DEMAND_CAP
+  localparam int replay_demand_cap_lp = `BP_REPLAY_DEMAND_CAP;
+`else
+  localparam int replay_demand_cap_lp = 0;
+`endif
+  logic icache_demand_active_lo, dcache_demand_active_lo;
+  logic [7:0] icache_replay_inflight_lo, dcache_replay_inflight_lo;
+  wire [8:0] replay_inflight_total = icache_replay_inflight_lo + dcache_replay_inflight_lo;
+  wire replay_issue_throttle = (replay_demand_cap_lp != 0)
+    & (icache_demand_active_lo | dcache_demand_active_lo)
+    & (replay_inflight_total >= 9'(replay_demand_cap_lp));
   bp_fe_icache_req_metadata_s icache_req_metadata_lo;
   logic [icache_req_id_width_p-1:0] icache_req_id_li;
   logic icache_req_critical_li, icache_req_last_li;
@@ -518,6 +532,9 @@ module bp_unicore_lite
      ,.cache_req_v_i(icache_req_v_lo)
      ,.cache_req_yumi_o(icache_req_yumi_li)
      ,.cache_req_lock_o(icache_req_lock_li)
+     ,.demand_active_o(icache_demand_active_lo)
+     ,.replay_inflight_o(icache_replay_inflight_lo)
+     ,.replay_issue_throttle_i(replay_issue_throttle)
      ,.cache_req_metadata_i(icache_req_metadata_lo)
      ,.cache_req_metadata_v_i(icache_req_metadata_v_lo)
      ,.preview_paddr_i('0)
@@ -659,6 +676,9 @@ module bp_unicore_lite
      ,.cache_req_v_i(dcache_req_v_lo)
      ,.cache_req_yumi_o(dcache_req_yumi_li)
      ,.cache_req_lock_o(dcache_req_lock_li)
+     ,.demand_active_o(dcache_demand_active_lo)
+     ,.replay_inflight_o(dcache_replay_inflight_lo)
+     ,.replay_issue_throttle_i(replay_issue_throttle)
      ,.cache_req_metadata_i(dcache_req_metadata_lo)
      ,.cache_req_metadata_v_i(dcache_req_metadata_v_lo)
      ,.preview_paddr_i(physical_preview_paddr_lo)

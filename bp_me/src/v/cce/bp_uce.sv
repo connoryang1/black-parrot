@@ -64,6 +64,11 @@ module bp_uce
     , input                                          cache_req_v_i
     , output logic                                   cache_req_yumi_o
     , output logic                                   cache_req_lock_o
+    // Replay bandwidth sharing: report this client's ordinary (demand) traffic
+    // and in-flight replay reads; a throttled client issues no new replay read.
+    , output logic                                   demand_active_o
+    , output logic [7:0]                             replay_inflight_o
+    , input                                          replay_issue_throttle_i
     , input [cache_req_metadata_width_lp-1:0]        cache_req_metadata_i
     , input                                          cache_req_metadata_v_i
     // Physical, permission-checked data previews enter independently of the
@@ -713,6 +718,10 @@ module bp_uce
   // very latency that prefetching is intended to hide.
   wire [`BSG_WIDTH(coh_noc_max_credits_p)-1:0] prefetch_outstanding_count
     = `BSG_WIDTH(coh_noc_max_credits_p)'($countones(prefetch_sent_r & ~prefetch_complete_r));
+  // Credits cover both ordinary and replay requests, so any excess over the
+  // in-flight replay count is ordinary traffic.
+  assign demand_active_o = cache_req_v_r | (credit_count_lo != prefetch_outstanding_count);
+  assign replay_inflight_o = 8'(prefetch_outstanding_count);
 
   // Detached hints reserve distinct ways relative to one another, but stores
   // and ordinary fills may change the set while memory is outstanding. Validate
@@ -1540,7 +1549,7 @@ module bp_uce
       // admit the next worker's line while the current worker's register or
       // data refill is outstanding.  A same-line demand remains deferred
       // until its hint has been issued, preventing duplicate ownership.
-      if (prefetch_p & prefetch_issue_v
+      if (prefetch_p & prefetch_issue_v & ~replay_issue_throttle_i
           // Never replace an already selected ordinary nonblocking write
           // with a hint read: the write's FIFO entry would still retire,
           // silently dropping the store (seen as lost uncached I/O bytes
