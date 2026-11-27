@@ -68,6 +68,8 @@ module bp_uce
     , input                                          cache_req_v_i
     , output logic                                   cache_req_yumi_o
     , output logic                                   cache_req_lock_o
+    // cache_req_lock_o without the same-cycle installer acquire (state only)
+    , output logic                                   cache_req_lock_state_o
     // Replay bandwidth sharing: report this client's ordinary (demand) traffic
     // and in-flight replay reads; a throttled client issues no new replay read.
     , output logic                                   demand_active_o
@@ -1136,6 +1138,20 @@ module bp_uce
   // with the installer's tag/stat/invalidate transactions.
   assign cache_req_lock_o = is_reset | is_init | inval_v_r | clean_v_r | flush_v_r
     | prefetch_install_lock;
+  // The acquire term depends combinationally on cache_req_v_i. For the
+  // I-cache that closes a loop (lock -> hit_v/yumi -> frontend override ->
+  // tv_flush -> cache_req_v -> acquire -> lock); it is logically false, but
+  // Vivado broke it by making every path through the lock a false path,
+  // leaving lock-to-fetch paths untimed. The installer touches no SRAM in its
+  // acquire cycle (idle -> read_tag/drain), so a cache may use this registered
+  // form: it freezes one cycle later, and a fetch accepted in the acquire
+  // cycle is caught by the cache's install_stale_* tracking of the installer's
+  // tag reads and writes, exactly like a fetch already in TL at acquire.
+  assign cache_req_lock_state_o = is_reset | is_init | inval_v_r | clean_v_r | flush_v_r
+    | (~prefetch_side_buffer_p
+       & (prefetch_install_state_r inside {e_pf_drain, e_pf_read_tag, e_pf_check_tag,
+                                           e_pf_read_stat, e_pf_check_stat,
+                                           e_pf_invalidate, e_pf_fill, e_pf_publish}));
   logic blocking_req_v_lo;
   always_comb
     begin
