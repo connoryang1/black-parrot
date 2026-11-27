@@ -133,6 +133,8 @@ module bp_uce
     , input [cache_tag_info_width_lp-1:0]            tag_mem_i
     // Whole tag row (all ways) of the last engine tag read.
     , input [assoc_p*(cache_tag_info_width_lp+1)-1:0]    tag_row_i
+    // Whole replay line for a one-cycle installer fill (BP_REPLAY_WIDE_FILL).
+    , output [block_width_p-1:0]                    install_line_o
 
     , output logic [cache_data_mem_pkt_width_lp-1:0] data_mem_pkt_o
     , output logic                                   data_mem_pkt_v_o
@@ -214,6 +216,16 @@ module bp_uce
   // detached request owns one line buffer, allowing responses to complete at
   // memory speed while the single cache write port drains lines later.
   logic [block_size_in_fill_lp-1:0][fill_width_p-1:0] prefetch_install_line_r;
+  // Write the whole installed line in one cycle (all fill_index bits set,
+  // data on install_line_o) instead of one beat per cycle. Each beat of a line
+  // lands in a different data bank, so the caches can accept it at once.
+  localparam bit prefetch_wide_fill_lp =
+`ifdef BP_REPLAY_WIDE_FILL
+    (block_size_in_fill_lp > 1) && !prefetch_side_buffer_p;
+`else
+    1'b0;
+`endif
+  assign install_line_o = prefetch_install_line_r;
   logic prefetch_free_v, prefetch_issue_v, prefetch_duplicate_v;
   logic detached_prefetch_duplicate_v, detached_prefetch_demand_match;
   logic detached_prefetch_resident_demand_match;
@@ -1782,7 +1794,7 @@ module bp_uce
             data_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
             data_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
             data_mem_pkt_cast_o.data = prefetch_install_line_r[prefetch_install_count_r];
-            data_mem_pkt_cast_o.fill_index = 1'b1 << prefetch_install_count_r;
+            data_mem_pkt_cast_o.fill_index = prefetch_wide_fill_lp ? '1 : (1'b1 << prefetch_install_count_r);
             data_mem_pkt_v_o = prefetch_install_full;
           end
           e_pf_publish: begin
@@ -1945,7 +1957,8 @@ module bp_uce
                           == (prefetch_side_buffer_p
                               ? e_cache_data_mem_prefetch
                               : e_cache_data_mem_write))) begin
-          if (prefetch_install_count_r == fill_cnt_width_lp'(block_size_in_fill_lp-1))
+          if (prefetch_wide_fill_lp
+              | (prefetch_install_count_r == fill_cnt_width_lp'(block_size_in_fill_lp-1)))
             prefetch_install_state_r <= prefetch_side_buffer_p ? e_pf_idle : e_pf_publish;
           else
             prefetch_install_count_r <= prefetch_install_count_r + 1'b1;

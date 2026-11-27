@@ -181,6 +181,7 @@ module bp_be_dcache
    , output logic [dcache_tag_info_width_lp-1:0]     tag_mem_o
    // Whole tag row of the last engine tag read (all ways), for one-cycle replay duplicate scans.
    , output logic [assoc_p*(dcache_tag_info_width_lp+1)-1:0] tag_row_o
+   , input [block_width_p-1:0]                        fill_line_i
 
    , input                                           stat_mem_pkt_v_i
    , input [dcache_stat_mem_pkt_width_lp-1:0]        stat_mem_pkt_i
@@ -1049,7 +1050,26 @@ module bp_be_dcache
      ,.rot_i(write_data_rot_li)
      ,.o(data_mem_pkt_fill_data_li)
      );
-  wire [assoc_p-1:0][bank_width_lp-1:0] data_mem_pkt_data_li = {block_size_in_fill_lp{data_mem_pkt_fill_data_li}};
+  // A replay installer write with every fill_index bit set carries its whole
+  // line on fill_line_i (BP_REPLAY_WIDE_FILL): bank i takes line word
+  // (i - way), the same placement the per-beat rotation gives. Demand fills
+  // are one beat (one fill_index bit) at a time and never take this path.
+`ifdef BP_REPLAY_WIDE_FILL
+  wire data_mem_pkt_wide = (block_size_in_fill_lp > 1) & (&data_mem_pkt_cast_i.fill_index);
+`else
+  // Without the define the mux below folds away, so default builds pay no area.
+  wire data_mem_pkt_wide = 1'b0;
+`endif
+  logic [block_width_p-1:0] data_mem_pkt_line_rot;
+  bsg_rotate_left
+   #(.width_p(block_width_p))
+   wide_fill_rotate
+    (.data_i(fill_line_i)
+     ,.rot_i(`BSG_SAFE_CLOG2(block_width_p)'(data_mem_pkt_cast_i.way_id*bank_width_lp))
+     ,.o(data_mem_pkt_line_rot)
+     );
+  wire [assoc_p-1:0][bank_width_lp-1:0] data_mem_pkt_data_li = data_mem_pkt_wide
+    ? data_mem_pkt_line_rot : {block_size_in_fill_lp{data_mem_pkt_fill_data_li}};
 
   localparam dword_mask_width_lp = `BSG_SAFE_CLOG2(num_words_per_bank_lp);
   wire [dword_mask_width_lp-1:0] wbuf_dword_sel = wbuf_entry_out.caddr[3+:dword_mask_width_lp];

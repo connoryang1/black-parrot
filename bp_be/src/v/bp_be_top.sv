@@ -75,6 +75,7 @@ module bp_be_top
    , input [dcache_tag_mem_pkt_width_lp-1:0]         tag_mem_pkt_i
    , output logic [dcache_tag_info_width_lp-1:0]     tag_mem_o
    , output logic [dcache_assoc_p*(dcache_tag_info_width_lp+1)-1:0] tag_row_o
+   , input [dcache_block_width_p-1:0]                 fill_line_i
    , output logic                                    tag_mem_pkt_yumi_o
 
    // data_mem
@@ -1572,6 +1573,7 @@ module bp_be_top
      ,.tag_mem_pkt_i(tag_mem_pkt_i)
      ,.tag_mem_o(tag_mem_o)
      ,.tag_row_o(tag_row_o)
+     ,.fill_line_i(fill_line_i)
      ,.tag_mem_pkt_yumi_o(tag_mem_pkt_yumi_o)
 
      ,.data_mem_pkt_v_i(data_mem_pkt_v_i)
