@@ -39,6 +39,10 @@ module bp_uce
     // buffer. I-cache replay has no such buffer and captures every beat only
     // in the detached line store until installation.
     , parameter bit prefetch_critical_forward_p = 1'b1
+    // Installer drain before touching the arrays. The D-cache needs it (TL/TV
+    // and write buffer); the I-cache freezes TL/TV under the lock and refetches
+    // anything that may have observed an installation, so it may skip it.
+    , parameter bit install_drain_p = 1'b1
     // Completed full-line replies may retire into a cache-local advisory
     // buffer instead of replacing a line in the live cache arrays. This is
     // required for instruction replay: asynchronous slow-path writes to a
@@ -1859,7 +1863,8 @@ module bp_uce
           prefetch_install_probe_way_r <= '0;
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
-          prefetch_install_state_r <= prefetch_side_buffer_p ? e_pf_fill : e_pf_drain;
+          prefetch_install_state_r <= prefetch_side_buffer_p ? e_pf_fill
+            : install_drain_p ? e_pf_drain : e_pf_read_tag;
         end else if (prefetch_install_begin & prefetch_install_drop_for_demand) begin
           // A demand already resident in the UCE may be waiting for this same
           // replay line. It cannot withdraw and recompute its cache hit like a

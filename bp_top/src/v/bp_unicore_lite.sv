@@ -499,6 +499,9 @@ module bp_unicore_lite
      ,.prefetch_full_line_p(1'b1)
      ,.prefetch_demand_priority_p(1'b1)
      ,.prefetch_critical_forward_p(1'b0)
+`ifdef BP_REPLAY_ICACHE_NODRAIN
+     ,.install_drain_p(1'b0)
+`endif
      ,.prefetch_side_buffer_p(~retained_buffer_p & ~replay_install_p)
      )
    icache_uce

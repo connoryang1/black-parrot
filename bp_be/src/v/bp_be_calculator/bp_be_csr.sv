@@ -1183,6 +1183,15 @@ module bp_be_csr
         && (retire_pkt_cast_i.instr.t.itype.opcode == 7'b1110011)
         && (csr_addr_li == `CSR_ADDR_GLOBAL_CYCLE))
       $display("EV C %0d", ev_cycles);
+    // Control reaching the bare-metal entry point after start-up (a restart
+    // through a corrupted return address does not trap).
+    if (~reset_i && commit_pkt_cast_o.instret && (ev_cycles > 100000)
+        && (commit_pkt_cast_o.npc >= vaddr_width_p'(32'h8000_0000))
+        && (commit_pkt_cast_o.npc < vaddr_width_p'(32'h8000_0240))
+        && !((commit_pkt_cast_o.pc >= vaddr_width_p'(32'h8000_0000))
+             && (commit_pkt_cast_o.pc < vaddr_width_p'(32'h8000_0240))))
+      $display("EV J %0d pc=%h npc=%h instr=%h", ev_cycles, commit_pkt_cast_o.pc,
+               commit_pkt_cast_o.npc, commit_pkt_cast_o.instr);
   end
 `endif
 
