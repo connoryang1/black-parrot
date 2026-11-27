@@ -294,8 +294,11 @@ module bp_dcache_replay_ctrl
   initial begin
     assert (slots_p == 4)
       else $error("data replay CSR encoding requires four footprint slots");
-    assert (entries_per_slot_p == 32)
-      else $error("data replay CSR encoding requires 32 entries per slot");
+    // bp_unicore_lite splits the CSR entry index (10 bits) and count
+    // (11 bits) across two payload fields, so slots of 32..1024 entries fit.
+    assert ((entries_per_slot_p >= 32) && (entries_per_slot_p <= 1024)
+            && ((entries_per_slot_p & (entries_per_slot_p-1)) == 0))
+      else $error("data replay CSR encoding requires 32..1024 (power of two) entries per slot");
     assert (command_queue_els_p == 2)
       else $error("data replay status encoding requires a two-command queue");
     assert (paddr_width_p <= 40)
