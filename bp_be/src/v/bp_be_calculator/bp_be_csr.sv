@@ -1167,6 +1167,12 @@ module bp_be_csr
   // cycle count as the cache REPLAYSTATS/EV logs.
   longint unsigned ev_cycles = 0;
   logic [dword_width_gp-1:0] ev_mscratch_r, ev_mepc_r, ev_mcause_r;
+  logic [vaddr_width_p-1:0] ev_ring_pc [32];
+  logic [31:0] ev_ring_instr [32];
+  logic [1:0] ev_ring_flags [32];
+  longint unsigned ev_ring_cyc [32];
+  logic [4:0] ev_ring_ptr = '0;
+  logic ev_dumped = 1'b0;
   always_ff @(posedge clk_i) begin
     ev_cycles <= ev_cycles + 1;
     ev_mscratch_r <= mscratch_lo;
@@ -1183,6 +1189,23 @@ module bp_be_csr
         && (retire_pkt_cast_i.instr.t.itype.opcode == 7'b1110011)
         && (csr_addr_li == `CSR_ADDR_GLOBAL_CYCLE))
       $display("EV C %0d", ev_cycles);
+    // Ring of the last 32 commit-stage packets (any outcome), dumped when
+    // control reaches the bare-metal entry point after start-up.
+    if (~reset_i && (commit_pkt_cast_o.instret || commit_pkt_cast_o.exception)) begin
+      ev_ring_pc[ev_ring_ptr] <= commit_pkt_cast_o.pc;
+      ev_ring_instr[ev_ring_ptr] <= commit_pkt_cast_o.instr;
+      ev_ring_flags[ev_ring_ptr] <= {commit_pkt_cast_o.exception, commit_pkt_cast_o.instret};
+      ev_ring_cyc[ev_ring_ptr] <= ev_cycles;
+      ev_ring_ptr <= ev_ring_ptr + 1'b1;
+    end
+    if (~reset_i && (ev_cycles > 1500000) && (commit_pkt_cast_o.pc >= vaddr_width_p'(32'h8000_0000)) && (commit_pkt_cast_o.pc < vaddr_width_p'(32'h8000_0112))
+        && (commit_pkt_cast_o.instret || commit_pkt_cast_o.exception) && !ev_dumped) begin
+      ev_dumped <= 1'b1;
+      for (int i = 0; i < 32; i++)
+        $display("EV R %0d pc=%h instr=%h exc=%0d ret=%0d", ev_ring_cyc[5'(ev_ring_ptr + i)],
+                 ev_ring_pc[5'(ev_ring_ptr + i)], ev_ring_instr[5'(ev_ring_ptr + i)],
+                 ev_ring_flags[5'(ev_ring_ptr + i)][1], ev_ring_flags[5'(ev_ring_ptr + i)][0]);
+    end
     // Control reaching the bare-metal entry point after start-up (a restart
     // through a corrupted return address does not trap).
     if (~reset_i && commit_pkt_cast_o.instret && (ev_cycles > 100000)

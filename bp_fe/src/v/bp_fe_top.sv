@@ -546,4 +546,24 @@ module bp_fe_top
      ,.ctxtsw_ready_o(ctxtsw_ready_o)
      );
 
+`ifdef BP_REPLAY_EVLOG
+  // Simulation-only fetch trace over a cycle window (+evq_lo=/+evq_hi=),
+  // same free-running cycle count as the other EV logs.
+  longint unsigned evq_cycles = 0, evq_lo = 0, evq_hi = 0;
+  initial begin
+    void'($value$plusargs("evq_lo=%d", evq_lo));
+    void'($value$plusargs("evq_hi=%d", evq_hi));
+  end
+  always_ff @(posedge clk_i) begin
+    evq_cycles <= evq_cycles + 1;
+    if (~reset_i && (evq_cycles >= evq_lo) && (evq_cycles < evq_hi))
+      $display("EV Q %0d iv=%b iy=%b ipc=%h | hit=%b miss=%b y=%b lock=%b d=%h | if2h=%b if2m=%b if2y=%b if2pc=%h | rd=%b rpc=%h rres=%b rins=%h | av=%b apc=%h ains=%h ap=%b ay=%b",
+        evq_cycles, icache_v_li, icache_yumi_lo, icache_pkt_li.vaddr,
+        icache_hit_v_lo, icache_miss_v_lo, icache_yumi_li, cache_req_lock_i, icache_data_lo,
+        if2_hit_v_lo, if2_miss_v_lo, if2_yumi_li, if2_pc_lo,
+        redirect_v_li, redirect_pc_li, redirect_resume_li, redirect_instr_li,
+        assembled_v_lo, assembled_pc_lo, assembled_instr_lo, assembled_partial_lo, assembled_yumi_li);
+  end
+`endif
+
 endmodule
