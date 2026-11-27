@@ -215,6 +215,8 @@ module bp_uce
   logic [prefetch_slot_width_lp-1:0] prefetch_free_slot, prefetch_issue_slot;
   logic prefetch_demand_match;
   logic prefetch_issue, prefetch_response, prefetch_response_yumi;
+  // Ordinary FSM owns the L1 data port this cycle (see the reply forwarding).
+  logic fsm_data_mem_claim;
   logic [prefetch_slot_width_lp-1:0] prefetch_response_slot;
   logic [prefetch_id_width_lp-1:0] prefetch_response_id;
   logic prefetch_response_id_v;
@@ -1076,6 +1078,7 @@ module bp_uce
       tag_mem_pkt_v_o     = '0;
       data_mem_pkt_cast_o = '0;
       data_mem_pkt_v_o    = '0;
+      fsm_data_mem_claim  = 1'b0;
       stat_mem_pkt_cast_o = '0;
       stat_mem_pkt_v_o    = '0;
 
@@ -1584,10 +1587,22 @@ module bp_uce
       // Narrow detached replies bypass L1 replacement. Each returned word is
       // written into the D$ side buffer and therefore never locks the cache
       // SRAMs or blocks an unrelated hit.
+      //
+      // The ordinary FSM may already own the cache data port this cycle for a
+      // request not tied to the reverse stream (the victim read of a dirty
+      // eviction or clean). A detached reply must never replace that packet:
+      // the D-cache accepts advisory-buffer writes unconditionally, so the FSM
+      // would see its read acknowledged although the SRAM was never read, and
+      // write back stale dirty_data_r under the victim's tag (observed as
+      // corrupted DRAM lines with an early-triggered replay at cap 8).
+      fsm_data_mem_claim = data_mem_pkt_v_o;
       if (!prefetch_full_line_p && prefetch_response) begin
         if (inval_v_li | prefetch_cancel_r[prefetch_response_slot]
             | prefetch_preview_r[prefetch_response_slot]) begin
           prefetch_response_yumi = 1'b1;
+        end else if (fsm_data_mem_claim) begin
+          // The narrow reply is the only copy; hold it until the port frees.
+          prefetch_response_yumi = 1'b0;
         end else begin
           data_mem_pkt_cast_o = '0;
           data_mem_pkt_cast_o.opcode = e_cache_data_mem_prefetch;
@@ -1610,6 +1625,9 @@ module bp_uce
           // locked normal-resident scan authorizes retained publication.
           // Never forward a narrow sector or install directly into L1 here.
           prefetch_response_yumi = 1'b1;
+        end else if (prefetch_side_buffer_p & fsm_data_mem_claim) begin
+          // The side buffer holds the only copy of this beat; hold it.
+          prefetch_response_yumi = 1'b0;
         end else if (prefetch_side_buffer_p) begin
           // The I-cache advisory store already assembles a tagged line and
           // keeps it invisible until every beat is present. Stream replies
@@ -1624,7 +1642,11 @@ module bp_uce
             = 1'b1 << prefetch_fill_count_r[prefetch_response_slot];
           data_mem_pkt_v_o = 1'b1;
           prefetch_response_yumi = data_mem_pkt_yumi_i;
-        end else if (prefetch_critical_forward_p & prefetch_response_critical) begin
+        end else if (prefetch_critical_forward_p & prefetch_response_critical
+                     & ~fsm_data_mem_claim) begin
+          // The sector forward is only a hint (the beat is also captured in
+          // its slot), so it is skipped rather than stalled when the FSM owns
+          // the data port.
           data_mem_pkt_cast_o = '0;
           data_mem_pkt_cast_o.opcode = e_cache_data_mem_prefetch;
           data_mem_pkt_cast_o.addr = prefetch_response_addr;
