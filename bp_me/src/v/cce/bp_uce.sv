@@ -1761,10 +1761,12 @@ module bp_uce
           prefetch_install_state_r <= e_pf_drop;
         end
         e_pf_drain: begin
-          // cache_req_lock_o disables new TL entries. Existing TL/TV stages
-          // drain in two cycles; the two-entry write buffer then drains in at
-          // most two more (no new TL reads compete with wbuf_yumi_li). No slow
-          // data/tag/stat operations or critical-response snoops run here.
+          // cache_req_lock_o disables new TL entries. In the D-cache, existing
+          // TL/TV stages drain in two cycles and the two-entry write buffer in
+          // at most two more (no new TL reads compete with wbuf_yumi_li). The
+          // I-cache instead freezes TL/TV under the lock and refetches any
+          // fetch that may observe this installation (install_stale_*). No
+          // slow data/tag/stat operations or critical-response snoops run here.
           prefetch_install_drain_r <= prefetch_install_drain_r + 1'b1;
           if (&prefetch_install_drain_r)
             prefetch_install_state_r <= e_pf_read_tag;

@@ -122,6 +122,19 @@ module bp_fe_pc_gen
   logic [vaddr_width_p-1:0] ras_tgt_lo, taken_tgt_lo, ntaken_tgt_lo, linear_tgt_lo;
   logic [ras_idx_width_p-1:0] ras_next, ras_tos;
 
+  // An IF2 override (scan correction of the IF1 prediction) is a one-cycle
+  // event: it fires when IF2 is consumed. Ordinarily the I-cache accepts the
+  // corrected next PC in that same cycle, because consuming IF2 frees TL. A
+  // detached replay install locks new TL entries (cache_req_lock_i), so the
+  // I-cache can refuse it; without this register the corrected PC is lost and
+  // fetch continues down the wrong-path IF1 target while the realigner still
+  // holds the leftover half of the corrected path (a 32-bit instruction
+  // assembled from two unrelated fetches). Keep presenting the override until
+  // the I-cache accepts it or a backend redirect supersedes it.
+  logic ovr_hold_r, ovr_hold_pred_r, ovr_hold_taken_r;
+  logic [vaddr_width_p-1:0] ovr_hold_pc_r;
+  bp_fe_branch_metadata_fwd_s ovr_hold_metadata_r;
+
   // Note: "if" chain duplicated in in bp_fe_nonsynth_pc_gen_tracer.sv
   always_comb begin
     if (redirect_v_i)
@@ -146,6 +159,14 @@ module bp_fe_pc_gen
         next_metadata = ovr_metadata;
         next_metadata.src_ras = ovr_ret;
       end
+    else if (ovr_hold_r)
+      begin
+        // An override the I-cache did not accept (see ovr_hold_r below).
+        next_pred     = ovr_hold_pred_r;
+        next_taken    = ovr_hold_taken_r;
+        next_pc       = ovr_hold_pc_r;
+        next_metadata = ovr_hold_metadata_r;
+      end
     else
       begin
         next_pred  = bht_pred_lo;
@@ -164,6 +185,18 @@ module bp_fe_pc_gen
       end
   end
   assign next_pc_o = next_pc;
+
+  always_ff @(posedge clk_i)
+    if (reset_i | redirect_v_i | icache_yumi_i)
+      ovr_hold_r <= 1'b0;
+    else if (ovr_o)
+      begin
+        ovr_hold_r          <= 1'b1;
+        ovr_hold_pred_r     <= next_pred;
+        ovr_hold_taken_r    <= next_taken;
+        ovr_hold_pc_r       <= next_pc;
+        ovr_hold_metadata_r <= next_metadata;
+      end
 
   ///////////////////////////
   // BTB (N per-thread instances)

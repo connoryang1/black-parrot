@@ -614,11 +614,19 @@ module bp_fe_icache
   // refetch re-reads the SRAMs.
   logic install_stale_fetch_tv;  // driven below the SRAM write decode
 
+  // While a detached replay install holds the cache (cache_req_lock_i), new
+  // TL entries are refused, so IF2 must not be consumed either: the frontend
+  // assumes that whenever IF2 is consumed its successor already sits in IF1,
+  // and both its scan overrides and its split-instruction realignment check
+  // against IF1. Consuming IF2 with IF1 empty let a held instruction half be
+  // joined to an unrelated later fetch. Freezing TV instead is safe: a fetch
+  // held in TL/TV across the install is marked stale (install_stale_*) when it
+  // may have observed the installer's SRAM traffic, and is then refetched.
   assign hit_v_o   = is_ready & v_tv_r & decode_tv_r.fetch_op & ~spec_tv_r &  hit_v_tv
-    & ~install_stale_fetch_tv;
+    & ~install_stale_fetch_tv & ~cache_req_lock_i;
   assign miss_v_o  = is_ready & v_tv_r & decode_tv_r.fetch_op
-    & ((spec_tv_r & ~hit_v_tv) | install_stale_fetch_tv);
-  assign fence_v_o = is_ready & v_tv_r & decode_tv_r.inval_op & snoop_tv_r;
+    & ((spec_tv_r & ~hit_v_tv) | install_stale_fetch_tv) & ~cache_req_lock_i;
+  assign fence_v_o = is_ready & v_tv_r & decode_tv_r.inval_op & snoop_tv_r & ~cache_req_lock_i;
 
   ///////////////////////////
   // Stat Mem Storage
