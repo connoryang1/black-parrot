@@ -1279,4 +1279,56 @@ module bp_fe_icache
     $error("Associativity must be power of two");
   // synopsys translate_on
 
+`ifdef BP_REPLAY_STATS
+  // Simulation-only replay survival statistics. A tag publication while the
+  // cache is in its ready state is a replay install (ordinary refills publish
+  // from the miss states). Count each such line's first use, and lines whose
+  // way is rewritten or invalidated before any use.
+  bit replay_unused_r [sets_p][assoc_p];
+  longint unsigned rs_installs, rs_used, rs_evicted_unused, rs_demand_fills;
+  initial begin
+    rs_installs = 0; rs_used = 0; rs_evicted_unused = 0; rs_demand_fills = 0;
+    for (int s = 0; s < sets_p; s++) for (int w = 0; w < assoc_p; w++) replay_unused_r[s][w] = 1'b0;
+  end
+  wire [assoc_p-1:0] rs_hit_vec = (is_ready & v_tv_r & decode_tv_r.fetch_op) ? hit_v_tv_r : '0;
+  wire [sindex_width_lp-1:0] rs_hit_idx = paddr_tv_r[block_offset_width_lp+:sindex_width_lp];
+  always_ff @(posedge clk_i)
+    if (~reset_i) begin
+      if (|rs_hit_vec)
+        for (int w = 0; w < assoc_p; w++)
+          if (rs_hit_vec[w] && replay_unused_r[rs_hit_idx][w]) begin
+            replay_unused_r[rs_hit_idx][w] <= 1'b0; rs_used <= rs_used + 1;
+          end
+      if (tag_mem_slow_write) begin
+        if (replay_unused_r[tag_mem_pkt_cast_i.index][tag_mem_pkt_cast_i.way_id])
+          rs_evicted_unused <= rs_evicted_unused + 1;
+        replay_unused_r[tag_mem_pkt_cast_i.index][tag_mem_pkt_cast_i.way_id]
+          <= is_ready & (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_set_tag);
+        if (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_set_tag) begin
+          if (is_ready) rs_installs <= rs_installs + 1;
+          else rs_demand_fills <= rs_demand_fills + 1;
+        end
+      end
+    end
+  // Report cumulative totals periodically: the run ends through a testbench
+  // abort that skips final blocks.
+  longint unsigned rs_cycles = 0;
+  longint unsigned rs_multihit = 0;
+  always_ff @(posedge clk_i)
+    if (~reset_i & v_tv_r & decode_tv_r.fetch_op & ~$onehot0(hit_v_tv_r)) begin
+      if (rs_multihit == 0)
+        $display("REPLAYSTATS icache first multihit t=%0t paddr=%h hit=%b", $time, paddr_tv_r, hit_v_tv_r);
+      rs_multihit <= rs_multihit + 1;
+    end
+  always_ff @(posedge clk_i) begin
+    rs_cycles <= rs_cycles + 1;
+    if ((rs_cycles & 64'h3ffff) == 0) begin
+      automatic longint unsigned left = 0;
+      for (int s = 0; s < sets_p; s++) for (int w = 0; w < assoc_p; w++) left += replay_unused_r[s][w];
+      $display("REPLAYSTATS icache cyc=%0d installs=%0d used=%0d evicted_unused=%0d unused_now=%0d demand_fills=%0d multihit=%0d",
+               rs_cycles, rs_installs, rs_used, rs_evicted_unused, left, rs_demand_fills, rs_multihit);
+    end
+  end
+`endif
+
 endmodule
