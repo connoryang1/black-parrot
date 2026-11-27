@@ -127,6 +127,8 @@ module bp_uce
     , output logic                                   tag_mem_pkt_v_o
     , input                                          tag_mem_pkt_yumi_i
     , input [cache_tag_info_width_lp-1:0]            tag_mem_i
+    // Whole tag row (all ways) of the last engine tag read.
+    , input [assoc_p*(cache_tag_info_width_lp+1)-1:0]    tag_row_i
 
     , output logic [cache_data_mem_pkt_width_lp-1:0] data_mem_pkt_o
     , output logic                                   data_mem_pkt_v_o
@@ -749,6 +751,30 @@ module bp_uce
       & (prefetch_install_tag.tag
          == prefetch_addr_r[prefetch_install_slot_r]
               [block_offset_width_lp+index_width_lp+:tag_width_p]);
+  // BP_REPLAY_FAST_SCAN: one tag read returns the whole row, so the duplicate
+  // scan checks every way at once, and the stat read for victim selection is
+  // issued in the same cycle (separate port). The installer then needs
+  // read(1) + check(1) instead of 8 x (read + check) + stat read + check.
+`ifdef BP_REPLAY_FAST_SCAN
+  localparam bit prefetch_fast_scan_lp = 1'b1;
+`else
+  localparam bit prefetch_fast_scan_lp = 1'b0;
+`endif
+  bp_cache_tag_info_s [assoc_p-1:0] prefetch_install_row;
+  assign prefetch_install_row = tag_row_i[0+:assoc_p*cache_tag_info_width_lp];
+  // Ways of the read set holding replayed lines not yet used (the cache's
+  // BP_REPLAY_PROTECT bits; zero without it). The installer leaves them alone
+  // and drops its line instead when no other clean way exists.
+  wire [assoc_p-1:0] prefetch_install_protect = tag_row_i[assoc_p*cache_tag_info_width_lp+:assoc_p];
+  logic prefetch_install_row_match;
+  always_comb begin
+    prefetch_install_row_match = 1'b0;
+    for (int i = 0; i < assoc_p; i++)
+      prefetch_install_row_match |= (prefetch_install_row[i].state != e_COH_I)
+        & (prefetch_install_row[i].tag
+           == prefetch_addr_r[prefetch_install_slot_r]
+                [block_offset_width_lp+index_width_lp+:tag_width_p]);
+  end
 
   logic [assoc_p-1:0] prefetch_install_reserved_ways;
   logic prefetch_install_way_available;
@@ -761,7 +787,7 @@ module bp_uce
   bsg_lru_pseudo_tree_backup
    #(.ways_p(assoc_p))
    prefetch_install_lru_backup
-    (.disabled_ways_i(prefetch_install_stat.dirty | prefetch_install_reserved_ways)
+    (.disabled_ways_i(prefetch_install_stat.dirty | prefetch_install_protect | prefetch_install_reserved_ways)
      ,.modify_mask_o(prefetch_install_lru_modify_mask)
      ,.modify_data_o(prefetch_install_lru_modify_data)
      );
@@ -794,11 +820,12 @@ module bp_uce
     prefetch_install_way = prefetch_way_r[prefetch_install_slot_r];
     prefetch_install_way_available
       = ~prefetch_install_stat.dirty[prefetch_way_r[prefetch_install_slot_r]]
+        & ~prefetch_install_protect[prefetch_way_r[prefetch_install_slot_r]]
         & ~prefetch_install_reserved_ways[prefetch_way_r[prefetch_install_slot_r]];
     if (!prefetch_install_way_available) begin
       prefetch_install_way = prefetch_install_lru_way;
       prefetch_install_way_available
-        = ~&(prefetch_install_stat.dirty | prefetch_install_reserved_ways);
+        = ~&(prefetch_install_stat.dirty | prefetch_install_protect | prefetch_install_reserved_ways);
     end
   end
 
@@ -852,6 +879,35 @@ module bp_uce
     // resident at the following edge and each waits for the other to retire.
     & ~(prefetch_demand_priority_p & cache_req_v_i);
   wire prefetch_install_acquire = prefetch_install_begin & prefetch_install_available;
+  // BP_REPLAY_CHAIN: when a publication completes and another replay line is
+  // already complete, start it at once under the still-held lock: the cache
+  // pipeline is frozen and drained, so idle + drain (5 cycles) are skipped.
+  // Any ordinary or hint request waiting at the cache boundary ends the chain
+  // so the lock is released exactly as before.
+`ifdef BP_REPLAY_CHAIN
+  localparam bit prefetch_chain_lp = 1'b1;
+`else
+  localparam bit prefetch_chain_lp = 1'b0;
+`endif
+  logic prefetch_chain_v;
+  logic [prefetch_slot_width_lp-1:0] prefetch_chain_slot;
+  always_comb begin
+    prefetch_chain_v = 1'b0;
+    prefetch_chain_slot = '0;
+    for (int i = prefetch_els_p-1; i >= 0; i--)
+      if (prefetch_complete_r[i] & ~prefetch_cancel_r[i]
+          & (prefetch_slot_width_lp'(i) != prefetch_install_slot_r)) begin
+        prefetch_chain_v = 1'b1;
+        prefetch_chain_slot = prefetch_slot_width_lp'(i);
+      end
+  end
+  wire prefetch_install_chain = prefetch_chain_lp & prefetch_full_line_p
+    & ~prefetch_side_buffer_p & ~retained_buffer_p
+    & (prefetch_install_state_r == e_pf_publish)
+    & tag_mem_pkt_v_o & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i
+    & prefetch_chain_v & prefetch_install_safe_to_wait
+    & ~cache_req_v_i & ~cache_req_v_r & ~cache_req_metadata_v_r & ~cache_req_metadata_v_i
+    & ~prefetch_metadata_pending_v_r & ~inval_v_li & ~retained_clear;
   wire prefetch_install_owned = prefetch_install_acquire
     | (prefetch_install_state_r inside {e_pf_drain, e_pf_read_tag, e_pf_check_tag,
                                        e_pf_read_stat, e_pf_check_stat,
@@ -1694,6 +1750,12 @@ module bp_uce
             tag_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
             tag_mem_pkt_cast_o.way_id = prefetch_install_probe_way_r;
             tag_mem_pkt_v_o = 1'b1;
+            if (prefetch_fast_scan_lp) begin
+              stat_mem_pkt_cast_o.opcode = e_cache_stat_mem_read;
+              stat_mem_pkt_cast_o.index = prefetch_addr_r[prefetch_install_slot_r][block_offset_width_lp+:index_width_lp];
+              stat_mem_pkt_cast_o.way_id = prefetch_way_r[prefetch_install_slot_r];
+              stat_mem_pkt_v_o = 1'b1;
+            end
           end
           e_pf_read_stat: begin
             stat_mem_pkt_cast_o.opcode = e_cache_stat_mem_read;
@@ -1832,9 +1894,19 @@ module bp_uce
           if (&prefetch_install_drain_r)
             prefetch_install_state_r <= e_pf_read_tag;
         end
-        e_pf_read_tag: if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i)
+        e_pf_read_tag: if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i
+                           & (~prefetch_fast_scan_lp | (stat_mem_pkt_v_o & stat_mem_pkt_yumi_i)))
           prefetch_install_state_r <= e_pf_check_tag;
-        e_pf_check_tag: begin
+        e_pf_check_tag: if (prefetch_fast_scan_lp & ~retained_buffer_p) begin
+          // Synchronous results of the accepted tag-row and stat reads.
+          if (prefetch_install_row_match)
+            prefetch_install_state_r <= e_pf_drop;
+          else begin
+            prefetch_install_clean_r <= prefetch_install_way_available;
+            prefetch_install_state_r <= prefetch_install_way_available
+              ? e_pf_invalidate : e_pf_drop;
+          end
+        end else begin
           // Direct physical replay bypasses the ordinary I-cache tag lookup.
           // Installing an already-resident line into a second way would make
           // the hit vector non-one-hot and can select corrupt instructions.
@@ -1877,6 +1949,13 @@ module bp_uce
           if (retained_buffer_p) begin
             if (retained_insert_owned_r & retained_insert_pf_r & retained_insert_done_i)
               prefetch_install_state_r <= e_pf_idle;
+          end else if (prefetch_install_chain) begin
+            prefetch_install_slot_r <= prefetch_chain_slot;
+            prefetch_install_count_r <= '0;
+            prefetch_install_probe_way_r <= '0;
+            prefetch_install_clean_r <= 1'b0;
+            prefetch_install_drain_r <= '0;
+            prefetch_install_state_r <= e_pf_read_tag;
           end else if (tag_mem_pkt_v_o & tag_mem_pkt_yumi_i & stat_mem_pkt_yumi_i)
             prefetch_install_state_r <= e_pf_idle;
         end
@@ -1905,7 +1984,11 @@ module bp_uce
       // Keep every prefetch slot field in this sequential process. Some FPGA
       // synthesis flows do not merge disjoint indexed writes to an unpacked
       // array when they originate in separate always_ff blocks.
-      if (prefetch_install_state_r == e_pf_check_stat)
+      // Latch the victim chosen from the accepted stat read; the fast scan
+      // makes that decision in check_tag instead of check_stat.
+      if ((prefetch_install_state_r == e_pf_check_stat)
+          | (prefetch_fast_scan_lp & ~retained_buffer_p
+             & (prefetch_install_state_r == e_pf_check_tag)))
         prefetch_way_r[prefetch_install_slot_r] <= prefetch_install_way;
       if (cache_req_metadata_v_i & prefetch_metadata_pending_v_r) begin
         prefetch_metadata_pending_v_r <= 1'b0;
@@ -2209,7 +2292,10 @@ module bp_uce
         && prefetch_install_state_r inside {e_pf_invalidate, e_pf_fill, e_pf_publish})
       assert (prefetch_install_clean_r)
         else $error("UCE prefetch modifies a victim without a fresh clean decision");
-    if (prefetch_install_state_r == e_pf_check_stat && prefetch_install_way_available)
+    if ((prefetch_install_state_r == e_pf_check_stat
+         || (prefetch_fast_scan_lp && !retained_buffer_p && prefetch_install_state_r == e_pf_check_tag
+             && !prefetch_install_row_match))
+        && prefetch_install_way_available)
       assert (!prefetch_install_stat.dirty[prefetch_install_way]
               && !prefetch_install_reserved_ways[prefetch_install_way])
         else $error("UCE prefetch selected a dirty or reserved install way");

@@ -1161,4 +1161,29 @@ module bp_be_csr
     else if (ctx_l1_data_write_v_li)
       ctx_l1_data_r <= csr_data_li;
 
+`ifdef BP_REPLAY_EVLOG
+  // Simulation-only window markers for the replay event log: software writes
+  // distinct values to mscratch at switch-window edges. Same free-running
+  // cycle count as the cache REPLAYSTATS/EV logs.
+  longint unsigned ev_cycles = 0;
+  logic [dword_width_gp-1:0] ev_mscratch_r, ev_mepc_r, ev_mcause_r;
+  always_ff @(posedge clk_i) begin
+    ev_cycles <= ev_cycles + 1;
+    ev_mscratch_r <= mscratch_lo;
+    ev_mepc_r <= dword_width_gp'(mepc_lo);
+    ev_mcause_r <= dword_width_gp'(mcause_lo);
+    // Traps (and software writes) to the M-mode trap registers.
+    if (~reset_i && ((dword_width_gp'(mepc_lo) != ev_mepc_r) || (dword_width_gp'(mcause_lo) != ev_mcause_r)))
+      $display("EV T %0d mcause=%h mepc=%h mtval=%h", ev_cycles, mcause_lo, mepc_lo, mtval_lo);
+    if (~reset_i && (mscratch_lo != ev_mscratch_r))
+      $display("EV M %0d %h", ev_cycles, mscratch_lo);
+    // Zero-perturbation window edges: every retired read of the global cycle
+    // CSR (the benchmarks' own t0/t1/t2 timestamps).
+    if (~reset_i && retire_pkt_cast_i.instret
+        && (retire_pkt_cast_i.instr.t.itype.opcode == 7'b1110011)
+        && (csr_addr_li == `CSR_ADDR_GLOBAL_CYCLE))
+      $display("EV C %0d", ev_cycles);
+  end
+`endif
+
 endmodule

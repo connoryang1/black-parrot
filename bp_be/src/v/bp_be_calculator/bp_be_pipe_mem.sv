@@ -107,6 +107,7 @@ module bp_be_pipe_mem
    , input [dcache_tag_mem_pkt_width_lp-1:0]         tag_mem_pkt_i
    , output logic                                    tag_mem_pkt_yumi_o
    , output logic [dcache_tag_info_width_lp-1:0]     tag_mem_o
+   , output logic [dcache_assoc_p*(dcache_tag_info_width_lp+1)-1:0] tag_row_o
 
    , input                                           stat_mem_pkt_v_i
    , input [dcache_stat_mem_pkt_width_lp-1:0]        stat_mem_pkt_i
@@ -438,6 +439,7 @@ module bp_be_pipe_mem
      ,.tag_mem_pkt_v_i(tag_mem_pkt_v_i)
      ,.tag_mem_pkt_i(tag_mem_pkt_i)
      ,.tag_mem_o(tag_mem_o)
+     ,.tag_row_o(tag_row_o)
      ,.tag_mem_pkt_yumi_o(tag_mem_pkt_yumi_o)
      ,.stat_mem_pkt_v_i(stat_mem_pkt_v_i)
      ,.stat_mem_pkt_i(stat_mem_pkt_i)

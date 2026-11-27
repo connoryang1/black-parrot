@@ -157,6 +157,8 @@ module bp_fe_icache
    , input [icache_tag_mem_pkt_width_lp-1:0]          tag_mem_pkt_i
    , output logic                                     tag_mem_pkt_yumi_o
    , output logic [icache_tag_info_width_lp-1:0]      tag_mem_o
+   // Whole tag row of the last engine tag read (all ways), for one-cycle replay duplicate scans.
+   , output logic [assoc_p*(icache_tag_info_width_lp+1)-1:0] tag_row_o
 
    , input                                            stat_mem_pkt_v_i
    , input [icache_stat_mem_pkt_width_lp-1:0]         stat_mem_pkt_i
@@ -653,10 +655,21 @@ module bp_fe_icache
      );
   assign stat_mem_data_lo.dirty = '0;
 
+  // Demand victim: steer the pseudo-LRU away from protected replay lines.
+  logic [assoc_p-1:0] replay_protect_victim_mask, replay_protect_row;
+  logic [`BSG_SAFE_MINUS(assoc_p, 2):0] replay_protect_lru_mask, replay_protect_lru_data;
+  bsg_lru_pseudo_tree_backup
+   #(.ways_p(assoc_p))
+   replay_protect_backup
+    (.disabled_ways_i(replay_protect_victim_mask)
+     ,.modify_mask_o(replay_protect_lru_mask)
+     ,.modify_data_o(replay_protect_lru_data)
+     );
   bsg_lru_pseudo_tree_encode
    #(.ways_p(assoc_p))
    lru_encoder
-    (.lru_i(stat_mem_data_lo.lru)
+    (.lru_i((stat_mem_data_lo.lru & ~replay_protect_lru_mask)
+            | (replay_protect_lru_data & replay_protect_lru_mask))
      ,.way_id_o(lru_encode)
      );
 
@@ -833,6 +846,7 @@ module bp_fe_icache
      );
 
   assign tag_mem_o = tag_mem_data_lo[tag_mem_pkt_way_r];
+  assign tag_row_o = {replay_protect_row, tag_mem_data_lo};
 
   ///////////////////////////
   // Data Mem Control
@@ -1329,6 +1343,87 @@ module bp_fe_icache
                rs_cycles, rs_installs, rs_used, rs_evicted_unused, left, rs_demand_fills, rs_multihit);
     end
   end
+`ifdef BP_REPLAY_EVLOG
+  // Simulation-only event log for switch-window attribution (analyzed by
+  // research/.../tools/evlog_attr.py). Same free-running cycle count as the
+  // REPLAYSTATS report and the CSR marker log. R=replay install, F=demand
+  // fill, U=first use of a replayed line, X=replayed line overwritten or
+  // invalidated unused (op/ready identify the writer).
+  logic [$bits(tag_mem_pkt_cast_i.tag)-1:0] ev_tag_r [sets_p][assoc_p];
+  always_ff @(posedge clk_i)
+    if (~reset_i) begin
+      if (|rs_hit_vec)
+        for (int w = 0; w < assoc_p; w++)
+          if (rs_hit_vec[w] && replay_unused_r[rs_hit_idx][w])
+            $display("EV %s %0d U %0d %0d %h", "I", rs_cycles, rs_hit_idx, w, ev_tag_r[rs_hit_idx][w]);
+      if (tag_mem_slow_write) begin
+        if (replay_unused_r[tag_mem_pkt_cast_i.index][tag_mem_pkt_cast_i.way_id])
+          $display("EV %s %0d X %0d %0d %h op=%0d ready=%0d", "I", rs_cycles, tag_mem_pkt_cast_i.index,
+                   tag_mem_pkt_cast_i.way_id, ev_tag_r[tag_mem_pkt_cast_i.index][tag_mem_pkt_cast_i.way_id],
+                   tag_mem_pkt_cast_i.opcode, is_ready);
+        if (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_set_tag) begin
+          ev_tag_r[tag_mem_pkt_cast_i.index][tag_mem_pkt_cast_i.way_id] <= tag_mem_pkt_cast_i.tag;
+          $display("EV %s %0d %s %0d %0d %h", "I", rs_cycles, is_ready ? "R" : "F",
+                   tag_mem_pkt_cast_i.index, tag_mem_pkt_cast_i.way_id, tag_mem_pkt_cast_i.tag);
+        end
+      end
+    end
+`endif
+`endif
+
+  /////////////////////////////////////////////////////////////////////////////
+  // Replay protect-until-first-use (BP_REPLAY_PROTECT). A replayed line is
+  // installed for a program that has not run yet, so recency-based
+  // replacement sees it as old and evicts it before that program arrives.
+  // One bit per way marks replay installs (a tag publication while the cache
+  // is not serving its own miss) until their first hit or until the way is
+  // rewritten. Demand and replay victim selection skip protected ways unless
+  // every way of the set is protected. All bits clear when a new replay burst
+  // starts (an install after BP_REPLAY_PROTECT_GAP quiet cycles), so stale
+  // predictions cannot pin ways. Replacement choice only; never correctness.
+  /////////////////////////////////////////////////////////////////////////////
+`ifdef BP_REPLAY_PROTECT
+`ifndef BP_REPLAY_PROTECT_GAP
+`define BP_REPLAY_PROTECT_GAP 4096
+`endif
+  logic [assoc_p-1:0] replay_protect_r [sets_p];
+  logic [sindex_width_lp-1:0] replay_protect_stat_idx_r, replay_protect_tag_idx_r;
+  logic [15:0] replay_protect_quiet_r;
+  wire [assoc_p-1:0] replay_protect_hit_vec = (is_ready & v_tv_r & decode_tv_r.fetch_op) ? hit_v_tv_r : '0;
+  wire [sindex_width_lp-1:0] replay_protect_hit_idx = paddr_tv_r[block_offset_width_lp+:sindex_width_lp];
+  wire replay_protect_install = tag_mem_slow_write & is_ready
+    & (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_set_tag);
+  wire replay_protect_new_burst = replay_protect_install
+    & (replay_protect_quiet_r >= 16'(`BP_REPLAY_PROTECT_GAP));
+  always_ff @(posedge clk_i)
+    if (reset_i) begin
+      for (int s = 0; s < sets_p; s++) replay_protect_r[s] <= '0;
+      replay_protect_quiet_r <= '1;
+      replay_protect_stat_idx_r <= '0;
+      replay_protect_tag_idx_r <= '0;
+    end else begin
+      if (stat_mem_v_li & ~stat_mem_w_li) replay_protect_stat_idx_r <= stat_mem_addr_li;
+      if (tag_mem_pkt_yumi_o & (tag_mem_pkt_cast_i.opcode == e_cache_tag_mem_read))
+        replay_protect_tag_idx_r <= tag_mem_pkt_cast_i.index;
+      replay_protect_quiet_r <= replay_protect_install ? '0
+        : (&replay_protect_quiet_r ? replay_protect_quiet_r : replay_protect_quiet_r + 1'b1);
+      if (replay_protect_new_burst)
+        for (int s = 0; s < sets_p; s++) replay_protect_r[s] <= '0;
+      if (|replay_protect_hit_vec)
+        replay_protect_r[replay_protect_hit_idx] <= replay_protect_r[replay_protect_hit_idx] & ~replay_protect_hit_vec;
+      if (tag_mem_slow_write) begin
+        if (tag_mem_pkt_cast_i.opcode inside {e_cache_tag_mem_set_clear, e_cache_tag_mem_set_inval})
+          replay_protect_r[tag_mem_pkt_cast_i.index] <= '0;
+        else
+          replay_protect_r[tag_mem_pkt_cast_i.index][tag_mem_pkt_cast_i.way_id] <= replay_protect_install;
+      end
+    end
+  wire [assoc_p-1:0] replay_protect_stat_vec = replay_protect_r[replay_protect_stat_idx_r];
+  assign replay_protect_victim_mask = &replay_protect_stat_vec ? '0 : replay_protect_stat_vec;
+  assign replay_protect_row = replay_protect_r[replay_protect_tag_idx_r];
+`else
+  assign replay_protect_victim_mask = '0;
+  assign replay_protect_row = '0;
 `endif
 
 endmodule

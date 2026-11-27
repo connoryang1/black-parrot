@@ -126,6 +126,7 @@ module bp_unicore_lite
   bp_fe_icache_tag_mem_pkt_s icache_tag_mem_pkt_li;
   logic icache_tag_mem_pkt_v_li, icache_tag_mem_pkt_yumi_lo;
   bp_fe_icache_tag_info_s icache_tag_mem_lo;
+  logic [icache_assoc_p*($bits(bp_fe_icache_tag_info_s)+1)-1:0] icache_tag_row_lo;
   bp_fe_icache_data_mem_pkt_s icache_data_mem_pkt_li;
   logic icache_data_mem_pkt_v_li, icache_data_mem_pkt_yumi_lo;
   logic [icache_block_width_p-1:0] icache_data_mem_lo;
@@ -199,6 +200,7 @@ module bp_unicore_lite
   bp_be_dcache_tag_mem_pkt_s dcache_tag_mem_pkt_li;
   logic dcache_tag_mem_pkt_v_li, dcache_tag_mem_pkt_yumi_lo;
   bp_be_dcache_tag_info_s dcache_tag_mem_lo;
+  logic [dcache_assoc_p*($bits(bp_be_dcache_tag_info_s)+1)-1:0] dcache_tag_row_lo;
   bp_be_dcache_data_mem_pkt_s dcache_data_mem_pkt_li;
   logic dcache_data_mem_pkt_v_li, dcache_data_mem_pkt_yumi_lo;
   logic [dcache_block_width_p-1:0] dcache_data_mem_lo;
@@ -387,6 +389,7 @@ module bp_unicore_lite
      ,.icache_tag_mem_pkt_v_i(icache_tag_mem_pkt_v_li)
      ,.icache_tag_mem_pkt_yumi_o(icache_tag_mem_pkt_yumi_lo)
      ,.icache_tag_mem_o(icache_tag_mem_lo)
+     ,.icache_tag_row_o(icache_tag_row_lo)
 
      ,.icache_data_mem_pkt_i(icache_data_mem_pkt_li)
      ,.icache_data_mem_pkt_v_i(icache_data_mem_pkt_v_li)
@@ -414,6 +417,7 @@ module bp_unicore_lite
      ,.dcache_tag_mem_pkt_v_i(dcache_tag_mem_pkt_v_li)
      ,.dcache_tag_mem_pkt_yumi_o(dcache_tag_mem_pkt_yumi_lo)
      ,.dcache_tag_mem_o(dcache_tag_mem_lo)
+     ,.dcache_tag_row_o(dcache_tag_row_lo)
 
      ,.dcache_data_mem_pkt_i(dcache_data_mem_pkt_li)
      ,.dcache_data_mem_pkt_v_i(dcache_data_mem_pkt_v_li)
@@ -558,6 +562,7 @@ module bp_unicore_lite
      ,.tag_mem_pkt_v_o(icache_tag_mem_pkt_v_li)
      ,.tag_mem_pkt_yumi_i(icache_tag_mem_pkt_yumi_lo)
      ,.tag_mem_i(icache_tag_mem_lo)
+     ,.tag_row_i(icache_tag_row_lo)
 
      ,.data_mem_pkt_o(icache_data_mem_pkt_li)
      ,.data_mem_pkt_v_o(icache_data_mem_pkt_v_li)
@@ -703,6 +708,7 @@ module bp_unicore_lite
      ,.tag_mem_pkt_v_o(dcache_tag_mem_pkt_v_li)
      ,.tag_mem_pkt_yumi_i(dcache_tag_mem_pkt_yumi_lo)
      ,.tag_mem_i(dcache_tag_mem_lo)
+     ,.tag_row_i(dcache_tag_row_lo)
 
      ,.data_mem_pkt_o(dcache_data_mem_pkt_li)
      ,.data_mem_pkt_v_o(dcache_data_mem_pkt_v_li)

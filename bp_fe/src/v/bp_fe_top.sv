@@ -91,6 +91,7 @@ module bp_fe_top
    , input                                            tag_mem_pkt_v_i
    , output logic                                     tag_mem_pkt_yumi_o
    , output logic [icache_tag_info_width_lp-1:0]      tag_mem_o
+   , output logic [icache_assoc_p*(icache_tag_info_width_lp+1)-1:0] tag_row_o
 
    , input [icache_stat_mem_pkt_width_lp-1:0]         stat_mem_pkt_i
    , input                                            stat_mem_pkt_v_i
@@ -382,6 +383,7 @@ module bp_fe_top
      ,.tag_mem_pkt_v_i(tag_mem_pkt_v_i)
      ,.tag_mem_pkt_yumi_o(tag_mem_pkt_yumi_o)
      ,.tag_mem_o(tag_mem_o)
+     ,.tag_row_o(tag_row_o)
 
      ,.stat_mem_pkt_v_i(stat_mem_pkt_v_i)
      ,.stat_mem_pkt_i(stat_mem_pkt_i)

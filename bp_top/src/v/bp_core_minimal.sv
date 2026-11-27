@@ -73,6 +73,7 @@ module bp_core_minimal
    , input                                           icache_tag_mem_pkt_v_i
    , output logic                                    icache_tag_mem_pkt_yumi_o
    , output logic [icache_tag_info_width_lp-1:0]     icache_tag_mem_o
+   , output logic [icache_assoc_p*(icache_tag_info_width_lp+1)-1:0] icache_tag_row_o
 
    , input [icache_data_mem_pkt_width_lp-1:0]        icache_data_mem_pkt_i
    , input                                           icache_data_mem_pkt_v_i
@@ -116,6 +117,7 @@ module bp_core_minimal
    , input                                           dcache_tag_mem_pkt_v_i
    , output logic                                    dcache_tag_mem_pkt_yumi_o
    , output logic [dcache_tag_info_width_lp-1:0]     dcache_tag_mem_o
+   , output logic [dcache_assoc_p*(dcache_tag_info_width_lp+1)-1:0] dcache_tag_row_o
 
    , input [dcache_data_mem_pkt_width_lp-1:0]        dcache_data_mem_pkt_i
    , input                                           dcache_data_mem_pkt_v_i
@@ -346,6 +348,7 @@ module bp_core_minimal
      ,.tag_mem_pkt_v_i(icache_tag_mem_pkt_v_i)
      ,.tag_mem_pkt_yumi_o(icache_tag_mem_pkt_yumi_o)
      ,.tag_mem_o(icache_tag_mem_o)
+     ,.tag_row_o(icache_tag_row_o)
 
      ,.data_mem_pkt_i(icache_data_mem_pkt_i)
      ,.data_mem_pkt_v_i(icache_data_mem_pkt_v_i)
@@ -411,6 +414,7 @@ module bp_core_minimal
      ,.tag_mem_pkt_v_i(dcache_tag_mem_pkt_v_i)
      ,.tag_mem_pkt_yumi_o(dcache_tag_mem_pkt_yumi_o)
      ,.tag_mem_o(dcache_tag_mem_o)
+     ,.tag_row_o(dcache_tag_row_o)
 
      ,.stat_mem_pkt_v_i(dcache_stat_mem_pkt_v_i)
      ,.stat_mem_pkt_i(dcache_stat_mem_pkt_i)
