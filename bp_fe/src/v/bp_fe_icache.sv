@@ -403,7 +403,13 @@ module bp_fe_icache
   logic                                  snoop_tv_r;
   logic [assoc_p-1:0][bank_width_lp-1:0] ld_data_tv_r;
 
-  assign tv_we = v_tv_r ? yumi_i : is_ready;
+  // Do not advance TL->TV while a detached replay install holds the cache:
+  // new TL entries are refused then, so the move would leave IF1 empty, and
+  // when the lock drops IF2 would be consumed in the same cycle its successor
+  // is first accepted. pc_gen's past-incomplete-instruction check (ovr_linear)
+  // compares against the registered IF1 prediction, so a block-aliased taken
+  // prediction would then join a held instruction half to the target block.
+  assign tv_we = v_tv_r ? yumi_i : (is_ready & ~cache_req_lock_i);
   bsg_dff_reset_en
    #(.width_p(1))
    v_tv_reg
