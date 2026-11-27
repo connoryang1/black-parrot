@@ -813,6 +813,25 @@ module bp_uce
     & (prefetch_install_state_r == e_pf_idle);
   wire prefetch_install_safe_to_wait
     = (credit_count_lo == prefetch_outstanding_count);
+  // A completed replay line already sits in its per-slot fill buffer, off the
+  // shared reverse link, so waiting for an unrelated demand to retire cannot
+  // block that demand's response. With hold enabled the installer keeps such
+  // a line and installs it once the cache is free; it still drops the line
+  // when the resident demand is for the same line (each would wait on the
+  // other). Without hold, any resident or outstanding demand drops it, which
+  // discards nearly all replay arriving during a run of demand misses.
+`ifdef BP_REPLAY_HOLD_ON_DEMAND
+  localparam bit replay_hold_on_demand_lp = 1'b1;
+`else
+  localparam bit replay_hold_on_demand_lp = 1'b0;
+`endif
+  wire prefetch_complete_same_line_demand = cache_req_v_r
+    & (prefetch_addr_r[prefetch_complete_slot][paddr_width_p-1:block_offset_width_lp]
+       == cache_req_r.addr[paddr_width_p-1:block_offset_width_lp]);
+  wire prefetch_install_drop_for_demand = replay_hold_on_demand_lp
+    ? prefetch_complete_same_line_demand : cache_req_v_r;
+  wire prefetch_install_drop_unsafe = ~replay_hold_on_demand_lp
+    & ~prefetch_install_safe_to_wait;
   wire prefetch_install_available = prefetch_install_safe_to_wait
     & (is_ready | is_backoff)
     & ~cache_req_v_r & ~cache_req_metadata_v_r & ~cache_req_metadata_v_i
@@ -862,8 +881,15 @@ module bp_uce
   // identify the stale reply. Cancel the still-owned packet at the actual
   // writeback boundary; ordinary ownership/credits prevent publication until
   // after this boundary. Later reads observe the ordered writeback instead.
-  wire retained_writeback = retained_buffer_p & fsm_fwd_v_lo & fsm_fwd_ready_then_li
-    & (fsm_fwd_header_lo.msg_type == e_bedrock_mem_wr);
+  // A write this cache sends downstream supersedes any replay copy of the
+  // same line read from memory before it: a replay that bypasses the L2 can
+  // otherwise install data older than the write. Retire every matching replay
+  // slot (issued, completed or held) and abort a matching installation.
+  wire retained_writeback = fsm_fwd_v_lo & fsm_fwd_ready_then_li
+    & (fsm_fwd_header_lo.msg_type inside {e_bedrock_mem_wr, e_bedrock_mem_amo});
+  wire replay_install_write_conflict = ~retained_buffer_p & retained_writeback
+    & (fsm_fwd_header_lo.addr[paddr_width_p-1:block_offset_width_lp]
+       == prefetch_addr_r[prefetch_install_slot_r][paddr_width_p-1:block_offset_width_lp]);
 
   wire retained_prefetch_mutation = retained_mutation
     & (retained_mutation_paddr_i[paddr_width_p-1:block_offset_width_lp]
@@ -1714,6 +1740,10 @@ module bp_uce
                 e_pf_read_stat,e_pf_check_stat,e_pf_invalidate,e_pf_fill,e_pf_publish})
           & ~(retained_insert_owned_r & retained_insert_pf_r)) begin
         prefetch_install_state_r <= e_pf_drop;
+      end else if (replay_install_write_conflict
+          & (prefetch_install_state_r inside {e_pf_drain,e_pf_read_tag,e_pf_check_tag,
+                e_pf_read_stat,e_pf_check_stat,e_pf_invalidate,e_pf_fill,e_pf_publish})) begin
+        prefetch_install_state_r <= e_pf_drop;
       end else if (prefetch_demand_priority_p & cache_req_v_i
           & (prefetch_install_state_r != e_pf_idle)
           // Once the first advisory-buffer beat is visible, finish the
@@ -1737,7 +1767,7 @@ module bp_uce
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
           prefetch_install_state_r <= prefetch_side_buffer_p ? e_pf_fill : e_pf_drain;
-        end else if (prefetch_install_begin & cache_req_v_r) begin
+        end else if (prefetch_install_begin & prefetch_install_drop_for_demand) begin
           // A demand already resident in the UCE may be waiting for this same
           // replay line. It cannot withdraw and recompute its cache hit like a
           // request held at the LCE boundary, while installation cannot take
@@ -1749,7 +1779,7 @@ module bp_uce
           prefetch_install_clean_r <= 1'b0;
           prefetch_install_drain_r <= '0;
           prefetch_install_state_r <= e_pf_drop;
-        end else if (prefetch_install_begin & ~prefetch_install_safe_to_wait) begin
+        end else if (prefetch_install_begin & prefetch_install_drop_unsafe) begin
           // Do not hold an ordinary response behind an advisory reply. Local
           // cache-pipeline conflicts are transient and retain the packet;
           // an ordinary outstanding credit or malformed size must drain it.

@@ -22,6 +22,10 @@ module bp_me_cache_slice
 
    `declare_bp_bedrock_if_widths(paddr_width_p, lce_id_width_p, cce_id_width_p, did_width_p, lce_assoc_p)
 
+   // Track lines that may be dirty in this slice, for replay prefetches that
+   // read DRAM directly (see bp_me_l2_dirty_filter).
+   , parameter dirty_filter_p = 0
+   , parameter dirty_query_els_p = 1
    , localparam dma_pkt_width_lp = `bsg_cache_dma_pkt_width(daddr_width_p, l2_block_size_in_words_p)
    )
   (input                                                 clk_i
@@ -49,6 +53,9 @@ module bp_me_cache_slice
    , output logic [l2_banks_p-1:0][l2_fill_width_p-1:0]  dma_data_o
    , output logic [l2_banks_p-1:0]                       dma_data_v_o
    , input [l2_banks_p-1:0]                              dma_data_ready_and_i
+
+   , input [dirty_query_els_p-1:0][paddr_width_p-1:0]    dirty_query_paddr_i
+   , output logic [dirty_query_els_p-1:0]                dirty_query_o
    );
 
   `declare_bp_cfg_bus_s(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p);
@@ -166,6 +173,37 @@ module bp_me_cache_slice
       assign dma_pkt_cast_o[i].write_not_read = dma_pkt_lo[i].write_not_read;
       assign dma_pkt_cast_o[i].mask = dma_pkt_lo[i].mask;
       assign dma_pkt_o[i] = dma_pkt_cast_o[i];
+    end
+
+  if (dirty_filter_p)
+    begin : dirty
+      logic [l2_banks_p-1:0][daddr_width_p-1:0] dma_addr_li;
+      logic [l2_banks_p-1:0] dma_write_li;
+      for (genvar i = 0; i < l2_banks_p; i++)
+        begin : dma
+          assign dma_addr_li[i] = dma_pkt_lo[i].addr;
+          assign dma_write_li[i] = dma_pkt_lo[i].write_not_read;
+        end
+      bp_me_l2_dirty_filter
+       #(.bp_params_p(bp_params_p), .num_query_p(dirty_query_els_p))
+       filter
+        (.clk_i(clk_i)
+         ,.reset_i(reset_i)
+         ,.fwd_header_i(mem_fwd_header_i)
+         ,.fwd_accept_i(mem_fwd_v_i & mem_fwd_ready_and_o)
+         ,.rev_header_i(mem_rev_header_o)
+         ,.rev_accept_i(mem_rev_v_o & mem_rev_ready_and_i)
+         ,.dma_addr_i(dma_addr_li)
+         ,.dma_write_i(dma_write_li)
+         ,.dma_accept_i(dma_pkt_v_o & dma_pkt_ready_and_i)
+         ,.query_paddr_i(dirty_query_paddr_i)
+         ,.query_dirty_o(dirty_query_o)
+         );
+    end
+  else
+    begin : no_dirty
+      // Without tracking, report every line as possibly dirty.
+      assign dirty_query_o = '1;
     end
 
 endmodule

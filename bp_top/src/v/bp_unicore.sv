@@ -112,6 +112,21 @@ module bp_unicore
   localparam l2s_dev_base_id_lp = clint_dev_id_lp    + 1;
   localparam loopback_dev_id_lp = l2s_dev_base_id_lp + l2_slices_p;
   localparam prefetch_dev_id_lp = loopback_dev_id_lp + 1;
+  // Per-processor-port dirty queries against the L2 slices (bypass only).
+  logic [num_proc_lp-1:0][paddr_width_p-1:0] l2_dirty_query_paddr_li;
+  logic [l2_slices_p-1:0][num_proc_lp-1:0] l2_dirty_slice_lo;
+  logic [num_proc_lp-1:0] l2_dirty_query_li;
+  always_comb
+    begin
+      l2_dirty_query_li = '0;
+      for (int s = 0; s < l2_slices_p; s++)
+        l2_dirty_query_li |= l2_dirty_slice_lo[s];
+    end
+`ifdef BP_ICACHE_PREFETCH_BYPASS
+  localparam icache_prefetch_bypass_lp = 1'b1;
+`else
+  localparam icache_prefetch_bypass_lp = 1'b0;
+`endif
   localparam io_dev_id_lp       = prefetch_dev_id_lp + prefetch_bypass_p;
   localparam num_dev_lp         = io_dev_id_lp       + 1;
   localparam lg_num_dev_lp      = `BSG_SAFE_CLOG2(num_dev_lp);
@@ -188,8 +203,16 @@ module bp_unicore
       wire is_host_fwd     = is_my_core & is_local & (device_fwd_li == host_dev_gp);
 
       wire is_io_fwd       = is_host_fwd | is_other_hio | is_other_core;
+      // Replay prefetches from either L1 may take the multi-outstanding
+      // bypass instead of the blocking L2. I-cache previews (speculative)
+      // exist only to warm the L2, so they keep the L2 path. The bypass reads
+      // DRAM, so a line that may be dirty in the L2 also keeps the L2 path.
+      assign l2_dirty_query_paddr_li[i] = proc_fwd_header_lo[i].addr;
       wire is_dcache_prefetch_fwd = prefetch_bypass_p
-        && (i == dcache_proc_id_lp)
+        && ((i == dcache_proc_id_lp)
+            || (icache_prefetch_bypass_lp && (i == icache_proc_id_lp)
+                && ~proc_fwd_header_lo[i].payload.speculative))
+        && ~l2_dirty_query_li[i]
         && proc_fwd_header_lo[i].payload.prefetch
         && (proc_fwd_header_lo[i].msg_type == e_bedrock_mem_rd)
         && ~is_local & ~is_io_fwd;
@@ -362,7 +385,10 @@ module bp_unicore
   for (genvar i = 0; i < l2_slices_p; i++)
     begin : slices
       bp_me_cache_slice
-       #(.bp_params_p(bp_params_p))
+       #(.bp_params_p(bp_params_p)
+         ,.dirty_filter_p(prefetch_bypass_p)
+         ,.dirty_query_els_p(num_proc_lp)
+         )
        l2s
         (.clk_i(clk_i)
          ,.reset_i(reset_r)
@@ -388,6 +414,9 @@ module bp_unicore
          ,.dma_data_o(dma_data_o[i])
          ,.dma_data_v_o(dma_data_v_o[i])
          ,.dma_data_ready_and_i(dma_data_ready_and_i[i])
+
+         ,.dirty_query_paddr_i(l2_dirty_query_paddr_li)
+         ,.dirty_query_o(l2_dirty_slice_lo[i])
          );
     end
 
