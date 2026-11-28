@@ -171,6 +171,16 @@ module bp_be_pipe_long
   logic [2:0] frm_lo;
   bp_hardfloat_raw_dp_s fdivsqrt_raw_lo;
   localparam fdivsqrt_bits_per_iter_lp = fpu_support_p[e_fdivsqrt2b] ? 2'b10 : 2'b01;
+`ifdef BP_NO_FPU
+  // FPU datapath removed for area (FPGA fit experiment). FP divide/sqrt
+  // complete in one cycle with a zero result; integer divide is unaffected.
+  // Only valid for programs that execute no FP arithmetic.
+  assign fdivsqrt_ready_and_lo = 1'b1;
+  always_ff @(posedge clk_i)
+    fdivsqrt_v_lo <= ~reset_i & ~flush_fp_li & fdivsqrt_v_li;
+  assign {sqrt_lo, invalid_exc, infinite_exc, frm_lo} = '0;
+  assign fdivsqrt_raw_lo = '0;
+`else
   divSqrtRecFNToRaw
    #(.expWidth(dp_exp_width_gp)
      ,.sigWidth(dp_sig_width_gp)
@@ -201,6 +211,7 @@ module bp_be_pipe_long
      ,.out_sExp(fdivsqrt_raw_lo.sexp)
      ,.out_sig(fdivsqrt_raw_lo.sig)
      );
+`endif
 
   // outValid of fdivsqrt only goes high one cycle
   logic fdivsqrt_pending_r;

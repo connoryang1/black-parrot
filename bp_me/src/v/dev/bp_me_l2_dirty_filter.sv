@@ -179,12 +179,16 @@ module bp_me_l2_dirty_filter
   wire pop = queue_v_r[head_r] & ~sweep_r;
 
   // Distributed-RAM rows: one synchronous write, asynchronous reads.
-  row_s mem [rows_lp];
+  // Flat vector rows so Vivado maps the table to distributed RAM (a struct-
+  // typed array was dissolved into ~10k flip-flops). One write port, three
+  // asynchronous read ports (pop plus queries); Vivado replicates per port.
+  localparam row_width_lp = $bits(row_s);
+  (* ram_style = "distributed" *) logic [row_width_lp-1:0] mem [rows_lp];
   logic sticky_r [rows_lp];
   wire event_s head_ev = queue_r[head_r];
   row_s rd_row, wr_row;
   logic set_sticky;
-  assign rd_row = mem[head_ev.row];
+  assign rd_row = row_s'(mem[head_ev.row]);
 
   always_comb
     begin
@@ -233,7 +237,7 @@ module bp_me_l2_dirty_filter
     if (sweep_r)
       mem[sweep_row_r] <= '0;
     else if (pop)
-      mem[head_ev.row] <= wr_row;
+      mem[head_ev.row] <= row_width_lp'(wr_row);
 
   // Queue bookkeeping. New events are written behind the existing ones.
   always_ff @(posedge clk_i)
@@ -297,7 +301,7 @@ module bp_me_l2_dirty_filter
       wire [lg_rows_lp-1:0] qrow = row_of(qbank, qline);
       wire [tag_width_lp-1:0] qtag = tag_of(qline);
       row_s qrow_data;
-      assign qrow_data = mem[qrow];
+      assign qrow_data = row_s'(mem[qrow]);
       always_comb
         begin
           query_dirty_o[q] = sticky_r[qrow] | overflow_r | sweep_r;

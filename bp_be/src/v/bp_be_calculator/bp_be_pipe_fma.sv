@@ -204,6 +204,12 @@ module bp_be_pipe_fma
 
   bp_be_fp_reg_s frd_data_lo;
   rv64_fflags_s fflags_lo;
+`ifdef BP_NO_FPU
+  // FPU datapath removed for area: FP results are zero, so synthesis prunes
+  // the FP add/round logic of the shared unit; integer multiply is kept.
+  assign frd_data_lo = '0;
+  assign fflags_lo = '0;
+`else
   bp_be_fp_rebox
    #(.bp_params_p(bp_params_p))
    rebox
@@ -216,6 +222,7 @@ module bp_be_pipe_fma
      ,.reg_o(frd_data_lo)
      ,.fflags_o(fflags_lo)
      );
+`endif
 
   // TODO: Can combine the registers here if DC doesn't do it automatically
   bsg_dff_chain
