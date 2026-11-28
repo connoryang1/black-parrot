@@ -218,14 +218,23 @@ module bp_me_cache_slice
          ,.query_paddr_i(dirty_query_paddr_i)
          ,.query_dirty_o(ref_dirty_lo)
          );
-      int unsigned unsafe_cnt, extra_cnt;
+      // ref_cnt counts reference-dirty query cycles; progress lines at powers
+      // of two give in-run evidence that the check is not vacuous (final
+      // blocks may not run if the testbench aborts first).
+      int unsigned unsafe_cnt, extra_cnt, ref_cnt;
       always_ff @(posedge clk_i)
         if (reset_i)
-          begin unsafe_cnt <= 0; extra_cnt <= 0; end
+          begin unsafe_cnt <= 0; extra_cnt <= 0; ref_cnt <= 0; end
         else
           begin
             unsafe_cnt <= unsafe_cnt + $countones(ref_dirty_lo & ~dirty_query_o);
             extra_cnt <= extra_cnt + $countones(~ref_dirty_lo & dirty_query_o);
+            ref_cnt <= ref_cnt + $countones(ref_dirty_lo);
+            if (ref_cnt != (ref_cnt + $countones(ref_dirty_lo))
+                && $countones(ref_cnt + $countones(ref_dirty_lo)) == 1
+                && (ref_cnt + $countones(ref_dirty_lo)) >= 1024)
+              $display("L2DIRTY PROGRESS ref_dirty=%0d unsafe=%0d extra=%0d t=%0t",
+                       ref_cnt + $countones(ref_dirty_lo), unsafe_cnt, extra_cnt, $time);
             if ((ref_dirty_lo & ~dirty_query_o) != '0)
               $display("L2DIRTY UNSAFE: reference dirty, filter clean t=%0t", $time);
           end
