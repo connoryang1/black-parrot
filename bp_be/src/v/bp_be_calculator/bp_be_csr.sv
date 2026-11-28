@@ -576,7 +576,9 @@ module bp_be_csr
                         ? {{(dword_width_gp-2){1'b0}}, ctx_l1_resp_v_i, ctx_l1_ready_i}
                         : '0;
         12'h805:  // Accepted cache-miss trace control/status
-          csr_data_lo = legacy_context_access_li ? miss_trace_status_i : '0;
+          // Miss counters [62:21] are readable in any mode; trace fields need access.
+          csr_data_lo = legacy_context_access_li ? miss_trace_status_i
+                                                 : (miss_trace_status_i & ~dword_width_gp'(21'h1fffff));
         12'h806:  // Trace read selector - write-only, reads as 0
           csr_data_lo = '0;
         12'h807:  // Selected trace record

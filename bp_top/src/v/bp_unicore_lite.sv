@@ -79,6 +79,7 @@ module bp_unicore_lite
    , input                                             software_irq_i
    , input                                             m_external_irq_i
    , input                                             s_external_irq_i
+   , input                                             l2_miss_v_i = 1'b0
    );
 
   `declare_bp_cfg_bus_s(vaddr_width_p, hio_width_p, core_id_width_p, cce_id_width_p, lce_id_width_p, did_width_p);
@@ -332,6 +333,7 @@ module bp_unicore_lite
      )
    core_minimal
     (.clk_i(posedge_clk)
+     ,.l2_miss_v_i(l2_miss_v_i)
      ,.reset_i(reset_i)
      ,.retained_control_status_i(retained_status)
      ,.retained_control_cmd_v_o(retained_control_cmd_v)

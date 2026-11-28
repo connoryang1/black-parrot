@@ -155,6 +155,8 @@ module bp_core_minimal
    , output logic [7:0]                              icache_prefix_trigger_start_o
    , output logic [8:0]                              icache_prefix_trigger_count_o
    , output logic                                    icache_prefix_clear_v_o
+   // One pulse per L2 demand fill (L2 DMA read accepted); counted for CSR 0x805.
+   , input                                           l2_miss_v_i = 1'b0
    );
 
   `declare_bp_core_if(vaddr_width_p, paddr_width_p, asid_width_p, branch_metadata_fwd_width_p);
@@ -195,6 +197,33 @@ module bp_core_minimal
   // This temporary measurement block records accepted physical demand misses,
   // after translation and before the I/D memory engines. Separate memories
   // preserve simultaneous I- and D-side events and map to one RAMB18 each.
+  // Free-running 14-bit miss counters, always present (independent of the
+  // trace): accepted L1 I-cache miss loads, L1 D-cache misses (load/store),
+  // and L2 demand fills. Read in CSR 0x805 bits [34:21], [48:35], [62:49];
+  // software takes differences modulo 2^14 around a measured window.
+  logic [13:0] imiss_cnt_r, dmiss_cnt_r, l2miss_cnt_r;
+  begin : miss_counters
+    bp_fe_icache_req_s icache_req_cnt_cast;
+    bp_be_dcache_req_s dcache_req_cnt_cast;
+    assign icache_req_cnt_cast = icache_req_o;
+    assign dcache_req_cnt_cast = dcache_req_o;
+    always_ff @(posedge clk_i)
+      if (reset_i)
+        begin imiss_cnt_r <= '0; dmiss_cnt_r <= '0; l2miss_cnt_r <= '0; end
+      else
+        begin
+          if (icache_req_v_o & icache_req_yumi_i & (icache_req_cnt_cast.msg_type == e_miss_load))
+            imiss_cnt_r <= imiss_cnt_r + 1'b1;
+          if (dcache_req_v_o & dcache_req_yumi_i
+              & (dcache_req_cnt_cast.msg_type inside {e_miss_load, e_miss_store}))
+            dmiss_cnt_r <= dmiss_cnt_r + 1'b1;
+          if (l2_miss_v_i)
+            l2miss_cnt_r <= l2miss_cnt_r + 1'b1;
+        end
+  end
+  wire [dword_width_gp-1:0] miss_count_bits_li =
+    {1'b0, l2miss_cnt_r, dmiss_cnt_r, imiss_cnt_r, 21'b0};
+
   if (cache_miss_trace_p) begin : gen_cache_miss_trace
     bp_fe_icache_req_s icache_req_cast;
     bp_be_dcache_req_s dcache_req_cast;
@@ -214,7 +243,7 @@ module bp_core_minimal
     wire dcache_miss_accept = armed_r & dcache_req_v_o & dcache_req_yumi_i
                               & (dcache_req_cast.msg_type == e_miss_load);
 
-    assign miss_trace_status_li =
+    assign miss_trace_status_li = miss_count_bits_li |
       {{(dword_width_gp-21){1'b0}}, armed_r, dcache_overflow_r, icache_overflow_r
        ,dcache_count_r, icache_count_r};
     assign miss_trace_data_li = miss_trace_read_source_r
@@ -270,7 +299,7 @@ module bp_core_minimal
         end
       end
   end else begin : gen_no_cache_miss_trace
-    assign miss_trace_status_li = '0;
+    assign miss_trace_status_li = miss_count_bits_li;
     assign miss_trace_data_li = '0;
   end
 

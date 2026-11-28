@@ -149,12 +149,23 @@ module bp_unicore
 
   bp_cfg_bus_s cfg_bus_lo;
   logic debug_irq_li, timer_irq_li, software_irq_li, m_external_irq_li, s_external_irq_li;
+  // L2 demand fills for the miss counters: accepted DMA reads, any slice/bank.
+  logic l2_miss_v_li;
+  always_comb
+    begin
+      l2_miss_v_li = 1'b0;
+      for (int sl = 0; sl < l2_slices_p; sl++)
+        for (int bk = 0; bk < l2_banks_p; bk++)
+          l2_miss_v_li |= dma_pkt_v_o[sl][bk] & dma_pkt_ready_and_i[sl][bk]
+                          & ~dma_pkt_o[sl][bk][dma_pkt_width_lp-1];
+    end
   bp_unicore_lite
    #(.bp_params_p(bp_params_p)
      ,.cache_miss_trace_p(cache_miss_trace_p)
      )
    unicore_lite
     (.clk_i(clk_i)
+     ,.l2_miss_v_i(l2_miss_v_li)
      ,.reset_i(reset_r)
      ,.cfg_bus_i(cfg_bus_lo)
 
