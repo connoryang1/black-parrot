@@ -199,6 +199,38 @@ module bp_me_cache_slice
          ,.query_paddr_i(dirty_query_paddr_i)
          ,.query_dirty_o(dirty_query_o)
          );
+`ifndef SYNTHESIS
+      // Simulation cross-check: the queued filter must report dirty whenever
+      // the original per-cycle model does (it may report more).
+      logic [dirty_query_els_p-1:0] ref_dirty_lo;
+      bp_me_l2_dirty_filter_ref
+       #(.bp_params_p(bp_params_p), .num_query_p(dirty_query_els_p))
+       filter_ref
+        (.clk_i(clk_i)
+         ,.reset_i(reset_i)
+         ,.fwd_header_i(mem_fwd_header_i)
+         ,.fwd_accept_i(mem_fwd_v_i & mem_fwd_ready_and_o)
+         ,.rev_header_i(mem_rev_header_o)
+         ,.rev_accept_i(mem_rev_v_o & mem_rev_ready_and_i)
+         ,.dma_addr_i(dma_addr_li)
+         ,.dma_write_i(dma_write_li)
+         ,.dma_accept_i(dma_pkt_v_o & dma_pkt_ready_and_i)
+         ,.query_paddr_i(dirty_query_paddr_i)
+         ,.query_dirty_o(ref_dirty_lo)
+         );
+      int unsigned unsafe_cnt, extra_cnt;
+      always_ff @(posedge clk_i)
+        if (reset_i)
+          begin unsafe_cnt <= 0; extra_cnt <= 0; end
+        else
+          begin
+            unsafe_cnt <= unsafe_cnt + $countones(ref_dirty_lo & ~dirty_query_o);
+            extra_cnt <= extra_cnt + $countones(~ref_dirty_lo & dirty_query_o);
+            if ((ref_dirty_lo & ~dirty_query_o) != '0)
+              $display("L2DIRTY UNSAFE: reference dirty, filter clean t=%0t", $time);
+          end
+      final $display("L2DIRTY CHECK unsafe=%0d extra_dirty_query_cycles=%0d", unsafe_cnt, extra_cnt);
+`endif
     end
   else
     begin : no_dirty
